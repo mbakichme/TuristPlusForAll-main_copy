@@ -74,25 +74,42 @@ class UgovorPDFAcceptance(unittest.TestCase):
             self.assertNotIn("81.044,24", text)
             self.assertIn("I:RSD80544,16", build_ugovor_ips_qr(self.contract, self.agency))
 
-    def test_given_many_companions_when_paginated_then_header_repeats_and_no_text_is_clipped(self):
+    def test_given_many_companions_when_paginated_then_header_is_first_only_and_nothing_overlaps(self):
         contract = copy.deepcopy(self.contract)
         contract["putnici_detalji"] = [dict(contract["putnici_detalji"][0], saputnik=f"SAPUTNIK {i:03}", pasos=f"PAS{i:03}") for i in range(65)]
         contract["aranzman"]["napomena"] = "duga_napomena_" * 200
         with self.document(contract) as doc:
-            self.assertGreater(len(doc), 5)
+            self.assertGreater(len(doc), 1)
+            self.assertLessEqual(len(doc), 5)
             text = self.text(doc)
             for i in range(65):
                 self.assertIn(f"SAPUTNIK {i:03}", text)
                 self.assertIn(f"PAS{i:03}", text)
+            for clause in LEGAL_CLAUSES:
+                self.assertIn(clause, text)
             for page in doc:
                 for expected in ("Agencija Čačak", "Trg oslobođenja", "32000 Čačak", "032/123456",
                                  "info@example.test", "PIB 100000000", "MB 20000000", "265-3710310000481-09", "Banka Intesa"):
-                    self.assertIn(expected, page.get_text())
-                for word in page.get_text("words"):
-                    self.assertGreaterEqual(word[0], 39)
-                    self.assertLessEqual(word[2], page.rect.width - 39)
-                    self.assertGreaterEqual(word[1], 20)
+                    if page.number == 0:
+                        self.assertIn(expected, page.get_text())
+                    else:
+                        self.assertNotIn(expected, page.get_text())
+                self.assertIn(f"Strana {page.number + 1}", page.get_text())
+                words = page.get_text("words")
+                for word in words:
+                    self.assertGreaterEqual(word[0], 29)
+                    self.assertLessEqual(word[2], page.rect.width - 29)
+                    self.assertGreaterEqual(word[1], 18)
                     self.assertLessEqual(word[3], page.rect.height - 15)
+                # Real text rectangles may touch at adjacent lines, but must not
+                # materially overlap another word, header, footer or QR image.
+                for index, word in enumerate(words):
+                    box = pymupdf.Rect(word[:4])
+                    for other in words[index + 1:]:
+                        intersection = box & pymupdf.Rect(other[:4])
+                        self.assertTrue(intersection.is_empty or intersection.width < .5 or intersection.height < .5)
+                    for image in page.get_image_info():
+                        self.assertTrue((box & pymupdf.Rect(image["bbox"])).is_empty)
 
     def test_given_qr_when_decoded_from_actual_pdf_then_payload_matches_nbs_fields(self):
         payload = build_ugovor_ips_qr(self.contract, self.agency)
@@ -109,10 +126,51 @@ class UgovorPDFAcceptance(unittest.TestCase):
             for page in doc:
                 for image in page.get_images(full=True):
                     content = doc.extract_image(image[0])["image"]
-                    result = zxingcpp.read_barcode(Image.open(io.BytesIO(content)).convert("RGB"))
+                    bitmap = Image.open(io.BytesIO(content)).convert("RGB")
+                    result = zxingcpp.read_barcode(bitmap)
                     if result:
                         decoded.append(result.text)
+                        # Four white modules, at ten pixels/module, surround the code.
+                        for strip in ((0, 0, bitmap.width, 40),
+                                      (0, bitmap.height - 40, bitmap.width, bitmap.height),
+                                      (0, 0, 40, bitmap.height),
+                                      (bitmap.width - 40, 0, bitmap.width, bitmap.height)):
+                            self.assertEqual(bitmap.crop(strip).getextrema(), ((255, 255),) * 3)
+                        rectangles = page.get_image_rects(image[0])
+                        self.assertTrue(any(rect.width >= 100 and rect.height >= 100 for rect in rectangles))
             self.assertIn(payload, decoded)
+
+    def test_given_typical_contract_then_two_companions_fit_one_page_and_four_at_most_two(self):
+        for count, maximum in ((2, 1), (4, 2)):
+            contract = copy.deepcopy(self.contract)
+            contract["putnici_detalji"] = [dict(contract["putnici_detalji"][0],
+                saputnik=f"SAPUTNIK {index}") for index in range(count)]
+            with self.document(contract) as doc:
+                self.assertLessEqual(len(doc), maximum)
+                text = self.text(doc)
+                for clause in LEGAL_CLAUSES:
+                    self.assertIn(clause, text)
+                self.assertIn("Potpis putnika", text)
+                self.assertIn("80.544,16", text)
+                payload = build_ugovor_ips_qr(contract, self.agency)
+                decoded = []
+                for page in doc:
+                    bitmap = page.get_pixmap(matrix=pymupdf.Matrix(3, 3), alpha=False)
+                    image = Image.frombytes("RGB", (bitmap.width, bitmap.height), bitmap.samples)
+                    decoded.extend(result.text for result in zxingcpp.read_barcodes(image))
+                self.assertIn(payload, decoded)
+
+    def test_given_agency_account_fields_then_qr_uses_first_valid_real_account(self):
+        for account, expected in (("265-1000000079251-45", "265100000007925145"),
+                                  ("160-0000000135905-52", "160000000013590552")):
+            for key in ("tekuci_racun1", "tekuci_racun2", "tekuci_racun3", "tekuci_racun4"):
+                agency = dict(self.agency, racun="invalid", **{key: account})
+                payload = build_ugovor_ips_qr(self.contract, agency)
+                self.assertIn(f"R:{expected}|", payload)
+                with self.document(agency=agency) as doc:
+                    self.assertNotIn(QR_WARNING, self.text(doc))
+        agency = dict(self.agency, tekuci_racun1="160-0000000135905-52")
+        self.assertIn("R:265371031000048109|", build_ugovor_ips_qr(self.contract, agency))
 
     def test_given_invalid_payment_data_then_no_false_valid_qr_and_visible_warning(self):
         for account in ("123", "x265-3710310000481-09", "26512345678901234567", "", "265-1-9"):
