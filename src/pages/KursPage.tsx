@@ -95,7 +95,7 @@ export default function KursPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="kurs-datum">Datum</Label>
               <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
                 <PopoverTrigger asChild>
