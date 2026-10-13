@@ -19,7 +19,10 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Pencil, Receipt, Search } from "lucide-react";
+import { Loader2, Pencil, Receipt, Search, CalendarDays } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { srLatn } from "date-fns/locale";
 import { toast } from "sonner";
 
 // ── Tipovi (ugovor backend-a) ───────────────────────────────────────────────
@@ -210,32 +213,55 @@ interface OpcijeDatumaProps {
   label: string;
 }
 
+function DatumCenovnika({ id, value, onChange, disabled }: {
+  id: string; value: string; onChange: (value: string) => void; disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = value ? new Date(`${value}T00:00:00`) : undefined;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          id={id}
+          variant="outline"
+          disabled={disabled}
+          className={cn("h-9 w-44 justify-between bg-background font-normal tabular-nums", !value && "text-muted-foreground")}
+        >
+          <span>{value ? fmtIso(value) : "dd.mm.yyyy"}</span>
+          <CalendarDays className="h-4 w-4 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto rounded-xl p-0 shadow-lg">
+        <Calendar
+          mode="single"
+          locale={srLatn}
+          weekStartsOn={1}
+          captionLayout="dropdown"
+          selected={selected}
+          defaultMonth={selected}
+          startMonth={new Date(2000, 0, 1)}
+          endMonth={new Date(2100, 11, 31)}
+          onSelect={(day) => {
+            if (!day) return;
+            onChange(`${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`);
+            setOpen(false);
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function OpcijeDatuma({ idPrefix, od, ddo, onOd, onDdo, onSave, saving, disabled, label }: OpcijeDatumaProps) {
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-muted/40 px-3 py-2.5">
       <div className="space-y-1.5">
         <Label htmlFor={`${idPrefix}-od`} className="text-xs text-muted-foreground">Aktivan od</Label>
-        <Input
-          id={`${idPrefix}-od`}
-          type="date"
-          required
-          value={od}
-          onChange={(e) => onOd(e.target.value)}
-          disabled={disabled}
-          className="h-9 w-40 bg-background"
-        />
+        <DatumCenovnika id={`${idPrefix}-od`} value={od} onChange={onOd} disabled={disabled} />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor={`${idPrefix}-do`} className="text-xs text-muted-foreground">Aktivan do</Label>
-        <Input
-          id={`${idPrefix}-do`}
-          type="date"
-          required
-          value={ddo}
-          onChange={(e) => onDdo(e.target.value)}
-          disabled={disabled}
-          className="h-9 w-40 bg-background"
-        />
+        <DatumCenovnika id={`${idPrefix}-do`} value={ddo} onChange={onDdo} disabled={disabled} />
       </div>
       <Button onClick={onSave} disabled={saving || disabled}>
         {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

@@ -41,6 +41,16 @@ def pick(page, trigger, option_text):
     page.get_by_role("option", name=option_text, exact=True).click()
 
 
+def pick_date(page, selector, iso):
+    page.locator(selector).click()
+    calendar = page.locator('[data-radix-popper-content-wrapper]')
+    dropdowns = calendar.locator("select")
+    dropdowns.nth(1).select_option(iso[:4])
+    dropdowns.nth(0).select_option(str(int(iso[5:7]) - 1))
+    calendar.locator(f'button[data-day="{int(iso[5:7])}/{int(iso[8:10])}/{iso[:4]}"]').click()
+    expect(page.locator(selector)).to_have_text(fmt_iso(iso))
+
+
 def main():
     token = create_access_token({"sub": "1"})  # never printed
     api = httpx.Client(base_url=API, headers={"Authorization": "Bearer " + token}, timeout=30)
@@ -101,8 +111,8 @@ def main():
 
             # ── Enter price + active dates, save, capture POST ──
             first_cell.fill("125,50")
-            page.locator("#create-od").fill(DATUM_OD)
-            page.locator("#create-do").fill(DATUM_DO)
+            pick_date(page, "#create-od", DATUM_OD)
+            pick_date(page, "#create-do", DATUM_DO)
             with page.expect_response(
                 lambda r: r.request.method == "POST" and r.url.endswith("/api/cenovnici")
             ) as resp_info:
@@ -159,8 +169,8 @@ def main():
 
             # ── Tab 1 state synchronized ──
             page.get_by_role("tab", name="Kreiranje cenovnika").click()
-            expect(page.locator("#create-od")).to_have_value(DATUM_OD)
-            expect(page.locator("#create-do")).to_have_value(DATUM_DO)
+            expect(page.locator("#create-od")).to_have_text(fmt_iso(DATUM_OD))
+            expect(page.locator("#create-do")).to_have_text(fmt_iso(DATUM_DO))
             expect(page.get_by_label(cell_label, exact=True)).to_have_value("150")
             assert page.get_by_label(cell_label, exact=True).evaluate("el => getComputedStyle(el).textAlign") == "center"
             expect(page.get_by_text(f"#{created_id} · {cuuid}", exact=True)).to_be_visible()
