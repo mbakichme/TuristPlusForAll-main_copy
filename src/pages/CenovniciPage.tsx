@@ -129,8 +129,8 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
       <table
-        className="border-collapse text-sm"
-        style={{ minWidth: `${256 + Math.max(periodi.length, 1) * 112}px` }}
+        className="table-fixed border-collapse text-sm"
+        style={{ width: `${256 + Math.max(periodi.length, 1) * 76}px` }}
       >
         <thead>
           <tr>
@@ -141,7 +141,7 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
               Struktura
             </th>
             {periodi.map((p) => (
-              <th key={p.id} className="w-28 min-w-[7rem] border-b bg-muted px-2 py-1.5 text-center">
+              <th key={p.id} className="w-[76px] border-b bg-muted px-1 py-1.5 text-center">
                 <div className="whitespace-nowrap text-xs font-semibold text-foreground">
                   <div>{fmtIso(p.datum_od).slice(0, 5)}</div>
                   <div>{fmtIso(p.datum_do).slice(0, 5)}</div>
@@ -174,7 +174,7 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
                 {periodi.map((p) => {
                   const k = cellKey(soba.id, p.id);
                   return (
-                    <td key={p.id} className="w-28 min-w-[7rem] border-b px-1.5 py-1.5">
+                    <td key={p.id} className="w-[76px] border-b px-1 py-1.5">
                       <Input
                         value={cene[k] ?? ""}
                         onChange={(e) => onCenaChange(soba.id, p.id, normalizeCena(e.target.value))}
@@ -182,7 +182,7 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
                         inputMode="decimal"
                         autoComplete="off"
                         aria-label={`Cena — soba ${soba.broj_sobe}, period ${fmtIso(p.datum_od)}–${fmtIso(p.datum_do)}`}
-                        className="h-8 border-input/60 bg-background text-right text-[13px] tabular-nums"
+                        className="h-8 min-w-0 border-input/60 bg-background px-1.5 text-right text-xs tabular-nums"
                       />
                     </td>
                   );
