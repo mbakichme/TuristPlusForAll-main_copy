@@ -22,6 +22,7 @@ from jose import JWTError, jwt
 from predracun_pdf import generate_predracun_pdf
 from kurs_service import ensure_kurs_table, get_eur_rate
 from grafik_boje import kategorija_grafika
+from cenovnici_api import init_cenovnici, register_cenovnici
 
 # ─── Auth config ────────────────────────────────────────────────────────────
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "turisticka-agencija-super-secret-2024")
@@ -1256,8 +1257,10 @@ def get_current_user(request: Request):
 def create_app(static_dir: str) -> FastAPI:
     engine = get_engine()
     init_db(engine)
+    init_cenovnici(engine)
 
     api = APIRouter()
+    register_cenovnici(api, engine, get_current_user)
 
     # ── Health ──────────────────────────────────────────────────────────────
     @api.get("/health")

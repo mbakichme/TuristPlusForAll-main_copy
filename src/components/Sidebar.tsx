@@ -151,6 +151,7 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
             <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
           </div>
         </div>
