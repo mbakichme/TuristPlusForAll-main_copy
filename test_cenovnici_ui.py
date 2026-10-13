@@ -92,9 +92,9 @@ def main():
             first_cell = page.get_by_label(cell_label, exact=True)
             expect(first_cell).to_be_visible(timeout=15000)
             assert page.locator('input[aria-label^="Cena"]').count() == n_cells, "grid size mismatch"
-            expect(
-                page.get_by_text(f"{fmt_iso(per0['datum_od'])} – {fmt_iso(per0['datum_do'])}")
-            ).to_be_visible()
+            header = page.locator("table thead th").nth(2)
+            expect(header.get_by_text(fmt_iso(per0['datum_od'])[:5], exact=True)).to_be_visible()
+            expect(header.get_by_text(fmt_iso(per0['datum_do'])[:5], exact=True)).to_be_visible()
             first_row = page.locator("table tbody tr").first
             expect(first_row.locator("td").first).to_have_text(soba0["broj_sobe"])
             print(f"[grid] soba {soba0['broj_sobe']} x period {per0['datum_od']}..{per0['datum_do']} prikazani, {n_cells} inputa")
@@ -161,7 +161,8 @@ def main():
             page.get_by_role("tab", name="Kreiranje cenovnika").click()
             expect(page.locator("#create-od")).to_have_value(DATUM_OD)
             expect(page.locator("#create-do")).to_have_value(DATUM_DO)
-            expect(page.get_by_label(cell_label, exact=True)).to_have_value("150.00")
+            expect(page.get_by_label(cell_label, exact=True)).to_have_value("150")
+            assert page.get_by_label(cell_label, exact=True).evaluate("el => getComputedStyle(el).textAlign") == "center"
             expect(page.get_by_text(f"#{created_id} · {cuuid}", exact=True)).to_be_visible()
             assert page.get_by_text("Nesačuvane izmene").count() == 0, "tab 1 nije sinhronizovan"
             print("[tab1] sinhronizovano: cena 150.00, datum i badge azurirani, bez 'Nesacuvane izmene'")

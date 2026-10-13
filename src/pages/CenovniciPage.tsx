@@ -78,7 +78,7 @@ function cenaZaPayload(v: string | undefined): string | null {
 /** Niz cena iz odgovora → mapa ćelija (ključ soba:period → tekst cene). */
 function ceneMap(cene: SablonCena[]): Record<string, string> {
   const m: Record<string, string> = {};
-  for (const c of cene) m[cellKey(c.soba_id, c.period_id)] = normalizeCena(c.cena ?? "");
+  for (const c of cene) m[cellKey(c.soba_id, c.period_id)] = normalizeCena(c.cena ?? "").replace(/\.0+$/, "");
   return m;
 }
 
@@ -182,7 +182,7 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
                         inputMode="decimal"
                         autoComplete="off"
                         aria-label={`Cena — soba ${soba.broj_sobe}, period ${fmtIso(p.datum_od)}–${fmtIso(p.datum_do)}`}
-                        className="h-8 min-w-0 border-input/60 bg-background px-1.5 text-right text-xs tabular-nums"
+                        className="h-8 min-w-0 border-input/60 bg-background px-1.5 text-center text-xs tabular-nums"
                       />
                     </td>
                   );
