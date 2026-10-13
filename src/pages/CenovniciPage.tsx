@@ -255,11 +255,11 @@ function DatumCenovnika({ id, value, onChange, disabled }: {
 function OpcijeDatuma({ idPrefix, od, ddo, onOd, onDdo, onSave, saving, disabled, label }: OpcijeDatumaProps) {
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-muted/40 px-3 py-2.5">
-      <div className="space-y-1.5">
+      <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${idPrefix}-od`} className="text-xs text-muted-foreground">Aktivan od</Label>
         <DatumCenovnika id={`${idPrefix}-od`} value={od} onChange={onOd} disabled={disabled} />
       </div>
-      <div className="space-y-1.5">
+      <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${idPrefix}-do`} className="text-xs text-muted-foreground">Aktivan do</Label>
         <DatumCenovnika id={`${idPrefix}-do`} value={ddo} onChange={onDdo} disabled={disabled} />
       </div>
