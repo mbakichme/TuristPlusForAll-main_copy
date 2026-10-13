@@ -1,0 +1,36 @@
+# ============================================================================
+# TuristPlus — nginx obrnuti proksi (opcionalno, preporuka za HTTPS)
+#
+# Upotreba (kao root, na serveru):
+#   1) cp nginx.conf.example /etc/nginx/sites-available/turistplus
+#   2) izmeni TVOJ_DOMEN.rs na tvoj domen (i port ako nije 8000)
+#   3) ln -s /etc/nginx/sites-available/turistplus /etc/nginx/sites-enabled/
+#   4) rm -f /etc/nginx/sites-enabled/default     # ako koristiš samo ovaj sajt
+#   5) nginx -t && systemctl reload nginx
+#   6) HTTPS (besplatan Let's Encrypt): apt install certbot python3-certbot-nginx
+#      certbot --nginx -d TVOJ_DOMEN.rs
+#
+# Ako nginx NE koristiš, aplikacija je direktno dostupna na portu 8000
+# (ali bez HTTPS — onda je pusti samo kroz firewall/TLS tunel po potrebi).
+# ============================================================================
+
+server {
+    listen 80;
+    server_name TVOJ_DOMEN.rs;
+
+    # Upload XML izvoda i drugih fajlova
+    client_max_body_size 50m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Import podataka i PDF-ovi mogu da traju duže
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
