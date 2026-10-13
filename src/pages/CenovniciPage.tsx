@@ -143,7 +143,8 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
             {periodi.map((p) => (
               <th key={p.id} className="w-28 min-w-[7rem] border-b bg-muted px-2 py-1.5 text-center">
                 <div className="whitespace-nowrap text-xs font-semibold text-foreground">
-                  {fmtIso(p.datum_od)} – {fmtIso(p.datum_do)}
+                  <div>{fmtIso(p.datum_od).slice(0, 5)}</div>
+                  <div>{fmtIso(p.datum_do).slice(0, 5)}</div>
                 </div>
                 <div className="mt-0.5 text-[10px] font-normal text-muted-foreground">
                   {p.nocenja} {pluralSr(p.nocenja, "noćenje", "noćenja", "noćenja")}
