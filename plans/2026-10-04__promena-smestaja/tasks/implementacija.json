@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[smestaj-1] delegate — Transakcioni API promene smeštaja i test zauzetosti",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[smestaj-2] delegate — Grafik popup i forma za promenu smeštaja",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[smestaj-3] self — Otvaranje rezervacije po ključu, 44 testa i build",
+    "id": "3",
+    "status": "completed"
+  }
+]

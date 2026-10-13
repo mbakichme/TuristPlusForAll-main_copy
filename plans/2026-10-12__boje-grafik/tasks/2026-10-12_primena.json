@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[primena-1] self (delegacija bez izmena): API boje po kategoriji i testovi prioriteta/salda/time limita",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[primena-2] self: prikaz osam boja i čitljivih brojeva u Grafiku",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[primena-3] self: provera API-ja, testovi i bun run build",
+    "id": "3",
+    "status": "completed"
+  }
+]

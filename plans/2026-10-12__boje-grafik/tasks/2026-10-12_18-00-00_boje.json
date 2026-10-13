@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[build-1] delegate — tabela i GET/PUT API za šest boja, validacija i test",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[build-2] self — stranica Boje grafik i navigacija u Podešavanjima",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[verify-1] self — API test, TypeScript build i pregled izmene",
+    "id": "3",
+    "status": "completed"
+  }
+]

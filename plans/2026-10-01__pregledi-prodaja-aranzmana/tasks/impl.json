@@ -1,0 +1,32 @@
+[
+  {
+    "content": "[pregledi-1] Backend: GET /pregledi/prodaja-aranzmana (dnevni izveštaj po datumu, calc + kurs) u routes.py",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[pregledi-2] Tipovi: ProdajaAranzmanaRow / ProdajaAranzmanaResp u src/types.ts",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[pregledi-3] Stranica src/pages/PregledProdajaAranzmanaPage.tsx (datum navigacija, kartice, tabela + totali)",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[pregledi-4] Ruta u App.tsx: /pregledi/dnevni-izvestaji/prodaja-aranzmana",
+    "id": "4",
+    "status": "completed"
+  },
+  {
+    "content": "[pregledi-5] Sidebar: sekcija Pregledi (desktop+mobile) → grupa Dnevni izveštaji → stavka Prodaja aranžmana",
+    "id": "5",
+    "status": "completed"
+  },
+  {
+    "content": "[pregledi-6] Verifikacija: py_compile, API test (datum sa podacima 16.09.2026 + prazan dan), tsc, vite build",
+    "id": "6",
+    "status": "completed"
+  }
+]

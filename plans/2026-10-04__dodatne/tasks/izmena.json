@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[edit-1] delegate: Dodati identitet stavki, API upis/izmenu i offline testove",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[edit-2] self: Dodati formu za novu stavku i izmenu sa validacijom",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[edit-3] self: Primeniti additive migraciju i proveriti API i build",
+    "id": "3",
+    "status": "completed"
+  }
+]

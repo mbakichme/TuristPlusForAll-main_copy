@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    --background: 220 14% 96%;
     --foreground: 0 0% 3.9%;
     --card: 0 0% 100%;
     --card-foreground: 0 0% 3.9%;
@@ -55,5 +55,23 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* Grafik: pri štampi prikaži celu tabelu i zadrži boje */
+@media print {
+  .grafik-scroll {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .grafik-scroll th,
+  .grafik-scroll td {
+    position: static !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .grafik-scroll .grafik-band {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[kontakt-1] delegate — Kolone dodate u postojeću bazu i API detalje ugovora",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[kontakt-2] self — Kontaktna polja, kopiranje nosioca i email validacija u formi",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[kontakt-3] self — Provereni API, email, kopiranje, 23 testa i build",
+    "id": "3",
+    "status": "completed"
+  }
+]

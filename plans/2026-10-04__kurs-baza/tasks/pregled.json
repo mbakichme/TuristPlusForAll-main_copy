@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[build-1] self: Dodati API za pregled sačuvanih kurseva i filter datuma.",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[build-2] delegate: Dodati Kurs stranicu, rutu i Agencija navigaciju.",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[verify-1] self: Testirati filtriranje, frontend build i pokrenuti pregled.",
+    "id": "3",
+    "status": "completed"
+  }
+]

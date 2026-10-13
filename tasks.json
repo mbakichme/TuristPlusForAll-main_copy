@@ -1,0 +1,27 @@
+[
+  {
+    "content": "[mesto-grupe-1] DB: mesto_grupa tabela + idempotentna migracija iz mesto.grupa_datuma (init_db)",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[mesto-grupe-2] Backend: modeli grupe, GET /mesto vraca grupe+grupe_nazivi, POST/PUT pise mesto_grupa (grupa_datuma = prva), /slobodne-sobe + mesto_id param",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[mesto-grupe-3] Frontend: types.ts, MestoPage multi-select grupa (Popover+checkbox) + tabela joined nazivi",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[mesto-grupe-4] Ripple: GrafikPage filter grupe, PretragaPage merge datumi + mesto_id, PromenaSmestajaDialog grupe[0], RezervacijePage grafikPodaci grupe[0]",
+    "id": "4",
+    "status": "completed"
+  },
+  {
+    "content": "[mesto-grupe-5] Test: API round-trip (GET/POST/PUT grupe), /slobodne-sobe mesto_id; bun run build; context.md",
+    "id": "5",
+    "status": "completed"
+  }
+]
