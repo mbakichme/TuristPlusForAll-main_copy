@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import type { Mesto, PeriodGrupa, Smestaj } from "../types";
 import { apiFetch } from "../lib/api";
 import { cn } from "@/lib/utils";
@@ -348,6 +349,7 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
 // ── Glavna stranica ─────────────────────────────────────────────────────────
 
 export default function CenovniciPage() {
+  const navigate = useNavigate();
   // Referentni podaci
   const [mesta, setMesta] = useState<Mesto[]>([]);
   const [grupe, setGrupe] = useState<PeriodGrupa[]>([]);
@@ -460,12 +462,20 @@ export default function CenovniciPage() {
     };
     const preNavigacije = (event: MouseEvent) => {
       const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
-      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank") return;
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       if (anchor.origin === window.location.origin && anchor.pathname === window.location.pathname) return;
-      if (!window.confirm("Imate nesačuvane izmene cenovnika. Napustiti stranicu?")) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
+      event.preventDefault();
+      event.stopPropagation();
+      const destination = anchor.href;
+      pendingConfirm.current = () => {
+        if (anchor.origin === window.location.origin) {
+          navigate(new URL(destination).pathname + new URL(destination).search + new URL(destination).hash);
+        } else {
+          window.location.assign(destination);
+        }
+      };
+      setConfirmOpen(true);
     };
     window.addEventListener("beforeunload", preZatvaranja);
     document.addEventListener("click", preNavigacije, true);
@@ -473,7 +483,7 @@ export default function CenovniciPage() {
       window.removeEventListener("beforeunload", preZatvaranja);
       document.removeEventListener("click", preNavigacije, true);
     };
-  }, [createDirty, editDirty]);
+  }, [createDirty, editDirty, navigate]);
 
   function uzPotvrdu(prljavo: boolean, action: () => void) {
     if (prljavo) {

@@ -111,6 +111,14 @@ def main():
 
             # ── Enter price + active dates, save, capture POST ──
             first_cell.fill("125,50")
+            page.locator('a[href="/"]').first.click()
+            popup = page.get_by_role("alertdialog")
+            expect(popup).to_be_visible()
+            expect(popup.get_by_text("Odbaciti nesačuvane izmene?")).to_be_visible()
+            popup.get_by_role("button", name="Otkaži").click()
+            expect(popup).not_to_be_visible()
+            expect(first_cell).to_have_value("125.50")
+            print("[navigation] popup shown; cancel preserves draft and current page")
             pick_date(page, "#create-od", DATUM_OD)
             pick_date(page, "#create-do", DATUM_DO)
             with page.expect_response(
