@@ -2154,6 +2154,14 @@ def create_app(static_dir: str) -> FastAPI:
                 JOIN smestaj s ON s.id = b.veza_id_smestaj
                 WHERE (CAST(:g AS INTEGER) IS NULL OR s.grupa_datuma = CAST(:g AS INTEGER))
                   AND (CAST(:m AS INTEGER) IS NULL OR s.mesto = CAST(:m AS INTEGER))
+                  -- vezuje Grupu termina za vilu: traženi termin (od+do) mora
+                  -- biti DEFINISAN periodom u grupi termina tog smeštaja
+                  AND EXISTS (
+                      SELECT 1 FROM period_datum pd
+                      WHERE pd.grupa_id = s.grupa_datuma
+                        AND pd.datum_od = to_date(:od, 'DD.MM.YYYY')
+                        AND pd.datum_do = to_date(:do, 'DD.MM.YYYY')
+                  )
                   AND NOT EXISTS (
                       SELECT 1 FROM aranzman a
                       WHERE a.naziv = s.naziv
