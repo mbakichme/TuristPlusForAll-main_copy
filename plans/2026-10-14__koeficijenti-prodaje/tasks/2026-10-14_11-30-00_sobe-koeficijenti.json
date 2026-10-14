@@ -1,0 +1,27 @@
+[
+  {
+    "content": "[sob-1] Backend: GET /sobe + mesto_naziv i koeficijenti po strukturi; POST/PUT /sobe auto-kreira koef zapis za tip (npr. 1/2)",
+    "id": "sob-1",
+    "status": "in_progress"
+  },
+  {
+    "content": "[sob-2] koeficijenti_api: GET /koeficijenti/struktura, POST /koeficijenti/red, DELETE /koeficijenti/red/{id} (samo rucno)",
+    "id": "sob-2",
+    "status": "pending"
+  },
+  {
+    "content": "[sob-3] SobePage: kolona Mesto + kolona Koeficijenti sa dialogom (lista, dodaj više, briši ručne)",
+    "id": "sob-3",
+    "status": "pending"
+  },
+  {
+    "content": "[sob-4] API test proširenje + bun run build + Playwright UI test",
+    "id": "sob-4",
+    "status": "pending"
+  },
+  {
+    "content": "[sob-5] Commit + update context",
+    "id": "sob-5",
+    "status": "pending"
+  }
+]

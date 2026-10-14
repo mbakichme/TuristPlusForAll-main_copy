@@ -12,16 +12,16 @@
   {
     "content": "[kof-3] API test test_koeficijenti_api.py + pokretanje na dev serveru",
     "id": "kof-3",
-    "status": "in_progress"
+    "status": "completed"
   },
   {
     "content": "[kof-4] bun run build (tsc) + Playwright UI test",
     "id": "kof-4",
-    "status": "pending"
+    "status": "completed"
   },
   {
     "content": "[kof-5] Commit (grafik tooltip fix + koeficijenti feature)",
     "id": "kof-5",
-    "status": "pending"
+    "status": "completed"
   }
 ]

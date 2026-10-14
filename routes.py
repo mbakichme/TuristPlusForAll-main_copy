@@ -23,7 +23,7 @@ from predracun_pdf import generate_predracun_pdf
 from kurs_service import ensure_kurs_table, get_eur_rate
 from grafik_boje import kategorija_grafika
 from cenovnici_api import init_cenovnici, register_cenovnici
-from koeficijenti_api import init_koeficijenti, register_koeficijenti
+from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
 
 # ─── Auth config ────────────────────────────────────────────────────────────
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "turisticka-agencija-super-secret-2024")
@@ -1892,7 +1892,7 @@ def create_app(static_dir: str) -> FastAPI:
             like = f"%{q}%"
             conds = " OR ".join(
                 f"COALESCE({c}::text, '') ILIKE :q"
-                for c in ("b.broj_sobe", "b.opis", "b.tip", "b.opis_dodatno", "b.veliki_opis", "s.naziv")
+                for c in ("b.broj_sobe", "b.opis", "b.tip", "b.opis_dodatno", "b.veliki_opis", "s.naziv", "m.naziv")
             )
             where = f"WHERE {conds}"
             bind["q"] = like
@@ -1900,18 +1900,28 @@ def create_app(static_dir: str) -> FastAPI:
             rows = conn.execute(text(f"""
                 SELECT b.id, b.veza_id_smestaj, b.broj_sobe, b.opis, b.tip,
                        b.status, b.opis_dodatno, b.veliki_opis,
-                       s.naziv AS smestaj_naziv
+                       s.naziv AS smestaj_naziv, m.naziv AS mesto_naziv
                 FROM sobe b
                 LEFT JOIN smestaj s ON b.veza_id_smestaj = s.id
+                LEFT JOIN mesto m ON m.id = s.mesto
                 {where}
                 ORDER BY s.naziv, b.broj_sobe
                 LIMIT 2000
             """), bind).fetchall()
+            koef_po_strukturi: dict[str, list] = {}
+            for k in conn.execute(text("""
+                SELECT id, struktura, adl, chd, inf, koeficijent, rucno
+                FROM koeficijenti_prodaje
+                ORDER BY rucno, id
+            """)).mappings():
+                koef_po_strukturi.setdefault(k["struktura"], []).append(dict(k))
         return [{
             "id": r.id, "veza_id_smestaj": r.veza_id_smestaj,
             "broj_sobe": r.broj_sobe, "opis": r.opis, "tip": r.tip,
             "status": r.status, "opis_dodatno": r.opis_dodatno,
             "veliki_opis": r.veliki_opis, "smestaj_naziv": r.smestaj_naziv,
+            "mesto_naziv": r.mesto_naziv,
+            "koeficijenti": koef_po_strukturi.get((r.tip or "").strip(), []),
         } for r in rows]
 
     @api.post("/sobe")
@@ -1931,6 +1941,8 @@ def create_app(static_dir: str) -> FastAPI:
                 "opis": body.opis or "", "tip": body.tip or "", "status": body.status if body.status is not None else 1,
                 "opis_dodatno": body.opis_dodatno or "", "veliki_opis": body.veliki_opis or "",
             }).fetchone()
+            # početni koeficijent: soba 1/2 dobija koeficijent 1/2, 1/3 → 1/3 ... (nule ako ne postoji)
+            osiguraj_auto_red(conn, row.tip)
         return {
             "id": row.id, "veza_id_smestaj": row.veza_id_smestaj,
             "broj_sobe": row.broj_sobe, "opis": row.opis, "tip": row.tip,
@@ -1958,6 +1970,8 @@ def create_app(static_dir: str) -> FastAPI:
                 WHERE id = :id
                 RETURNING id, veza_id_smestaj, broj_sobe, opis, tip, status, opis_dodatno, veliki_opis
             """), fields).fetchone()
+            if "tip" in fields:
+                osiguraj_auto_red(conn, row.tip)
         if not row:
             raise HTTPException(status_code=404, detail="Soba nije pronađena")
         return {
