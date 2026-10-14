@@ -267,16 +267,15 @@ export default function SobePage() {
                 <TableHead>Smeštaj</TableHead>
                 <TableHead>Mesto</TableHead>
                 <TableHead>Broj sobe</TableHead>
-                <TableHead>Tip</TableHead>
+                <TableHead>Tip (opis)</TableHead>
                 <TableHead>Koeficijenti</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Opis</TableHead>
                 <TableHead className="w-24 text-right">Akcije</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                   {search.trim() ? "Nema rezultata za pretragu" : "Nema soba. Kliknite Dodaj da kreirate prvu."}
                 </TableCell></TableRow>
               ) : filtered.map((item) => (
@@ -284,7 +283,15 @@ export default function SobePage() {
                   <TableCell className="font-medium">{item.smestaj_naziv || `#${item.veza_id_smestaj}`}</TableCell>
                   <TableCell className="text-muted-foreground">{item.mesto_naziv || "—"}</TableCell>
                   <TableCell className="font-mono">{item.broj_sobe || "—"}</TableCell>
-                  <TableCell>{item.tip || "—"}</TableCell>
+                  <TableCell className="max-w-xs truncate" title={item.tip && item.opis ? `${item.tip} (${item.opis})` : item.tip || item.opis || undefined}>
+                    {item.tip && item.opis ? (
+                      <>{item.tip} <span className="text-muted-foreground">({item.opis})</span></>
+                    ) : item.tip || item.opis ? (
+                      item.tip || item.opis
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {item.tip?.trim() ? (
                       <Button
@@ -309,9 +316,6 @@ export default function SobePage() {
                     <Badge variant={item.status === 1 ? "default" : "secondary"}>
                       {item.status === 1 ? "Aktivan" : "Neaktivan"}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="max-w-xs truncate text-muted-foreground" title={item.opis || undefined}>
-                    {item.opis || "—"}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
