@@ -81,6 +81,20 @@ class KoefRedNovi(BaseModel):
         return value
 
 
+class SobaKoefNovi(BaseModel):
+    struktura: str
+
+    @field_validator("struktura")
+    @classmethod
+    def validna_struktura(cls, value):
+        value = (value or "").strip()
+        if not value:
+            raise ValueError("Struktura je obavezna")
+        if len(value) > 100:
+            raise ValueError("Struktura je predugačka (najviše 100 znakova)")
+        return value
+
+
 def init_koeficijenti(engine):
     with engine.begin() as conn:
         conn.execute(text("""
@@ -99,6 +113,16 @@ def init_koeficijenti(engine):
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_koeficijenti_struktura ON koeficijenti_prodaje (struktura)"
         ))
+        # veza soba ↔ dodatni koeficijenti (osnovni naziv = soba.tip, nije u tabeli)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS soba_koeficijenti (
+                id SERIAL PRIMARY KEY,
+                soba_id INTEGER NOT NULL REFERENCES sobe(id) ON DELETE CASCADE,
+                struktura TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (soba_id, struktura)
+            )
+        """))
 
 
 def _vrati_sve(conn):
@@ -220,3 +244,74 @@ def register_koeficijenti(api, engine, get_current_user):
                 )
             conn.execute(text("DELETE FROM koeficijenti_prodaje WHERE id = :id"), {"id": item_id})
         return {"ok": True}
+
+    # ── Koeficijenti sobe: osnovni naziv = soba.tip + dodatni definisani nazivi ──
+
+    def _soba_tip(conn, soba_id):
+        soba = conn.execute(text(
+            "SELECT id, TRIM(tip) AS tip FROM sobe WHERE id = :id"
+        ), {"id": soba_id}).fetchone()
+        if not soba:
+            raise HTTPException(status_code=404, detail="Soba nije pronađena")
+        return soba
+
+    def _soba_koef_odgovor(conn, soba):
+        dodati = [r[0] for r in conn.execute(text(
+            "SELECT struktura FROM soba_koeficijenti WHERE soba_id = :id ORDER BY id"
+        ), {"id": soba.id}).fetchall()]
+        return {"tip": soba.tip, "dodati": dodati}
+
+    @api.get("/sobe/{item_id}/koeficijenti")
+    def soba_koeficijenti(item_id: int, _: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            return _soba_koef_odgovor(conn, _soba_tip(conn, item_id))
+
+    @api.post("/sobe/{item_id}/koeficijenti")
+    def dodaj_sobi_koeficijent(item_id: int, body: SobaKoefNovi, _: dict = Depends(get_current_user)):
+        s = body.struktura
+        with engine.begin() as conn:
+            soba = _soba_tip(conn, item_id)
+            if s == soba.tip:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Koeficijent {s} je već osnovni koeficijent sobe",
+                )
+            vec = conn.execute(text(
+                "SELECT 1 FROM soba_koeficijenti WHERE soba_id = :id AND struktura = :s"
+            ), {"id": item_id, "s": s}).fetchone()
+            if vec:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Koeficijent {s} je već dodat sobi",
+                )
+            definisan = conn.execute(text("""
+                SELECT 1 FROM sobe WHERE tip IS NOT NULL AND TRIM(tip) = :s LIMIT 1
+            """), {"s": s}).fetchone() or conn.execute(text(
+                "SELECT 1 FROM koeficijenti_prodaje WHERE struktura = :s LIMIT 1"
+            ), {"s": s}).fetchone()
+            if not definisan:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Koeficijent {s} ne postoji na stranici Koeficijenti prodaje",
+                )
+            conn.execute(text(
+                "INSERT INTO soba_koeficijenti (soba_id, struktura) VALUES (:id, :s)"
+            ), {"id": item_id, "s": s})
+            return _soba_koef_odgovor(conn, soba)
+
+    @api.delete("/sobe/{item_id}/koeficijenti")
+    def obrisi_sobi_koeficijent(item_id: int, struktura: str, _: dict = Depends(get_current_user)):
+        s = (struktura or "").strip()
+        with engine.begin() as conn:
+            soba = _soba_tip(conn, item_id)
+            if s == soba.tip:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Osnovni koeficijent (po strukturi sobe) se ne može ukloniti",
+                )
+            brisanje = conn.execute(text(
+                "DELETE FROM soba_koeficijenti WHERE soba_id = :id AND struktura = :s"
+            ), {"id": item_id, "s": s}).rowcount
+            if not brisanje:
+                raise HTTPException(status_code=404, detail="Koeficijent nije dodat sobi")
+            return _soba_koef_odgovor(conn, soba)

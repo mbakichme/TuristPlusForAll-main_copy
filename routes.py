@@ -1908,20 +1908,20 @@ def create_app(static_dir: str) -> FastAPI:
                 ORDER BY s.naziv, b.broj_sobe
                 LIMIT 2000
             """), bind).fetchall()
-            koef_po_strukturi: dict[str, list] = {}
-            for k in conn.execute(text("""
-                SELECT id, struktura, adl, chd, inf, koeficijent, rucno
-                FROM koeficijenti_prodaje
-                ORDER BY rucno, id
-            """)).mappings():
-                koef_po_strukturi.setdefault(k["struktura"], []).append(dict(k))
+            dodati_po_sobi: dict[int, list[str]] = {}
+            for dk in conn.execute(text(
+                "SELECT soba_id, struktura FROM soba_koeficijenti ORDER BY id"
+            )).fetchall():
+                dodati_po_sobi.setdefault(dk[0], []).append(dk[1])
         return [{
             "id": r.id, "veza_id_smestaj": r.veza_id_smestaj,
             "broj_sobe": r.broj_sobe, "opis": r.opis, "tip": r.tip,
             "status": r.status, "opis_dodatno": r.opis_dodatno,
             "veliki_opis": r.veliki_opis, "smestaj_naziv": r.smestaj_naziv,
             "mesto_naziv": r.mesto_naziv,
-            "koeficijenti": koef_po_strukturi.get((r.tip or "").strip(), []),
+            # nazivi koeficijenata: osnovni (po tipu sobe) + dodatni definisani
+            "koeficijenti": ([(r.tip or "").strip()] if (r.tip or "").strip() else [])
+                + dodati_po_sobi.get(r.id, []),
         } for r in rows]
 
     @api.post("/sobe")

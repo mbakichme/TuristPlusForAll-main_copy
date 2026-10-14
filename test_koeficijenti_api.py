@@ -101,40 +101,52 @@ def main():
         assert len(dupl) == 1, dupl
         print("[soba] druga soba istog tipa ne duplira auto red")
 
-        # GET /sobe: mesto_naziv + koeficijenti vezani za tip sobe
+        # GET /sobe: mesto_naziv + koeficijenti kao NAZIVI (osnovni = tip sobe)
         r = client.get("/sobe", params={"q": "TEST-KOEF"})
         assert r.status_code == 200, r.text
         pronadjene = [x for x in r.json() if x["id"] in (soba_id, soba2_id)]
         assert len(pronadjene) == 2, pronadjene
         for x in pronadjene:
             assert x["mesto_naziv"], x
-            assert len(x["koeficijenti"]) == 1 and x["koeficijenti"][0]["struktura"] == test_tip, x
-        print(f"[sobe] mesto_naziv='{pronadjene[0]['mesto_naziv']}' + koeficijenti po strukturi u listi soba")
+            assert x["koeficijenti"] == [test_tip], x
+        print(f"[sobe] mesto_naziv='{pronadjene[0]['mesto_naziv']}' + koeficijenti kao nazivi {[test_tip]}")
 
-        # više koeficijenata za istu strukturu: POST /koeficijenti/red
+        # ručni zapis sa vrednostima (POST /koeficijenti/red) — i dalje deo API-ja
         r = client.post("/koeficijenti/red", json={"struktura": test_tip, "adl": 2, "chd": 1, "inf": 0,
                                                    "koeficijent": 1.25})
         assert r.status_code == 201, r.text
         rucni = r.json()
         assert rucni["rucno"] is True and rucni["id"]
         assert client.post("/koeficijenti/red", json={"struktura": test_tip, "adl": -1}).status_code == 422
-        assert client.post("/koeficijenti/red", json={"struktura": "   "}).status_code == 422
-        # lista po strukturi: auto prvi, ručni posle; implicitni red kad nema zapisa
-        struktura_odg = client.get("/koeficijenti/struktura", params={"struktura": test_tip}).json()
-        assert [x["rucno"] for x in struktura_odg["redovi"]] == [False, True], struktura_odg
-        implicit = client.get("/koeficijenti/struktura", params={"struktura": "NEPOSTOJI/99"}).json()
-        assert len(implicit["redovi"]) == 1 and implicit["redovi"][0]["id"] is None, implicit
-        print("[red] dodat ručni koeficijent (id=%s); GET struktura vraća auto+ručni; implicitni red za nepoznatu" % rucni["id"])
-
-        # brisanje: ručni OK, auto zabranjeno, nepoznat 404
         assert client.delete(f'/koeficijenti/red/{auto_id}').status_code == 400
         assert client.delete("/koeficijenti/red/999999999").status_code == 404
         assert client.delete(f'/koeficijenti/red/{rucni["id"]}').status_code == 200
-        ostali = [x for x in client.get("/koeficijenti/struktura", params={"struktura": test_tip}).json()["redovi"]]
-        assert len(ostali) == 1 and ostali[0]["id"] == auto_id
-        print("[red] ručni obrisan, auto zaštićen (400), nepoznat 404")
+        print("[red] rucni zapis sa vrednostima: 201, validacija 422, auto zasticen (400)")
 
-        print("PASS: auth, strukture iz soba (dedup), auto+rucni redovi za istu strukturu, diff cuva ID, validacija, atomicnost, auto-koef pri dodavanju sobe")
+        # više koeficijenata za jednu sobu: soba 1/3 dobija dodatni koeficijent (naziv) 1/2
+        s1 = strukture[0]
+        r = client.post(f"/sobe/{soba_id}/koeficijenti", json={"struktura": s1})
+        assert r.status_code == 200, r.text
+        assert r.json() == {"tip": test_tip, "dodati": [s1]}, r.json()
+        assert client.post(f"/sobe/{soba_id}/koeficijenti", json={"struktura": s1}).status_code == 400
+        assert client.post(f"/sobe/{soba_id}/koeficijenti", json={"struktura": test_tip}).status_code == 400
+        assert client.post(f"/sobe/{soba_id}/koeficijenti", json={"struktura": "   "}).status_code == 422
+        assert client.post(f"/sobe/{soba_id}/koeficijenti", json={"struktura": "NEPOSTOJI/XX"}).status_code == 400
+        assert client.get(f"/sobe/{soba_id}/koeficijenti").json() == {"tip": test_tip, "dodati": [s1]}
+        soba1 = next(x for x in client.get("/sobe", params={"q": "TEST-KOEF"}).json() if x["id"] == soba_id)
+        assert soba1["koeficijenti"] == [test_tip, s1], soba1
+        print(f"[soba-koef] soba '{test_tip}' dobila dodatni koeficijent (naziv) '{s1}'; dupliran/osnovni/nedefinisan → 400")
+
+        # brisanje dodatnog koeficijenta: osnovni → 400, dodatni → 200, nepoznat → 404
+        assert client.delete(f"/sobe/{soba_id}/koeficijenti", params={"struktura": test_tip}).status_code == 400
+        assert client.delete(f"/sobe/{soba_id}/koeficijenti", params={"struktura": "NEPOSTOJI/XX"}).status_code == 404
+        r = client.delete(f"/sobe/{soba_id}/koeficijenti", params={"struktura": s1})
+        assert r.status_code == 200 and r.json() == {"tip": test_tip, "dodati": []}
+        soba1 = next(x for x in client.get("/sobe", params={"q": "TEST-KOEF"}).json() if x["id"] == soba_id)
+        assert soba1["koeficijenti"] == [test_tip], soba1
+        print("[soba-koef] dodatni koeficijent uklonjen, osnovni zaštićen (400)")
+
+        print("PASS: auth, strukture iz soba (dedup), auto+rucni redovi za istu strukturu, diff cuva ID, validacija, atomicnost, auto-koef pri dodavanju sobe, veza soba↔koeficijent po nazivu")
     finally:
         with engine.begin() as conn:
             for item_id in created:

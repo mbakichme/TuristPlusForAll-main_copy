@@ -44,8 +44,7 @@ export interface Mesto { id: number; naziv: string; drzava?: number; drzava_nazi
 export interface TipSmestaja { id: number; naziv: string; }
 export interface Smestaj { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; mesto?: number; mesto_naziv?: string; tip_smestaja?: number; tip_smestaja_naziv?: string; grupa_datuma?: number | null; grupa_datuma_naziv?: string | null; status: number; organizator?: number; predstavnik?: number; grafik: number; }
 
-export interface KoefZapis { id: number | null; struktura: string; adl: number; chd: number; inf: number; koeficijent: number; rucno: boolean; }
-export interface Soba { id: number; veza_id_smestaj: number; smestaj_naziv?: string | null; mesto_naziv?: string | null; broj_sobe: string; opis: string; tip: string; status: number; opis_dodatno: string; veliki_opis: string; koeficijenti?: KoefZapis[]; }
+export interface Soba { id: number; veza_id_smestaj: number; smestaj_naziv?: string | null; mesto_naziv?: string | null; broj_sobe: string; opis: string; tip: string; status: number; opis_dodatno: string; veliki_opis: string; koeficijenti?: string[]; }
 
 export interface Polazak { id: number; destinacija: string | null; polazak: string | null; sat: string | null; valuta: string | null; adlrt: number | null; chdrt: number | null; infrt: number | null; adlow: number | null; chdow: number | null; infow: number | null; }
 

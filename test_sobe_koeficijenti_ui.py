@@ -67,34 +67,34 @@ def main():
             expect(red).to_have_count(1, timeout=15000)
             expect(red.locator("td").nth(0)).to_have_text(smestaj_naziv)
             koef_dugme = red.get_by_label(f"Koeficijenti — soba {BROJ}")
-            expect(koef_dugme).to_have_text("0")
-            print("[auto] početni koeficijent '0' već u koloni (server ga je kreirao sa sobom)")
+            expect(koef_dugme).to_have_text(TIP)
+            print(f"[auto] kolona prikazuje naziv koeficijenta '{TIP}' odmah posle kreiranja sobe")
 
-            # ── Dialog: auto red + dodavanje više koeficijenata ──
+            # ── Dialog: osnovni naziv + dodavanje dodatnog definisanog ──
             koef_dugme.click()
             dialog = page.locator('[role="alertdialog"], [role="dialog"]').filter(has_text="Koeficijenti —")
-            expect(dialog.get_by_text(f"Struktura")).to_be_visible(timeout=15000)
+            expect(dialog.get_by_text("Osnovni")).to_be_visible(timeout=15000)
             redovi_dijaloga = dialog.locator("table tbody tr")
             expect(redovi_dijaloga).to_have_count(1)
-            expect(redovi_dijaloga.first.get_by_label(f"Obriši koeficijent 0")).to_have_count(0)
-            print("[dijalog] auto red bez trash-a")
+            expect(redovi_dijaloga.first.get_by_label(f"Ukloni koeficijent {TIP}")).to_have_count(0)
+            print("[dijalog] osnovni koeficijent (naziv = struktura sobe) bez uklanjanja")
 
             dialog.get_by_role("button", name="Dodaj koeficijent").click()
-            dialog.get_by_label("Novi koeficijent — Adl").fill("2")
-            dialog.get_by_label("Novi koeficijent — vrednost").fill("1,5")
+            dialog.get_by_label("Novi koeficijent — naziv").click()
+            page.get_by_role("option", name="1/2", exact=True).first.click()
             dialog.get_by_role("button", name="Dodaj", exact=True).click()
-            expect(page.get_by_text("Koeficijent dodat")).to_be_visible(timeout=15000)
+            expect(page.get_by_text("je dodat sobi")).to_be_visible(timeout=15000)
             expect(redovi_dijaloga).to_have_count(2, timeout=15000)
-            expect(redovi_dijaloga.nth(1).get_by_label("Obriši koeficijent 1.5")).to_be_visible()
-            expect(koef_dugme).to_have_text("0 · 1.5")
-            print("[dodaj] drugi koeficijent (Adl=2, 1,5→1.5); kolona u tabeli '0 · 1.5'")
+            expect(redovi_dijaloga.nth(1).get_by_label("Ukloni koeficijent 1/2")).to_be_visible()
+            expect(koef_dugme).to_have_text(f"{TIP} · 1/2")
+            print("[dodaj] soba 1/3-tipa dobila dodatni koeficijent (naziv) 1/2; kolona 'TST/8 · 1/2'")
 
-            # ── Brisanje ručnog koeficijenta ──
-            redovi_dijaloga.nth(1).get_by_label("Obriši koeficijent 1.5").click()
-            expect(page.get_by_text("Koeficijent obrisan")).to_be_visible(timeout=15000)
+            # ── Brisanje dodatnog koeficijenta ──
+            redovi_dijaloga.nth(1).get_by_label("Ukloni koeficijent 1/2").click()
+            expect(page.get_by_text("je uklonjen")).to_be_visible(timeout=15000)
             expect(redovi_dijaloga).to_have_count(1, timeout=15000)
-            expect(koef_dugme).to_have_text("0")
-            print("[brisi] ručni koeficijent obrisan; kolona nazad na '0'")
+            expect(koef_dugme).to_have_text(TIP)
+            print("[brisi] dodatni koeficijent uklonjen; kolona nazad na osnovni naziv")
 
             dialog.get_by_role("button", name="Zatvori").click()
 
@@ -115,6 +115,9 @@ def main():
             with engine.begin() as conn:
                 conn.execute(text("DELETE FROM sobe WHERE broj_sobe = :b AND tip = :t"), {"b": BROJ, "t": TIP})
                 conn.execute(text("DELETE FROM koeficijenti_prodaje WHERE struktura = :t"), {"t": TIP})
+                conn.execute(text(
+                    "DELETE FROM soba_koeficijenti WHERE struktura = :t AND soba_id NOT IN (SELECT id FROM sobe)"
+                ), {"t": TIP})
             with engine.connect() as conn:
                 ostalo = conn.execute(text("SELECT COUNT(*) FROM koeficijenti_prodaje WHERE struktura = :t"), {"t": TIP}).scalar()
             assert ostalo == 0

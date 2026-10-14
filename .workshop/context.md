@@ -24,6 +24,13 @@
 - Dirty-guard: isti AlertDialog mehanizam kao Cenovnici (beforeunload + document click capture + "Odbaciti nesačuvane izmene?")
 - Test: `test_koeficijenti_api.py` + `test_koeficijenti_ui.py` (Playwright; ručni red posle save-a tražiti preko filter(has=combobox) + get_by_role("textbox").nth(), NE po labeli sa red-br — sortiranje menja poziciju)
 
+## Sobe (/agencija/sobe) + koeficijenti (2026-10-14, commit e499863)
+- GET /sobe vraća i `mesto_naziv` (JOIN mesto) i `koeficijenti` (lista zapisa za sobu.tip, grupisano po strukturi); server q-pretraga uključuje m.naziv
+- POST /sobe i PUT /sobe (promena tipa) pozivaju `osiguraj_auto_red(conn, tip)` — soba 1/2 inicijalno dobija koeficijent 1/2 (nule, rucno=FALSE); druga soba istog tipa ne duplira red
+- koeficijenti_api novi endpointi: GET /koeficijenti/struktura?struktura=1/2 (implicitni auto-red sa nulama kad nema zapisa), POST /koeficijenti/red (rucno=TRUE, 201), DELETE /koeficijenti/red/{id} (samo rucno; auto → 400, nepoznat → 404)
+- SobePage: kolone Smeštaj | Mesto | Broj sobe | Tip | Koeficijenti (dugme sa vrednostima "0 · 1.5") | Status | Opis | Akcije; dialog sa listom koeficijenata, "Dodaj koeficijent" formom (Adl/Chd/Inf/koef, ista validacija) i trash-om samo na ručnim redovima
+- Test: `test_sobe_koeficijenti_ui.py` (kreira sobu TST/8 preko UI-ja, testira auto koef, dialog, brisanje; čisti svoje podatke); sheet polja NEMAJU programski vezane labele → test koristi get_by_placeholder; red ima 3 dugmeta (koef, pencil, trash=button.text-destructive)
+
 ## Rezervacije (RezervacijePage) — Sačuvaj/Izmeni (gotovo)
 - Backend: `POST /rezervacije` (novi) + `PUT /rezervacije/{kljuc}` (izmena); numeracija MAX(broj) unutar godine iz datumod + 1; advisory lock + UNIQUE(kljuc) + retry
 - `tipOpcije`: nepoznat tiprezervacije iz baze se dodaje u Select; CUVAR sentinel za sačuvane nazive van referentnih lista

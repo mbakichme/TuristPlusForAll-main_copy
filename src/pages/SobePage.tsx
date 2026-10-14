@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import type { Soba, Smestaj, KoefZapis } from "../types";
+import type { Soba, Smestaj } from "../types";
 import { apiFetch } from "../lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,23 +38,6 @@ interface SobaForm {
 
 const emptyForm: SobaForm = { veza_id_smestaj: "", broj_sobe: "", tip: "", status: "1", opis: "", opis_dodatno: "", veliki_opis: "" };
 
-const INT_RE = /^\d+$/;
-const KOEF_RE = /^\d*(?:\.\d{1,4})?$/;
-
-/** double → prikaz bez suvišnih nula (1.50 → „1.5“, 2 → „2“). */
-function fmtKoef(vrednost: number): string {
-  return String(Math.round(vrednost * 1000000) / 1000000);
-}
-
-interface KoefForma {
-  adl: string;
-  chd: string;
-  inf: string;
-  koeficijent: string;
-}
-
-const emptyKoefForma: KoefForma = { adl: "0", chd: "0", inf: "0", koeficijent: "0" };
-
 export default function SobePage() {
   const [items, setItems] = useState<Soba[]>([]);
   const [smestaji, setSmestaji] = useState<Smestaj[]>([]);
@@ -66,14 +49,16 @@ export default function SobePage() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<SobaForm>(emptyForm);
 
-  // Koeficijenti sobe (dialog)
+  // Koeficijenti sobe (dialog): osnovni naziv = tip sobe + dodatni definisani nazivi
   const [koefSoba, setKoefSoba] = useState<Soba | null>(null);
-  const [koefRedovi, setKoefRedovi] = useState<KoefZapis[]>([]);
+  const [koefTip, setKoefTip] = useState("");
+  const [koefDodati, setKoefDodati] = useState<string[]>([]);
+  const [koefOpcije, setKoefOpcije] = useState<string[]>([]); // definisani koeficijenti (nazivi)
   const [koefLoading, setKoefLoading] = useState(false);
+  const [koefNova, setKoefNova] = useState("");
   const [koefDodajOpen, setKoefDodajOpen] = useState(false);
-  const [koefForma, setKoefForma] = useState<KoefForma>(emptyKoefForma);
   const [koefSnima, setKoefSnima] = useState(false);
-  const [koefBrise, setKoefBrise] = useState<number | null>(null);
+  const [koefBrise, setKoefBrise] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -101,15 +86,25 @@ export default function SobePage() {
     );
   }, [items, search]);
 
-  // ── Koeficijenti sobe ─────────────────────────────────────────────────────
+  // ── Koeficijenti sobe: nazivi (osnovni = tip sobe) + dodatni definisani ────
 
-  async function ucitajKoefRedove(tip: string) {
+  const koefDostupne = useMemo(
+    () => koefOpcije.filter((s) => s !== koefTip && !koefDodati.includes(s)),
+    [koefOpcije, koefTip, koefDodati],
+  );
+
+  async function ucitajKoefSobe(soba: Soba) {
     setKoefLoading(true);
     try {
-      const d = await apiFetch<{ struktura: string; redovi: KoefZapis[] }>(
-        `/koeficijenti/struktura?struktura=${encodeURIComponent(tip.trim())}`
-      );
-      setKoefRedovi(d.redovi);
+      const [podaci, definisani] = await Promise.all([
+        apiFetch<{ tip: string; dodati: string[] }>(`/sobe/${soba.id}/koeficijenti`),
+        apiFetch<{ strukture: string[]; redovi: { struktura: string }[] }>("/koeficijenti"),
+      ]);
+      setKoefTip(podaci.tip);
+      setKoefDodati(podaci.dodati);
+      const skup = new Set(definisani.strukture);
+      for (const r of definisani.redovi) if (r.struktura) skup.add(r.struktura);
+      setKoefOpcije([...skup].sort((a, b) => a.localeCompare(b, "sr")));
     } catch {
       toast.error("Učitavanje koeficijenata nije uspelo");
     } finally {
@@ -120,49 +115,24 @@ export default function SobePage() {
   function otvoriKoeficijente(soba: Soba) {
     setKoefSoba(soba);
     setKoefDodajOpen(false);
-    setKoefForma(emptyKoefForma);
-    void ucitajKoefRedove(soba.tip);
+    setKoefNova("");
+    void ucitajKoefSobe(soba);
   }
 
-  function koefPolje(key: keyof KoefForma, vrednost: string) {
-    setKoefForma((f) => ({ ...f, [key]: vrednost }));
-  }
-
-  async function sacuvajKoef() {
-    if (!koefSoba || koefSnima) return;
-    const struktura = koefSoba.tip.trim();
-    for (const polje of ["adl", "chd", "inf"] as const) {
-      const v = koefForma[polje].trim();
-      if (v !== "" && (!INT_RE.test(v) || Number(v) > 99)) {
-        toast.error(`${polje.toUpperCase()} mora biti ceo broj od 0 do 99`);
-        return;
-      }
-    }
-    const k = koefForma.koeficijent.trim().replace(/,/g, ".");
-    if (k !== "" && !KOEF_RE.test(k)) {
-      toast.error("Koeficijent mora biti nenegativan broj sa najviše 4 decimale (npr. 1,25)");
-      return;
-    }
-    if (k !== "" && Number(k) >= 1000000) {
-      toast.error("Koeficijent mora biti manji od 1.000.000");
-      return;
-    }
+  async function dodajKoefSobi() {
+    if (!koefSoba || koefSnima || !koefNova) return;
+    const struktura = koefNova;
     setKoefSnima(true);
     try {
-      await apiFetch("/koeficijenti/red", {
-        method: "POST",
-        body: JSON.stringify({
-          struktura,
-          adl: koefForma.adl.trim() === "" ? 0 : Number(koefForma.adl),
-          chd: koefForma.chd.trim() === "" ? 0 : Number(koefForma.chd),
-          inf: koefForma.inf.trim() === "" ? 0 : Number(koefForma.inf),
-          koeficijent: k === "" ? 0 : Number(k),
-        }),
-      });
-      toast.success("Koeficijent dodat");
+      const d = await apiFetch<{ tip: string; dodati: string[] }>(
+        `/sobe/${koefSoba.id}/koeficijenti`,
+        { method: "POST", body: JSON.stringify({ struktura }) },
+      );
+      setKoefTip(d.tip);
+      setKoefDodati(d.dodati);
       setKoefDodajOpen(false);
-      setKoefForma(emptyKoefForma);
-      await ucitajKoefRedove(struktura);
+      setKoefNova("");
+      toast.success(`Koeficijent ${struktura} je dodat sobi`);
       void load(); // osveži prikaz u koloni tabele
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Greška");
@@ -171,12 +141,17 @@ export default function SobePage() {
     }
   }
 
-  async function obrisiKoef(id: number) {
-    setKoefBrise(id);
+  async function obrisiKoefSobi(struktura: string) {
+    if (!koefSoba || koefBrise) return;
+    setKoefBrise(struktura);
     try {
-      await apiFetch(`/koeficijenti/red/${id}`, { method: "DELETE" });
-      toast.success("Koeficijent obrisan");
-      if (koefSoba) await ucitajKoefRedove(koefSoba.tip);
+      const d = await apiFetch<{ tip: string; dodati: string[] }>(
+        `/sobe/${koefSoba.id}/koeficijenti?struktura=${encodeURIComponent(struktura)}`,
+        { method: "DELETE" },
+      );
+      setKoefTip(d.tip);
+      setKoefDodati(d.dodati);
+      toast.success(`Koeficijent ${struktura} je uklonjen`);
       void load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Greška");
@@ -322,8 +297,8 @@ export default function SobePage() {
                         <Sigma className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="tabular-nums">
                           {item.koeficijenti && item.koeficijenti.length > 0
-                            ? item.koeficijenti.map((k) => fmtKoef(Number(k.koeficijent))).join(" · ")
-                            : "0"}
+                            ? item.koeficijenti.join(" · ")
+                            : "—"}
                         </span>
                       </Button>
                     ) : (
@@ -412,14 +387,14 @@ export default function SobePage() {
 
       {/* Koeficijenti sobe */}
       <Dialog open={koefSoba !== null} onOpenChange={(o) => { if (!o) setKoefSoba(null); }}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
               Koeficijenti — {koefSoba?.smestaj_naziv}{koefSoba?.broj_sobe ? ` · ${koefSoba.broj_sobe}` : ""}
             </DialogTitle>
             <DialogDescription>
-              Struktura <span className="font-semibold text-foreground">{koefSoba?.tip || "—"}</span>. Za istu
-              strukturu možete definisati više koeficijenata.
+              Osnovni koeficijent prati strukturu sobe. Dodatni koeficijenti se biraju iz već
+              definisanih na stranici Koeficijenti prodaje.
             </DialogDescription>
           </DialogHeader>
           {koefLoading ? (
@@ -432,43 +407,45 @@ export default function SobePage() {
                 <table className="w-full border-collapse text-sm">
                   <thead>
                     <tr className="border-b bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-3 py-2 text-center font-medium">Adl</th>
-                      <th className="px-3 py-2 text-center font-medium">Chd</th>
-                      <th className="px-3 py-2 text-center font-medium">Inf</th>
-                      <th className="px-3 py-2 text-center font-medium">Koeficijent</th>
+                      <th className="px-3 py-2 text-left font-medium">Koeficijent</th>
+                      <th className="w-24 px-3 py-2 text-center font-medium">Vrsta</th>
                       <th className="w-12 px-2 py-2"><span className="sr-only">Akcije</span></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {koefRedovi.map((k) => {
-                      const kid = k.id;
-                      return (
-                        <tr key={kid ?? "auto"} className="border-b last:border-b-0 hover:bg-muted/20">
-                          <td className="px-3 py-1.5 text-center tabular-nums">{k.adl}</td>
-                          <td className="px-3 py-1.5 text-center tabular-nums">{k.chd}</td>
-                          <td className="px-3 py-1.5 text-center tabular-nums">{k.inf}</td>
-                          <td className="px-3 py-1.5 text-center font-medium tabular-nums">{fmtKoef(Number(k.koeficijent))}</td>
-                          <td className="px-2 py-1.5 text-center">
-                            {k.rucno && kid !== null && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                aria-label={`Obriši koeficijent ${fmtKoef(Number(k.koeficijent))}`}
-                                onClick={() => void obrisiKoef(kid)}
-                                disabled={koefBrise === kid}
-                              >
-                                {koefBrise === kid
-                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  : <Trash2 className="h-3.5 w-3.5" />}
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {koefRedovi.length === 0 && (
-                      <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">Nema zapisa.</td></tr>
+                    {koefTip && (
+                      <tr className="border-b last:border-b-0 hover:bg-muted/20">
+                        <td className="px-3 py-1.5 font-medium tabular-nums">{koefTip}</td>
+                        <td className="px-3 py-1.5 text-center"><Badge variant="secondary">Osnovni</Badge></td>
+                        <td />
+                      </tr>
+                    )}
+                    {koefDodati.map((s) => (
+                      <tr key={s} className="border-b last:border-b-0 hover:bg-muted/20">
+                        <td className="px-3 py-1.5 font-medium tabular-nums">{s}</td>
+                        <td className="px-3 py-1.5 text-center"><Badge variant="outline">Dodatni</Badge></td>
+                        <td className="px-2 py-1.5 text-center">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            aria-label={`Ukloni koeficijent ${s}`}
+                            onClick={() => void obrisiKoefSobi(s)}
+                            disabled={koefBrise !== null}
+                          >
+                            {koefBrise === s
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <Trash2 className="h-3.5 w-3.5" />}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!koefTip && koefDodati.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="px-3 py-6 text-center text-muted-foreground">
+                          Nema koeficijenata.
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
@@ -476,37 +453,28 @@ export default function SobePage() {
 
               {koefDodajOpen && (
                 <div className="space-y-3 rounded-lg border p-3">
-                  <div className="grid grid-cols-4 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Adl</Label>
-                      <Input value={koefForma.adl} inputMode="numeric" aria-label="Novi koeficijent — Adl"
-                        onChange={(e) => koefPolje("adl", e.target.value)}
-                        className="h-8 text-center tabular-nums" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Chd</Label>
-                      <Input value={koefForma.chd} inputMode="numeric" aria-label="Novi koeficijent — Chd"
-                        onChange={(e) => koefPolje("chd", e.target.value)}
-                        className="h-8 text-center tabular-nums" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Inf</Label>
-                      <Input value={koefForma.inf} inputMode="numeric" aria-label="Novi koeficijent — Inf"
-                        onChange={(e) => koefPolje("inf", e.target.value)}
-                        className="h-8 text-center tabular-nums" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">Koeficijent</Label>
-                      <Input value={koefForma.koeficijent} inputMode="decimal" aria-label="Novi koeficijent — vrednost"
-                        onChange={(e) => koefPolje("koeficijent", e.target.value)}
-                        className="h-8 text-center tabular-nums" />
-                    </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Koeficijent (naziv)</Label>
+                    <Select value={koefNova} onValueChange={setKoefNova} disabled={koefSnima}>
+                      <SelectTrigger className="h-9 w-full bg-background" aria-label="Novi koeficijent — naziv">
+                        <SelectValue
+                          placeholder={koefDostupne.length ? "Izaberite koeficijent" : "Nema dostupnih koeficijenata"}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {koefDostupne.length === 0 ? (
+                          <SelectItem value="_nema" disabled>Svi definisani koeficijenti su već dodati</SelectItem>
+                        ) : (
+                          koefDostupne.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)
+                        )}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => { setKoefDodajOpen(false); setKoefForma(emptyKoefForma); }}>
+                    <Button variant="outline" size="sm" onClick={() => { setKoefDodajOpen(false); setKoefNova(""); }}>
                       Otkaži
                     </Button>
-                    <Button size="sm" onClick={() => void sacuvajKoef()} disabled={koefSnima}>
+                    <Button size="sm" onClick={() => void dodajKoefSobi()} disabled={koefSnima || !koefNova}>
                       {koefSnima && <Loader2 className="h-4 w-4 animate-spin" />}
                       Dodaj
                     </Button>
@@ -517,7 +485,10 @@ export default function SobePage() {
           )}
           <DialogFooter>
             {!koefDodajOpen && (
-              <Button variant="outline" onClick={() => { setKoefDodajOpen(true); setKoefForma(emptyKoefForma); }}>
+              <Button
+                variant="outline"
+                onClick={() => { setKoefDodajOpen(true); setKoefNova(koefDostupne[0] ?? ""); }}
+              >
                 <Plus className="h-4 w-4" />
                 Dodaj koeficijent
               </Button>
