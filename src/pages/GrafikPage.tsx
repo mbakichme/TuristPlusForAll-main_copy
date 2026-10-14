@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, MouseEvent as ReactMouseEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import type { Mesto, Smestaj, PeriodGrupa, UgovorDetail } from "../types";
 import { apiFetch } from "../lib/api";
@@ -50,6 +50,10 @@ function pDate(s: string): Date {
   return new Date(y, m - 1, d);
 }
 
+/** Date → DD.MM.YYYY */
+const fmtDatum = (d: Date) =>
+  `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+
 const fmtEur = (v: number | null | undefined) =>
   v == null ? "—" : `${v.toLocaleString("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 
@@ -83,8 +87,6 @@ function UgovorTooltip({ u }: { u: GrafikUgovor }) {
  *  20.05 je zajednička granica, a 27.05 i 30.05 odvojene. Širine kolona su
  *  proporcionalne trajanju, a pojasevi/beline su procenti te iste ose. */
 function grafikGeometrija(data: GrafikData) {
-  const fmt = (d: Date) =>
-    `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
   // 1) granice ose = unikatni datumi svih početaka i krajeva perioda, hronološki
   const mapa = new Map<number, Date>();
   for (const x of data.periodi) {
@@ -99,8 +101,8 @@ function grafikGeometrija(data: GrafikData) {
   const pct = (d: Date) => (total > 0 ? ((d.getTime() - t0) / total) * 100 : 0);
   // kolone = intervali između susednih granica (klik na slobodnu kolonu)
   const kolone = granice.slice(0, -1).map((od, i) => ({
-    datum_od: fmt(od),
-    datum_do: fmt(granice[i + 1]),
+    datum_od: fmtDatum(od),
+    datum_do: fmtDatum(granice[i + 1]),
     leftPct: pct(od),
     widthPct: pct(granice[i + 1]) - pct(od),
   }));
@@ -132,38 +134,76 @@ function grafikGeometrija(data: GrafikData) {
     let cursor = new Date(t0);
     for (const s of [...ss].sort((x, y) => x.od.getTime() - y.od.getTime())) {
       if (s.od.getTime() > cursor.getTime() + 1000) {
-        arr2.push({ leftPct: pct(cursor), widthPct: pct(s.od) - pct(cursor), od: fmt(cursor), doo: fmt(s.od) });
+        arr2.push({ leftPct: pct(cursor), widthPct: pct(s.od) - pct(cursor), od: fmtDatum(cursor), doo: fmtDatum(s.od) });
       }
       if (s.doo.getTime() > cursor.getTime()) cursor = s.doo;
     }
     if (t1 > cursor.getTime() + 1000) {
-      arr2.push({ leftPct: pct(cursor), widthPct: 100 - pct(cursor), od: fmt(cursor), doo: fmt(new Date(t1)) });
+      arr2.push({ leftPct: pct(cursor), widthPct: 100 - pct(cursor), od: fmtDatum(cursor), doo: fmtDatum(new Date(t1)) });
     }
     if (arr2.length > 0) gaps.set(key, arr2);
   }
-  return { kolone, linije, spans, gaps };
+  return { kolone, linije, spans, gaps, t0, t1 };
 }
 
-/** Period Grupe koji odgovara kliknutom intervalu: tačno poklapanje pobeđuje,
- *  inače najuži period koji POTPUNO sadrži klik (npr. klik na zonu 27.05–30.05
- *  unutar preklapajućih perioda 20.05–27.05 i 20.05–30.05 nudi baš 20.05–30.05).
+/** Slobodni pod-intervali [od, doo] nakon odbijanja zauzeća sobe (preklapanja). */
+function slobodniIntervali(od: Date, doo: Date, zauzeca: { od: Date; doo: Date }[]): { od: Date; doo: Date }[] {
+  let rez: { od: Date; doo: Date }[] = [{ od, doo }];
+  for (const z of zauzeca) {
+    const sledeci: { od: Date; doo: Date }[] = [];
+    for (const r of rez) {
+      if (z.doo.getTime() <= r.od.getTime() || z.od.getTime() >= r.doo.getTime()) {
+        sledeci.push(r);
+        continue;
+      }
+      if (z.od.getTime() > r.od.getTime()) sledeci.push({ od: r.od, doo: z.od });
+      if (z.doo.getTime() < r.doo.getTime()) sledeci.push({ od: z.doo, doo: r.doo });
+    }
+    rez = sledeci;
+  }
+  return rez.filter((r) => r.doo.getTime() > r.od.getTime());
+}
+
+/** Ponuda za klik na slobodan termin: period Grupe na poziciji klika (prefereira
+ *  se najuži period koji sadrži i celu kliknutu zonu), sužen na SLOBODAN deo
+ *  sobe. Primeri: klik u zoni 27.05–30.05 (soba slobodna) → period 20.05–30.05;
+ *  DIMITRA 14.07–20.07 sa rezervacijom 14.07–17.07 → slobodni deo 17.07–20.07;
+ *  belina 04.06–02.10 kroz više smena, klik u smeni 04.06–14.06 → 04.06–14.06.
  *  Klik van svih perioda vraća kliknute datume neizmenjene. */
-function periodZaKlik(periodi: GrafikPeriod[], od: string, doo: string): GrafikPeriod {
-  const tacan = periodi.find((p) => p.datum_od === od && p.datum_do === doo);
-  if (tacan) return tacan;
-  const tOd = pDate(od).getTime();
-  const tDo = pDate(doo).getTime();
-  let najbolji: GrafikPeriod | null = null;
-  let najuzi = Number.POSITIVE_INFINITY;
-  for (const p of periodi) {
+function ponudaZaKlik(
+  periodi: GrafikPeriod[],
+  zauzeca: { od: Date; doo: Date }[],
+  zod: Date,
+  zdo: Date,
+  klik: Date,
+): GrafikPeriod {
+  const tk = klik.getTime();
+  const uZoni = periodi.filter((p) => {
     const a = pDate(p.datum_od).getTime();
     const b = pDate(p.datum_do).getTime();
-    if (a <= tOd && tDo <= b && b - a < najuzi) {
+    return a <= tk && tk <= b;
+  });
+  const celeZone = uZoni.filter((p) => {
+    const a = pDate(p.datum_od).getTime();
+    const b = pDate(p.datum_do).getTime();
+    return a <= zod.getTime() && zdo.getTime() <= b;
+  });
+  const kandidati = celeZone.length > 0 ? celeZone : uZoni;
+  let najbolji: GrafikPeriod | null = null;
+  let najuzi = Number.POSITIVE_INFINITY;
+  for (const p of kandidati) {
+    const span = pDate(p.datum_do).getTime() - pDate(p.datum_od).getTime();
+    if (span < najuzi) {
       najbolji = p;
-      najuzi = b - a;
+      najuzi = span;
     }
   }
-  return najbolji ?? { datum_od: od, datum_do: doo };
+  if (!najbolji) return { datum_od: fmtDatum(zod), datum_do: fmtDatum(zdo) };
+  const slobodni = slobodniIntervali(pDate(najbolji.datum_od), pDate(najbolji.datum_do), zauzeca);
+  if (slobodni.length === 0) return najbolji; // ceo period zauzet — provera na dugmetu obaveštava
+  const uKliku = slobodni.find((s) => s.od.getTime() <= tk && tk <= s.doo.getTime());
+  const izbor = uKliku ?? slobodni[0];
+  return { datum_od: fmtDatum(izbor.od), datum_do: fmtDatum(izbor.doo) };
 }
 
 /** DD.MM.YYYY → ISO yyyy-mm-dd */
@@ -188,7 +228,7 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
   onRez: (sec: GrafikData, soba: GrafikSoba, p: GrafikPeriod) => void;
   onUgovor: (kljuc: string) => void;
 }) {
-  const { kolone, linije, spans, gaps } = useMemo(() => grafikGeometrija(sec), [sec]);
+  const { kolone, linije, spans, gaps, t0, t1 } = useMemo(() => grafikGeometrija(sec), [sec]);
   const sobeSorted = useMemo(
     () => [...sec.sobe].sort((a, b) =>
       (a.broj_sobe || "").localeCompare(b.broj_sobe || "", "sr", { numeric: true })),
@@ -200,6 +240,25 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
     for (const u of sec.ugovori) m.set(u.kljuc, u);
     return m;
   }, [sec.ugovori]);
+  // zauzeća po sobi (broj_sobe → Date parovi) — za sužavanje ponude na slobodan deo
+  const zauzecaPoSobi = useMemo(() => {
+    const m = new Map<string, { od: Date; doo: Date }[]>();
+    for (const u of sec.ugovori) {
+      const key = (u.soba || "").trim();
+      const z = { od: pDate(u.datum_od), doo: pDate(u.datum_do) };
+      const arr = m.get(key);
+      if (arr) arr.push(z);
+      else m.set(key, [z]);
+    }
+    return m;
+  }, [sec.ugovori]);
+  // pozicija klika unutar ćelije (td pokriva celu vremensku osu) → datum na osi
+  const klikDatum = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const td = e.currentTarget.closest("td");
+    const rect = (td ?? e.currentTarget).getBoundingClientRect();
+    const frac = rect.width > 0 ? Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) : 0;
+    return new Date(t0 + frac * (t1 - t0));
+  };
   return (
     <table className="table-fixed text-[11px]" style={{ width: "100%", minWidth: `${144 + Math.max(kolone.length, 1) * 110}px`, borderCollapse: "separate", borderSpacing: 0 }}>
       <tbody>
@@ -241,18 +300,27 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
                 ) : null}
               </td>
               <td className="relative bg-background border-b-2 border-b-red-600 text-white text-center font-mono font-medium text-[10px] whitespace-nowrap overflow-hidden">
-                {/* Klik na slobodnu kolonu — nudi PERIOD Grupe koji sadrži kolonu
-                    (tačno poklapanje pobeđuje; preklapajući periodi se razrešavaju
-                    preko periodZaKlik), vidljivo gde nema belina/pojaseva */}
+                {/* Klik na slobodnu kolonu — nudi PERIOD Grupe na poziciji klika,
+                    sužen na slobodan deo sobe (ponudaZaKlik); vidljivo gde nema
+                    belina/pojaseva. Tooltip se računa u letu (onMouseMove) ISTOM
+                    logikom kao klik — uvek poklapanje sa popup-om. */}
                 {kolone.map((k, i) => {
-                  const pz = periodZaKlik(sec.periodi, k.datum_od, k.datum_do);
+                  const zod = pDate(k.datum_od);
+                  const zdo = pDate(k.datum_do);
+                  const zauzeca = zauzecaPoSobi.get(rkey) ?? [];
+                  const ponudaU = (klik: Date) => ponudaZaKlik(sec.periodi, zauzeca, zod, zdo, klik);
+                  const ponudaTitle = (klik: Date) => {
+                    const p = ponudaU(klik);
+                    return `Slobodno — Soba ${soba.broj_sobe || "—"} · ${p.datum_od} – ${p.datum_do}`;
+                  };
                   return (
                     <div
                       key={`k-${i}`}
                       className="absolute bottom-[2px] top-[2px] cursor-pointer hover:bg-muted/60"
                       style={{ left: `${k.leftPct}%`, width: `${k.widthPct}%` }}
-                      onClick={() => onRez(sec, soba, pz)}
-                      title={`Soba ${soba.broj_sobe || "—"} — ${pz.datum_od.slice(0, 5)} – ${pz.datum_do.slice(0, 5)}`}
+                      onClick={(e) => onRez(sec, soba, ponudaU(klikDatum(e)))}
+                      onMouseMove={(e) => { const t = ponudaTitle(klikDatum(e)); if (e.currentTarget.title !== t) e.currentTarget.title = t; }}
+                      title={ponudaTitle(new Date((zod.getTime() + zdo.getTime()) / 2))}
                     />
                   );
                 })}
@@ -260,16 +328,23 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
                 {linije.map((lp, i) => (
                   <div key={`l-${i}`} className="pointer-events-none absolute top-0 bottom-0 w-px bg-gray-400" style={{ left: `${lp}%` }} />
                 ))}
-                {/* Slobodne beline — klik nudi PERIOD Grupe koji sadrži belinu */}
+                {/* Slobodne beline — klik nudi PERIOD Grupe na poziciji klika,
+                    sužen na slobodan deo sobe (belina može protezati kroz više smena) */}
                 {(gaps.get(rkey) || []).map((g, gi) => {
-                  const pz = periodZaKlik(sec.periodi, g.od, g.doo);
+                  const zauzeca = zauzecaPoSobi.get(rkey) ?? [];
+                  const ponudaU = (klik: Date) => ponudaZaKlik(sec.periodi, zauzeca, pDate(g.od), pDate(g.doo), klik);
+                  const ponudaTitle = (klik: Date) => {
+                    const p = ponudaU(klik);
+                    return `Slobodno — Soba ${soba.broj_sobe || "—"} · ${p.datum_od} – ${p.datum_do}`;
+                  };
                   return (
                     <div
                       key={`g-${gi}`}
                       className="absolute bottom-[2px] top-[2px] z-20 cursor-pointer hover:bg-muted/50"
                       style={{ left: `${g.leftPct}%`, width: `${g.widthPct}%` }}
-                      onClick={() => onRez(sec, soba, pz)}
-                      title={`Slobodno ${g.od.slice(0, 5)} – ${g.doo.slice(0, 5)} — klik za rezervaciju`}
+                      onClick={(e) => onRez(sec, soba, ponudaU(klikDatum(e)))}
+                      onMouseMove={(e) => { const t = ponudaTitle(klikDatum(e)); if (e.currentTarget.title !== t) e.currentTarget.title = t; }}
+                      title={ponudaTitle(new Date((pDate(g.od).getTime() + pDate(g.doo).getTime()) / 2))}
                     />
                   );
                 })}
@@ -448,9 +523,32 @@ export default function GrafikPage() {
     setBrzaTlOtvoren(false);
   }
 
+  // Provera raspoloživosti ponuđenog termina pre Klasične/Brze rezervacije —
+  // overlap ugovora iste sobe (isti koren naziva) nad [datumod, datumdo).
+  // Vraća opis ugovora ako je zauzet, inače null.
+  function terminZauzet(): string | null {
+    if (!slotSec || !slotSoba || !slotPeriod) return null;
+    const od = pDate(slotPeriod.datum_od).getTime();
+    const doo = pDate(slotPeriod.datum_do).getTime();
+    const z = slotSec.ugovori.find((u) =>
+      (u.soba || "").trim() === (slotSoba.broj_sobe || "").trim()
+      && pDate(u.datum_od).getTime() < doo && pDate(u.datum_do).getTime() > od
+    );
+    return z ? `${z.kljuc} (${(z.putnik || "").trim() || "putnik"}) ${z.datum_od} – ${z.datum_do}` : null;
+  }
+
+  function obavestiZauzet() {
+    const zauzet = terminZauzet();
+    if (zauzet) {
+      toast.error(`Termin je zauzet — ugovor ${zauzet}. Izaberite slobodan termin.`, { duration: 12000 });
+    }
+    return !!zauzet;
+  }
+
   // Klasična rezervacija → postojeća stranica Rezervacije (kao do sada)
   function klasicnaRez() {
     if (!slotSec || !slotSoba || !slotPeriod) return;
+    if (obavestiZauzet()) return;
     const params = new URLSearchParams({
       novi: "1",
       datumod: slotPeriod.datum_od,
@@ -803,7 +901,7 @@ export default function GrafikPage() {
             </Button>
             <Button
               className="h-auto min-h-14 w-full gap-2 rounded-xl bg-blue-600 px-2 py-3 text-white shadow-sm transition-colors hover:bg-blue-700 sm:px-3"
-              onClick={() => { setSlotOtvoren(false); setBrzaOtvoren(true); }}
+              onClick={() => { if (!obavestiZauzet()) { setSlotOtvoren(false); setBrzaOtvoren(true); } }}
             >
               <Zap className="h-5 w-5 shrink-0" aria-hidden="true" />
               <span className="whitespace-normal text-xs leading-snug sm:text-sm">Brza rezervacija</span>
