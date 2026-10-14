@@ -1,0 +1,27 @@
+[
+  {
+    "content": "[kof-1] Backend: koeficijenti_api.py (tabela koeficijenti_prodaje, GET/PUT) + registracija u routes.py",
+    "id": "kof-1",
+    "status": "completed"
+  },
+  {
+    "content": "[kof-2] Frontend: KoeficijentiPage.tsx (tabela Struktura/Adl/Chd/Inf/Koeficijent, auto-redovi iz baze, Dodaj red, Sačuvaj, dirty-guard) + ruta + Sidebar",
+    "id": "kof-2",
+    "status": "completed"
+  },
+  {
+    "content": "[kof-3] API test test_koeficijenti_api.py + pokretanje na dev serveru",
+    "id": "kof-3",
+    "status": "in_progress"
+  },
+  {
+    "content": "[kof-4] bun run build (tsc) + Playwright UI test",
+    "id": "kof-4",
+    "status": "pending"
+  },
+  {
+    "content": "[kof-5] Commit (grafik tooltip fix + koeficijenti feature)",
+    "id": "kof-5",
+    "status": "pending"
+  }
+]

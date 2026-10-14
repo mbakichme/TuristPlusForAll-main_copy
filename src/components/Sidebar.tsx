@@ -8,7 +8,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, LogOut, ShieldCheck, Settings,
   Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus,
   FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage,
-  Eye, ShoppingBag, Banknote, Palette
+  Eye, ShoppingBag, Banknote, Palette, Sigma
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -152,6 +152,7 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
             <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/koeficijenti" icon={Sigma} label="Koeficijenti prodaje" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
           </div>
         </div>
