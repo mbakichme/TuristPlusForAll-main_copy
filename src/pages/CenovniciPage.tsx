@@ -20,7 +20,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Pencil, Receipt, Search, CalendarDays, Lock } from "lucide-react";
+import { Loader2, Pencil, Receipt, Search, CalendarDays, Lock, Trash2 } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { srLatn } from "date-fns/locale";
@@ -411,6 +411,10 @@ export default function CenovniciPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const pendingConfirm = useRef<(() => void) | null>(null);
 
+  // Brisanje kompletnog cenovnika (tab Izmena)
+  const [obrisiRed, setObrisiRed] = useState<CenovnikRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Referentni podaci: /mesto, /period-grupa, /smestaj
   useEffect(() => {
     let otkazano = false;
@@ -654,6 +658,29 @@ export default function CenovniciPage() {
       .finally(() => { if (req === listReq.current) setListLoading(false); });
   }
 
+  async function obrisiCenovnik() {
+    if (!obrisiRed || deleting) return;
+    const red = obrisiRed;
+    setDeleting(true);
+    try {
+      await apiFetch(`/cenovnici/${red.id}`, { method: "DELETE" });
+      if (editDetail?.id === red.id) {
+        setEditDetail(null);
+        setEditCene({});
+        setEditOd("");
+        setEditDo("");
+        setEditSnapshot(null);
+      }
+      toast.success(`Cenovnik „${red.naziv}“ je obrisan`);
+      setObrisiRed(null);
+      osveziListu();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Brisanje cenovnika nije uspelo");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   function otvoriEdit(row: CenovnikRow) {
     if (savingEdit) return; // ne menjaj metricu dok traje čuvanje
     uzPotvrdu(editDirty, () => { void ucitajEdit(row.id); });
@@ -885,7 +912,7 @@ export default function CenovniciPage() {
             <CardHeader className="pb-4">
               <CardTitle className="text-base">Kreirani cenovnici</CardTitle>
               <CardDescription>
-                Pretražite i izaberite cenovnik za izmenu. Brisanje cenovnika nije dostupno.
+                Pretražite i izaberite cenovnik za izmenu. Korpicom u redu se briše kompletan cenovnik (trajno).
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -910,7 +937,7 @@ export default function CenovniciPage() {
                     <TableHead className="w-56">UUID</TableHead>
                     <TableHead className="w-32">Aktivan od</TableHead>
                     <TableHead className="w-32">Aktivan do</TableHead>
-                    <TableHead className="w-16 text-right">Edit</TableHead>
+                    <TableHead className="w-24 text-right">Akcije</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -940,16 +967,28 @@ export default function CenovniciPage() {
                         <TableCell className="text-sm tabular-nums">{fmtIso(row.datumod)}</TableCell>
                         <TableCell className="text-sm tabular-nums">{fmtIso(row.datumdo)}</TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                            aria-label={`Izmeni cenovnik ${row.naziv}`}
-                            disabled={savingEdit || loadingEdit}
-                            onClick={(e) => { e.stopPropagation(); otvoriEdit(row); }}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              aria-label={`Izmeni cenovnik ${row.naziv}`}
+                              disabled={savingEdit || loadingEdit}
+                              onClick={(e) => { e.stopPropagation(); otvoriEdit(row); }}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                              aria-label={`Obriši cenovnik ${row.naziv}`}
+                              disabled={deleting}
+                              onClick={(e) => { e.stopPropagation(); setObrisiRed(row); }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -998,6 +1037,33 @@ export default function CenovniciPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Potvrda brisanja kompletnog cenovnika */}
+      <AlertDialog
+        open={obrisiRed !== null}
+        onOpenChange={(o) => { if (!o) setObrisiRed(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Obrisati cenovnik?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Cenovnik „{obrisiRed?.naziv}“ (#{obrisiRed?.id}) će biti trajno obrisan zajedno sa svim
+              unetim cenama. <span className="font-semibold text-destructive">Brisanje je trajno i ne može se opozvati.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Otkaži</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); void obrisiCenovnik(); }}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Obriši trajno
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Potvrda odbacivanja nesačuvanih izmena matrice */}
       <AlertDialog

@@ -187,3 +187,13 @@ def register_cenovnici(api, engine, get_current_user):
             snap = _detail(conn, item_id, lock=True)
             _save_values(conn, item_id, body, snap)
             return _detail(conn, item_id)
+
+    @api.delete("/cenovnici/{item_id}")
+    def obrisi(item_id: int, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            row = conn.execute(text("SELECT id FROM cenovnici WHERE id = :i"), {"i": item_id}).first()
+            if not row:
+                raise HTTPException(status_code=404, detail="Cenovnik nije pronađen")
+            # cenovnik_cene / cenovnik_opcije idu preko ON DELETE CASCADE
+            conn.execute(text("DELETE FROM cenovnici WHERE id = :i"), {"i": item_id})
+            return {"status": "obrisan", "id": item_id}
