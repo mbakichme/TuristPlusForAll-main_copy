@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 
 class CenaIn(BaseModel):
@@ -69,6 +70,39 @@ def init_cenovnici(engine):
                 PRIMARY KEY (cenovnik_id, soba_id, period_id)
             )
         """))
+        # Veze cenovnika sa izvorom podataka: Mesto, Grupa termina, Smeštaj i
+        # Soba (preko cenovnik_cene). RESTRICT — referencirani podatak se ne
+        # može obrisati dok postoji cenovnik koji ga koristi.
+        _dodaj_fk(conn, "cenovnici", "mesto_id", "mesto", "mesto")
+        _dodaj_fk(conn, "cenovnici", "grupa_id", "period_grupa", "grupa termina")
+        _dodaj_fk(conn, "cenovnici", "smestaj_id", "smestaj", "smeštaj")
+        _dodaj_fk(conn, "cenovnik_cene", "soba_id", "sobe", "soba")
+
+
+def _dodaj_fk(conn, table, col, ref, ref_naziv):
+    """Dodaje FK ako već ne postoji; preskače ga ako redovi imaju siročad."""
+    postoji = conn.execute(text("""
+        SELECT 1 FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+        WHERE tc.table_name = :t AND tc.constraint_type = 'FOREIGN KEY'
+          AND kcu.column_name = :c
+    """), {"t": table, "c": col}).first()
+    if postoji:
+        return
+    sirocad = conn.execute(text(
+        f"SELECT COUNT(*) FROM {table} x LEFT JOIN {ref} r ON r.id = x.{col} "
+        f"WHERE r.id IS NULL"
+    )).scalar_one()
+    if sirocad:
+        print(f"[cenovnici] FK {table}.{col} -> {ref}.id NIJE dodat: "
+              f"{sirocad} redova pokazuje na nepostojeći {ref_naziv}")
+        return
+    conn.execute(text(
+        f"ALTER TABLE {table} ADD CONSTRAINT fk_{table}_{col} "
+        f"FOREIGN KEY ({col}) REFERENCES {ref}(id) ON DELETE RESTRICT"
+    ))
 
 
 def _sablon(conn, mesto_id, grupa_id, smestaj_id):

@@ -1743,10 +1743,16 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.delete("/mesto/{item_id}")
     def delete_mesto(item_id: int, _: dict = Depends(get_current_user)):
-        with engine.begin() as conn:
-            result = conn.execute(text(
-                "DELETE FROM mesto WHERE id = :id RETURNING id"
-            ), {"id": item_id}).fetchone()
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(text(
+                    "DELETE FROM mesto WHERE id = :id RETURNING id"
+                ), {"id": item_id}).fetchone()
+        except IntegrityError:
+            raise HTTPException(
+                status_code=409,
+                detail="Mesto se koristi u cenovniku i ne može se obrisati",
+            )
         if not result:
             raise HTTPException(status_code=404, detail="Mesto nije pronađeno")
         return {"ok": True}
@@ -1874,10 +1880,16 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.delete("/smestaj/{item_id}")
     def delete_smestaj(item_id: int, _: dict = Depends(get_current_user)):
-        with engine.begin() as conn:
-            result = conn.execute(text(
-                "DELETE FROM smestaj WHERE id = :id RETURNING id"
-            ), {"id": item_id}).fetchone()
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(text(
+                    "DELETE FROM smestaj WHERE id = :id RETURNING id"
+                ), {"id": item_id}).fetchone()
+        except IntegrityError:
+            raise HTTPException(
+                status_code=409,
+                detail="Smeštaj se koristi u cenovniku i ne može se obrisati",
+            )
         if not result:
             raise HTTPException(status_code=404, detail="Smeštaj nije pronađen")
         return {"ok": True}
@@ -1983,10 +1995,16 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.delete("/sobe/{item_id}")
     def delete_soba(item_id: int, _: dict = Depends(get_current_user)):
-        with engine.begin() as conn:
-            result = conn.execute(text(
-                "DELETE FROM sobe WHERE id = :id RETURNING id"
-            ), {"id": item_id}).fetchone()
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(text(
+                    "DELETE FROM sobe WHERE id = :id RETURNING id"
+                ), {"id": item_id}).fetchone()
+        except IntegrityError:
+            raise HTTPException(
+                status_code=409,
+                detail="Soba se koristi u cenovniku i ne može se obrisati",
+            )
         if not result:
             raise HTTPException(status_code=404, detail="Soba nije pronađena")
         return {"ok": True}
@@ -2364,10 +2382,16 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.delete("/period-grupa/{item_id}")
     def delete_period_grupa(item_id: int, _: dict = Depends(get_current_user)):
-        with engine.begin() as conn:
-            result = conn.execute(text(
-                "DELETE FROM period_grupa WHERE id = :id RETURNING id"
-            ), {"id": item_id}).fetchone()
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(text(
+                    "DELETE FROM period_grupa WHERE id = :id RETURNING id"
+                ), {"id": item_id}).fetchone()
+        except IntegrityError:
+            raise HTTPException(
+                status_code=409,
+                detail="Grupa termina se koristi u cenovniku i ne može se obrisati",
+            )
         if not result:
             raise HTTPException(status_code=404, detail="Grupa nije pronađena")
         return {"ok": True}
