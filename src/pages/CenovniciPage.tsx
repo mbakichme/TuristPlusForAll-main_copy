@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -21,7 +25,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Receipt, Search, CalendarDays, Lock, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Pencil, Receipt, Search, CalendarDays, Lock, Trash2, SlidersHorizontal } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { srLatn } from "date-fns/locale";
@@ -460,6 +464,492 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
   );
 }
 
+// ── Opcije · Popusti (dijalog po sobi cenovnika) ────────────────────────────
+
+const PREVOZ_LABELA: Record<string, string> = {
+  opciono: "Opciono", obavezan: "Obavezan", nemoguc: "Nemoguć",
+};
+const ARANZMAN_LABELA: Record<string, string> = {
+  sa_prevozom: "Aranžman sa prevozom", bez_prevoza: "Aranžman bez prevoza",
+};
+const CENA_LABELA: Record<string, string> = { po_osobi: "Po osobi", po_sobi: "Po sobi" };
+const POPUST_TIP_LABELA: Record<string, string> = {
+  last_minute: "Last minute", first_minute: "First minute",
+  specijalna_ponuda: "Specijalna ponuda", ultra_last_minute: "Ultra last minute",
+};
+const PLACANJE_LABELA: Record<string, string> = { delimicno: "Delimično", u_celosti: "U celosti" };
+const NEMA = "nema"; // sentinel u Select-u za „bez vrednosti“ (Radix ne dozvoljava value="")
+
+interface OpcijeSobaApi {
+  postoji: boolean;
+  blokirano: boolean; istaknuto: boolean; blokirano_subagenci: boolean; blokirano_sajt: boolean;
+  prevoz: string | null; tip_aranzmana: string | null; tip_cene: string | null;
+  popust_sopstveni_prevoz: number | null;
+}
+
+interface PopustSobaApi {
+  postoji: boolean;
+  umanjenje_vrsta: string; umanjenje: number | null; tip_popusta: string | null;
+  tip_placanja: string | null; vazi_od: string | null; vazi_do: string | null;
+  tip_aranzmana: string | null; tip_cene: string | null;
+  popust_sopstveni_prevoz: number | null;
+}
+
+interface OpcijeForma {
+  blokirano: boolean; istaknuto: boolean; blokirano_subagenci: boolean; blokirano_sajt: boolean;
+  prevoz: string; tip_aranzmana: string; tip_cene: string; popust_sopstveni_prevoz: string;
+}
+const OPCIJE_PRAZNE: OpcijeForma = {
+  blokirano: false, istaknuto: false, blokirano_subagenci: false, blokirano_sajt: false,
+  prevoz: NEMA, tip_aranzmana: NEMA, tip_cene: NEMA, popust_sopstveni_prevoz: "",
+};
+
+interface PopustForma {
+  umanjenje_vrsta: "iznos" | "procenat"; umanjenje: string; tip_popusta: string;
+  tip_placanja: string; vazi_od: string; vazi_do: string; tip_aranzmana: string;
+  tip_cene: string; popust_sopstveni_prevoz: string;
+}
+const POPUST_PRAZAN: PopustForma = {
+  umanjenje_vrsta: "iznos", umanjenje: "", tip_popusta: NEMA, tip_placanja: NEMA,
+  vazi_od: "", vazi_do: "", tip_aranzmana: NEMA, tip_cene: NEMA, popust_sopstveni_prevoz: "",
+};
+
+function formaIzOpcije(o: OpcijeSobaApi): OpcijeForma {
+  return {
+    blokirano: o.blokirano, istaknuto: o.istaknuto,
+    blokirano_subagenci: o.blokirano_subagenci, blokirano_sajt: o.blokirano_sajt,
+    prevoz: o.prevoz ?? NEMA, tip_aranzmana: o.tip_aranzmana ?? NEMA, tip_cene: o.tip_cene ?? NEMA,
+    popust_sopstveni_prevoz: o.popust_sopstveni_prevoz == null ? "" : String(o.popust_sopstveni_prevoz),
+  };
+}
+
+function formaIzPopusta(p: PopustSobaApi): PopustForma {
+  return {
+    umanjenje_vrsta: p.umanjenje_vrsta === "procenat" ? "procenat" : "iznos",
+    umanjenje: p.umanjenje == null ? "" : String(p.umanjenje),
+    tip_popusta: p.tip_popusta ?? NEMA, tip_placanja: p.tip_placanja ?? NEMA,
+    vazi_od: p.vazi_od ?? "", vazi_do: p.vazi_do ?? "",
+    tip_aranzmana: p.tip_aranzmana ?? NEMA, tip_cene: p.tip_cene ?? NEMA,
+    popust_sopstveni_prevoz: p.popust_sopstveni_prevoz == null ? "" : String(p.popust_sopstveni_prevoz),
+  };
+}
+
+/** Prazno → null (bez vrednosti); inače broj na 2 decimale ili ok=false. */
+function parsirajIznos(raw: string): { ok: boolean; vrednost: number | null } {
+  const t = raw.trim().replace(",", ".");
+  if (t === "") return { ok: true, vrednost: null };
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return { ok: false, vrednost: null };
+  return { ok: true, vrednost: Math.round(n * 100) / 100 };
+}
+
+function Polje({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+function Prekidac({ id, label, hint, checked, onChange }: {
+  id: string; label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5 transition-colors",
+        checked ? "border-primary/40 bg-primary/5" : "bg-card",
+      )}
+    >
+      <label htmlFor={id} className="cursor-pointer">
+        <span className="block text-sm font-medium leading-tight">{label}</span>
+        {hint ? (
+          <span className="mt-0.5 block text-[11px] leading-tight text-muted-foreground">{hint}</span>
+        ) : null}
+      </label>
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+function Selekt({ id, value, onChange, opcije }: {
+  id: string; value: string; onChange: (v: string) => void; opcije: Record<string, string>;
+}) {
+  return (
+    <Select value={value || NEMA} onValueChange={onChange}>
+      <SelectTrigger id={id} className="h-9 w-full bg-background">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={NEMA}>—</SelectItem>
+        {Object.entries(opcije).map(([k, l]) => (
+          <SelectItem key={k} value={k}>{l}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function OpcijePopustiDialog({ red, onClose }: { red: CenovnikRow | null; onClose: () => void }) {
+  const [sobe, setSobe] = useState<SablonSoba[]>([]);
+  const [sobaId, setSobaId] = useState<number | null>(null);
+  const [ucitava, setUcitava] = useState(false);
+  const [opcije, setOpcije] = useState<OpcijeForma>(OPCIJE_PRAZNE);
+  const [popust, setPopust] = useState<PopustForma>(POPUST_PRAZAN);
+  const [opcijePostoje, setOpcijePostoje] = useState(false);
+  const [popustPostoji, setPopustPostoji] = useState(false);
+  const [snimaOpcije, setSnimaOpcije] = useState(false);
+  const [snimaPopust, setSnimaPopust] = useState(false);
+  const [briseOpcije, setBriseOpcije] = useState(false);
+  const [brisePopust, setBrisePopust] = useState(false);
+
+  const cid = red?.id ?? null;
+
+  // Otvaranje: učitaj sobe cenovnika (osvežen spisak iz detail-a)
+  useEffect(() => {
+    if (cid === null) { setSobe([]); setSobaId(null); return; }
+    let otkazano = false;
+    setUcitava(true); setSobe([]); setSobaId(null);
+    setOpcije(OPCIJE_PRAZNE); setPopust(POPUST_PRAZAN);
+    setOpcijePostoje(false); setPopustPostoji(false);
+    apiFetch<CenovnikDetail>(`/cenovnici/${cid}`)
+      .then((d) => {
+        if (otkazano) return;
+        setSobe(d.sobe);
+        setSobaId(d.sobe.length > 0 ? d.sobe[0].id : null);
+      })
+      .catch(() => { if (!otkazano) toast.error("Učitavanje cenovnika nije uspelo"); })
+      .finally(() => { if (!otkazano) setUcitava(false); });
+    return () => { otkazano = true; };
+  }, [cid]);
+
+  // Promena sobe: opcije + popust te sobe
+  useEffect(() => {
+    if (cid === null || sobaId === null) return;
+    let otkazano = false;
+    setOpcije(OPCIJE_PRAZNE); setPopust(POPUST_PRAZAN);
+    setOpcijePostoje(false); setPopustPostoji(false);
+    Promise.all([
+      apiFetch<OpcijeSobaApi>(`/cenovnici/${cid}/opcije-soba/${sobaId}`),
+      apiFetch<PopustSobaApi>(`/cenovnici/${cid}/popust-soba/${sobaId}`),
+    ])
+      .then(([o, p]) => {
+        if (otkazano) return;
+        setOpcije(formaIzOpcije(o)); setOpcijePostoje(o.postoji);
+        setPopust(formaIzPopusta(p)); setPopustPostoji(p.postoji);
+      })
+      .catch(() => { if (!otkazano) toast.error("Učitavanje opcija nije uspelo"); });
+    return () => { otkazano = true; };
+  }, [cid, sobaId]);
+
+  async function snimiOpcije() {
+    if (cid === null || sobaId === null) return;
+    const psp = parsirajIznos(opcije.popust_sopstveni_prevoz);
+    if (!psp.ok) { toast.error("Popust za sopstveni prevoz mora biti nenegativan broj"); return; }
+    setSnimaOpcije(true);
+    try {
+      const o = await apiFetch<OpcijeSobaApi>(`/cenovnici/${cid}/opcije-soba/${sobaId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          blokirano: opcije.blokirano, istaknuto: opcije.istaknuto,
+          blokirano_subagenci: opcije.blokirano_subagenci, blokirano_sajt: opcije.blokirano_sajt,
+          prevoz: opcije.prevoz === NEMA ? null : opcije.prevoz,
+          tip_aranzmana: opcije.tip_aranzmana === NEMA ? null : opcije.tip_aranzmana,
+          tip_cene: opcije.tip_cene === NEMA ? null : opcije.tip_cene,
+          popust_sopstveni_prevoz: psp.vrednost,
+        }),
+      });
+      setOpcije(formaIzOpcije(o));
+      setOpcijePostoje(true);
+      toast.success("Opcije su sačuvane");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Čuvanje opcija nije uspelo");
+    } finally {
+      setSnimaOpcije(false);
+    }
+  }
+
+  async function obrisiOpcije() {
+    if (cid === null || sobaId === null) return;
+    setBriseOpcije(true);
+    try {
+      await apiFetch(`/cenovnici/${cid}/opcije-soba/${sobaId}`, { method: "DELETE" });
+      setOpcije(OPCIJE_PRAZNE);
+      setOpcijePostoje(false);
+      toast.success("Opcije su obrisane");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Brisanje opcija nije uspelo");
+    } finally {
+      setBriseOpcije(false);
+    }
+  }
+
+  async function snimiPopust() {
+    if (cid === null || sobaId === null) return;
+    const um = parsirajIznos(popust.umanjenje);
+    if (!um.ok || um.vrednost === null || um.vrednost <= 0) {
+      toast.error("Umanjenje mora biti broj veći od 0");
+      return;
+    }
+    if (popust.umanjenje_vrsta === "procenat" && um.vrednost > 100) {
+      toast.error("Procenat može biti najviše 100");
+      return;
+    }
+    if (popust.tip_popusta === NEMA) {
+      toast.error("Tip popusta je obavezan");
+      return;
+    }
+    if (popust.vazi_od && popust.vazi_do && popust.vazi_od > popust.vazi_do) {
+      toast.error("'Važi od' mora biti pre ili isti kao 'Važi do'");
+      return;
+    }
+    const psp = parsirajIznos(popust.popust_sopstveni_prevoz);
+    if (!psp.ok) { toast.error("Popust za sopstveni prevoz mora biti nenegativan broj"); return; }
+    setSnimaPopust(true);
+    try {
+      const p = await apiFetch<PopustSobaApi>(`/cenovnici/${cid}/popust-soba/${sobaId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          umanjenje_vrsta: popust.umanjenje_vrsta,
+          umanjenje: um.vrednost,
+          tip_popusta: popust.tip_popusta,
+          tip_placanja: popust.tip_placanja === NEMA ? null : popust.tip_placanja,
+          vazi_od: popust.vazi_od || null,
+          vazi_do: popust.vazi_do || null,
+          tip_aranzmana: popust.tip_aranzmana === NEMA ? null : popust.tip_aranzmana,
+          tip_cene: popust.tip_cene === NEMA ? null : popust.tip_cene,
+          popust_sopstveni_prevoz: psp.vrednost,
+        }),
+      });
+      setPopust(formaIzPopusta(p));
+      setPopustPostoji(true);
+      toast.success("Popust je sačuvan");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Čuvanje popusta nije uspelo");
+    } finally {
+      setSnimaPopust(false);
+    }
+  }
+
+  async function obrisiPopust() {
+    if (cid === null || sobaId === null) return;
+    setBrisePopust(true);
+    try {
+      await apiFetch(`/cenovnici/${cid}/popust-soba/${sobaId}`, { method: "DELETE" });
+      setPopust(POPUST_PRAZAN);
+      setPopustPostoji(false);
+      toast.success("Popust je obrisan");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Brisanje popusta nije uspelo");
+    } finally {
+      setBrisePopust(false);
+    }
+  }
+
+  return (
+    <Dialog open={red !== null} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+            Opcije · Popusti
+          </DialogTitle>
+          <DialogDescription className="truncate">
+            Cenovnik #{red?.id} — {red?.naziv} · podešavanja važe za izabranu sobu
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs text-muted-foreground">Soba</Label>
+          <Select
+            value={sobaId === null ? undefined : String(sobaId)}
+            onValueChange={(v) => setSobaId(Number(v))}
+            disabled={ucitava || sobe.length === 0}
+          >
+            <SelectTrigger className="w-full bg-background">
+              <SelectValue placeholder={sobe.length === 0 ? "Nema soba u cenovniku" : "Izaberite sobu"} />
+            </SelectTrigger>
+            <SelectContent>
+              {sobe.map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.broj_sobe} · {[s.tip, s.opis].filter(Boolean).join(" ")}
+                  {s.virtuelna ? " · virtuelna" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {ucitava ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Učitavanje…
+          </div>
+        ) : sobaId === null ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Cenovnik nema soba.</p>
+        ) : (
+          <Tabs defaultValue="opcije">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="opcije">Opcije</TabsTrigger>
+              <TabsTrigger value="popusti">Popusti</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="opcije" className="mt-4 space-y-4">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Prekidac
+                  id="opc-blokirano" label="Blokirano" hint="Soba nije dostupna za prodaju"
+                  checked={opcije.blokirano}
+                  onChange={(v) => setOpcije({ ...opcije, blokirano: v })}
+                />
+                <Prekidac
+                  id="opc-istaknuto" label="Istaknuto" hint="Soba se ističe u ponudi"
+                  checked={opcije.istaknuto}
+                  onChange={(v) => setOpcije({ ...opcije, istaknuto: v })}
+                />
+                <Prekidac
+                  id="opc-subagenci" label="Blokirati za subagente" hint="Ne prikazuje se subagentima"
+                  checked={opcije.blokirano_subagenci}
+                  onChange={(v) => setOpcije({ ...opcije, blokirano_subagenci: v })}
+                />
+                <Prekidac
+                  id="opc-sajt" label="Blokirati za sajt" hint="Ne prikazuje se na sajtu"
+                  checked={opcije.blokirano_sajt}
+                  onChange={(v) => setOpcije({ ...opcije, blokirano_sajt: v })}
+                />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Polje id="opc-prevoz" label="Prevoz">
+                  <Selekt id="opc-prevoz" value={opcije.prevoz}
+                    onChange={(v) => setOpcije({ ...opcije, prevoz: v })} opcije={PREVOZ_LABELA} />
+                </Polje>
+                <Polje id="opc-aranzman" label="Tip aranžmana">
+                  <Selekt id="opc-aranzman" value={opcije.tip_aranzmana}
+                    onChange={(v) => setOpcije({ ...opcije, tip_aranzmana: v })} opcije={ARANZMAN_LABELA} />
+                </Polje>
+                <Polje id="opc-cena" label="Tip cene">
+                  <Selekt id="opc-cena" value={opcije.tip_cene}
+                    onChange={(v) => setOpcije({ ...opcije, tip_cene: v })} opcije={CENA_LABELA} />
+                </Polje>
+                <Polje id="opc-psp" label="Popust za sopstveni prevoz">
+                  <Input
+                    id="opc-psp" inputMode="decimal" autoComplete="off" placeholder="0.00"
+                    value={opcije.popust_sopstveni_prevoz}
+                    onChange={(e) => setOpcije({ ...opcije, popust_sopstveni_prevoz: normalizeCena(e.target.value) })}
+                    className="h-9 bg-background"
+                  />
+                </Polje>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 border-t pt-3">
+                <Button
+                  variant="outline" size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => void obrisiOpcije()}
+                  disabled={briseOpcije || snimaOpcije || !opcijePostoje}
+                >
+                  {briseOpcije ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                  Obriši opcije
+                </Button>
+                <Button size="sm" onClick={() => void snimiOpcije()} disabled={snimaOpcije || briseOpcije}>
+                  {snimaOpcije ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Snimi
+                </Button>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="popusti" className="mt-4 space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs text-muted-foreground">Vrsta umanjenja</span>
+                    <div className="inline-flex items-center rounded-lg border bg-background p-0.5">
+                      {(["iznos", "procenat"] as const).map((v) => (
+                        <button
+                          key={v} type="button"
+                          onClick={() => setPopust({ ...popust, umanjenje_vrsta: v })}
+                          className={cn(
+                            "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                            popust.umanjenje_vrsta === v
+                              ? "bg-primary text-primary-foreground shadow-sm"
+                              : "text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          {v === "iznos" ? "Iznos" : "Procenat"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <Polje id="pop-umanjenje" label={`Umanjenje${popust.umanjenje_vrsta === "procenat" ? " (%)" : ""}`}>
+                    <Input
+                      id="pop-umanjenje" inputMode="decimal" autoComplete="off"
+                      placeholder={popust.umanjenje_vrsta === "procenat" ? "npr. 10" : "npr. 50"}
+                      value={popust.umanjenje}
+                      onChange={(e) => setPopust({ ...popust, umanjenje: normalizeCena(e.target.value) })}
+                      className="h-9 w-32 bg-background"
+                    />
+                  </Polje>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Polje id="pop-tip" label="Tip popusta">
+                  <Selekt id="pop-tip" value={popust.tip_popusta}
+                    onChange={(v) => setPopust({ ...popust, tip_popusta: v })} opcije={POPUST_TIP_LABELA} />
+                </Polje>
+                <Polje id="pop-placanja" label="Tip plaćanja">
+                  <Selekt id="pop-placanja" value={popust.tip_placanja}
+                    onChange={(v) => setPopust({ ...popust, tip_placanja: v })} opcije={PLACANJE_LABELA} />
+                </Polje>
+                <Polje id="pop-od" label="Važi od">
+                  <DatumCenovnika id="pop-od" value={popust.vazi_od}
+                    onChange={(v) => setPopust({ ...popust, vazi_od: v })} />
+                </Polje>
+                <Polje id="pop-do" label="Važi do">
+                  <DatumCenovnika id="pop-do" value={popust.vazi_do}
+                    onChange={(v) => setPopust({ ...popust, vazi_do: v })} />
+                </Polje>
+                <Polje id="pop-aranzman" label="Tip aranžmana">
+                  <Selekt id="pop-aranzman" value={popust.tip_aranzmana}
+                    onChange={(v) => setPopust({ ...popust, tip_aranzmana: v })} opcije={ARANZMAN_LABELA} />
+                </Polje>
+                <Polje id="pop-cena" label="Tip cene">
+                  <Selekt id="pop-cena" value={popust.tip_cene}
+                    onChange={(v) => setPopust({ ...popust, tip_cene: v })} opcije={CENA_LABELA} />
+                </Polje>
+                <Polje id="pop-psp" label="Popust za sopstveni prevoz">
+                  <Input
+                    id="pop-psp" inputMode="decimal" autoComplete="off" placeholder="0.00"
+                    value={popust.popust_sopstveni_prevoz}
+                    onChange={(e) => setPopust({ ...popust, popust_sopstveni_prevoz: normalizeCena(e.target.value) })}
+                    className="h-9 bg-background"
+                  />
+                </Polje>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 border-t pt-3">
+                <Button
+                  variant="outline" size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => void obrisiPopust()}
+                  disabled={brisePopust || snimaPopust || !popustPostoji}
+                >
+                  {brisePopust ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                  Obriši popust
+                </Button>
+                <Button size="sm" onClick={() => void snimiPopust()} disabled={snimaPopust || brisePopust}>
+                  {snimaPopust ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Snimi
+                </Button>
+              </div>
+            </TabsContent>
+          </Tabs>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Glavna stranica ─────────────────────────────────────────────────────────
 
 export default function CenovniciPage() {
@@ -514,6 +1004,9 @@ export default function CenovniciPage() {
   // Brisanje kompletnog cenovnika (tab Izmena)
   const [obrisiRed, setObrisiRed] = useState<CenovnikRow | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Dijalog Opcije · Popusti (tab Izmena)
+  const [opcijeRed, setOpcijeRed] = useState<CenovnikRow | null>(null);
 
   // Referentni podaci: /mesto, /period-grupa, /smestaj
   useEffect(() => {
@@ -1072,7 +1565,7 @@ export default function CenovniciPage() {
                     <TableHead className="w-56">UUID</TableHead>
                     <TableHead className="w-32">Aktivan od</TableHead>
                     <TableHead className="w-32">Aktivan do</TableHead>
-                    <TableHead className="w-24 text-right">Akcije</TableHead>
+                    <TableHead className="w-28 text-right">Akcije</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1108,6 +1601,16 @@ export default function CenovniciPage() {
                         <TableCell className="text-sm tabular-nums">{fmtIso(row.datumdo)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              title="Opcije · Popusti"
+                              aria-label={`Opcije i popusti cenovnika #${row.id}`}
+                              onClick={(e) => { e.stopPropagation(); setOpcijeRed(row); }}
+                            >
+                              <SlidersHorizontal className="h-4 w-4" />
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -1215,6 +1718,9 @@ export default function CenovniciPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Dijalog Opcije · Popusti (tab Izmena) */}
+      <OpcijePopustiDialog red={opcijeRed} onClose={() => setOpcijeRed(null)} />
 
       {/* Potvrda brisanja kompletnog cenovnika */}
       <AlertDialog

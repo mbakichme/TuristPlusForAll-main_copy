@@ -54,6 +54,132 @@ class CenovnikNovi(CenovnikIzmena):
     opis: str = ""  # novi cenovnik uvek dobija opis (prazan ako nije unet)
 
 
+# ── Opcije i popusti po sobi cenovnika (opcije_soba / popust_soba) ──────────
+
+PREVOZ_VREDNOSTI = ("opciono", "obavezan", "nemoguc")
+TIP_ARANZMANA_VREDNOSTI = ("sa_prevozom", "bez_prevoza")
+TIP_CENE_VREDNOSTI = ("po_osobi", "po_sobi")
+TIP_POPUSTA_VREDNOSTI = ("last_minute", "first_minute", "specijalna_ponuda", "ultra_last_minute")
+TIP_PLACANJA_VREDNOSTI = ("delimicno", "u_celosti")
+
+
+def _enum_ili_none(vrednost: str | None, dozvoljene: tuple[str, ...], naziv: str) -> str | None:
+    if vrednost is None:
+        return None
+    vrednost = vrednost.strip().lower()
+    if vrednost == "":
+        return None
+    if vrednost not in dozvoljene:
+        raise ValueError(f"{naziv} mora biti jedno od: {', '.join(dozvoljene)}")
+    return vrednost
+
+
+def _iznos_ili_none(vrednost: Decimal | None, naziv: str) -> Decimal | None:
+    if vrednost is None:
+        return None
+    if not vrednost.is_finite() or vrednost < 0 or vrednost >= Decimal("1000000000000"):
+        raise ValueError(f"{naziv} mora biti konačan, nenegativan iznos manji od 1000000000000")
+    if vrednost != vrednost.quantize(Decimal("0.01")):
+        raise ValueError(f"{naziv} može imati najviše dve decimale")
+    return vrednost
+
+
+class OpcijeSobaIn(BaseModel):
+    blokirano: bool = False
+    istaknuto: bool = False
+    blokirano_subagenci: bool = False
+    blokirano_sajt: bool = False
+    prevoz: str | None = None
+    tip_aranzmana: str | None = None
+    tip_cene: str | None = None
+    popust_sopstveni_prevoz: Decimal | None = None
+
+    @field_validator("prevoz")
+    @classmethod
+    def _prevoz(cls, v):
+        return _enum_ili_none(v, PREVOZ_VREDNOSTI, "Prevoz")
+
+    @field_validator("tip_aranzmana")
+    @classmethod
+    def _aranzman(cls, v):
+        return _enum_ili_none(v, TIP_ARANZMANA_VREDNOSTI, "Tip aranžmana")
+
+    @field_validator("tip_cene")
+    @classmethod
+    def _tip_cene(cls, v):
+        return _enum_ili_none(v, TIP_CENE_VREDNOSTI, "Tip cene")
+
+    @field_validator("popust_sopstveni_prevoz")
+    @classmethod
+    def _iznos(cls, v):
+        return _iznos_ili_none(v, "Popust za sopstveni prevoz")
+
+
+class PopustSobaIn(BaseModel):
+    umanjenje_vrsta: str  # 'iznos' | 'procenat'
+    umanjenje: Decimal
+    tip_popusta: str
+    tip_placanja: str | None = None
+    vazi_od: date | None = None
+    vazi_do: date | None = None
+    tip_aranzmana: str | None = None
+    tip_cene: str | None = None
+    popust_sopstveni_prevoz: Decimal | None = None
+
+    @field_validator("umanjenje_vrsta")
+    @classmethod
+    def _vrsta(cls, v):
+        v = (v or "").strip().lower()
+        if v not in ("iznos", "procenat"):
+            raise ValueError("Umanjenje mora biti 'iznos' ili 'procenat'")
+        return v
+
+    @field_validator("umanjenje")
+    @classmethod
+    def _umanjenje(cls, v):
+        if not v.is_finite() or v <= 0 or v >= Decimal("1000000000000"):
+            raise ValueError("Umanjenje mora biti konačan broj veći od 0")
+        if v != v.quantize(Decimal("0.01")):
+            raise ValueError("Umanjenje može imati najviše dve decimale")
+        return v
+
+    @field_validator("tip_popusta")
+    @classmethod
+    def _tip_popusta(cls, v):
+        v = (v or "").strip().lower()
+        if v not in TIP_POPUSTA_VREDNOSTI:
+            raise ValueError(f"Tip popusta mora biti jedno od: {', '.join(TIP_POPUSTA_VREDNOSTI)}")
+        return v
+
+    @field_validator("tip_placanja")
+    @classmethod
+    def _placanja(cls, v):
+        return _enum_ili_none(v, TIP_PLACANJA_VREDNOSTI, "Tip plaćanja")
+
+    @field_validator("tip_aranzmana")
+    @classmethod
+    def _aranzman(cls, v):
+        return _enum_ili_none(v, TIP_ARANZMANA_VREDNOSTI, "Tip aranžmana")
+
+    @field_validator("tip_cene")
+    @classmethod
+    def _tip_cene(cls, v):
+        return _enum_ili_none(v, TIP_CENE_VREDNOSTI, "Tip cene")
+
+    @field_validator("popust_sopstveni_prevoz")
+    @classmethod
+    def _iznos(cls, v):
+        return _iznos_ili_none(v, "Popust za sopstveni prevoz")
+
+    @model_validator(mode="after")
+    def _validno(self):
+        if self.umanjenje_vrsta == "procenat" and self.umanjenje > 100:
+            raise ValueError("Procenat može biti najviše 100")
+        if self.vazi_od and self.vazi_do and self.vazi_od > self.vazi_do:
+            raise ValueError("'Važi od' mora biti pre ili isti kao 'Važi do'")
+        return self
+
+
 def init_cenovnici(engine):
     with engine.begin() as conn:
         conn.execute(text("""
@@ -83,6 +209,43 @@ def init_cenovnici(engine):
                 soba_id INTEGER NOT NULL, period_id INTEGER NOT NULL,
                 cena NUMERIC(14,2) NOT NULL CHECK (cena >= 0),
                 PRIMARY KEY (cenovnik_id, soba_id, period_id)
+            )
+        """))
+        # Opcije po sobi cenovnika (soba_id = id iz JSONB snimka cenovnika, može biti
+        # negativan za virtuelne sobe — zato BEZ FK ka tabeli sobe, po odluci za cenovnike)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS opcije_soba (
+                id SERIAL PRIMARY KEY,
+                cenovnik_id INTEGER NOT NULL REFERENCES cenovnici(id) ON DELETE CASCADE,
+                soba_id INTEGER NOT NULL,
+                blokirano BOOLEAN NOT NULL DEFAULT FALSE,
+                istaknuto BOOLEAN NOT NULL DEFAULT FALSE,
+                blokirano_subagenci BOOLEAN NOT NULL DEFAULT FALSE,
+                blokirano_sajt BOOLEAN NOT NULL DEFAULT FALSE,
+                prevoz TEXT, tip_aranzmana TEXT, tip_cene TEXT,
+                popust_sopstveni_prevoz NUMERIC(14,2),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (cenovnik_id, soba_id)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS popust_soba (
+                id SERIAL PRIMARY KEY,
+                cenovnik_id INTEGER NOT NULL REFERENCES cenovnici(id) ON DELETE CASCADE,
+                soba_id INTEGER NOT NULL,
+                umanjenje_vrsta TEXT NOT NULL CHECK (umanjenje_vrsta IN ('iznos', 'procenat')),
+                umanjenje NUMERIC(14,2) NOT NULL CHECK (umanjenje > 0),
+                tip_popusta TEXT NOT NULL,
+                tip_placanja TEXT,
+                vazi_od DATE, vazi_do DATE,
+                tip_aranzmana TEXT, tip_cene TEXT,
+                popust_sopstveni_prevoz NUMERIC(14,2),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (cenovnik_id, soba_id),
+                CHECK (umanjenje_vrsta <> 'procenat' OR umanjenje <= 100),
+                CHECK (vazi_od IS NULL OR vazi_do IS NULL OR vazi_od <= vazi_do)
             )
         """))
 
@@ -287,6 +450,128 @@ def register_cenovnici(api, engine, get_current_user):
             row = conn.execute(text("SELECT id FROM cenovnici WHERE id = :i"), {"i": item_id}).first()
             if not row:
                 raise HTTPException(status_code=404, detail="Cenovnik nije pronađen")
-            # cenovnik_cene / cenovnik_opcije idu preko ON DELETE CASCADE
+            # cenovnik_cene / cenovnik_opcije / opcije_soba / popust_soba idu preko ON DELETE CASCADE
             conn.execute(text("DELETE FROM cenovnici WHERE id = :i"), {"i": item_id})
             return {"status": "obrisan", "id": item_id}
+
+    # ── Opcije i popusti po sobi cenovnika ──────────────────────────────────
+
+    def _proveri_sobu_u_cenovniku(conn, item_id: int, soba_id: int) -> None:
+        cen = conn.execute(text("SELECT id FROM cenovnici WHERE id = :i"), {"i": item_id}).first()
+        if not cen:
+            raise HTTPException(status_code=404, detail="Cenovnik nije pronađen")
+        sobe = conn.execute(text("SELECT sobe FROM cenovnici WHERE id = :i"), {"i": item_id}).scalar_one()
+        if not any(s.get("id") == soba_id for s in (sobe or [])):
+            raise HTTPException(status_code=400, detail="Soba ne pripada ovom cenovniku")
+
+    def _bez_meta(r) -> dict:
+        d = dict(r)
+        for k, v in list(d.items()):
+            if isinstance(v, Decimal):
+                d[k] = float(v)
+        return {k: v for k, v in d.items()
+                if k not in ("id", "cenovnik_id", "created_at", "updated_at")}
+
+    @api.get("/cenovnici/{item_id}/opcije-soba/{soba_id}")
+    def opcije_soba_get(item_id: int, soba_id: int, _: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
+            r = conn.execute(text("""
+                SELECT blokirano, istaknuto, blokirano_subagenci, blokirano_sajt,
+                       prevoz, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
+                FROM opcije_soba WHERE cenovnik_id = :c AND soba_id = :s
+            """), {"c": item_id, "s": soba_id}).mappings().first()
+            if not r:
+                return {"postoji": False, "soba_id": soba_id, "blokirano": False, "istaknuto": False,
+                        "blokirano_subagenci": False, "blokirano_sajt": False, "prevoz": None,
+                        "tip_aranzmana": None, "tip_cene": None, "popust_sopstveni_prevoz": None}
+            return {"postoji": True, "soba_id": soba_id, **_bez_meta(r)}
+
+    @api.put("/cenovnici/{item_id}/opcije-soba/{soba_id}")
+    def opcije_soba_put(item_id: int, soba_id: int, body: OpcijeSobaIn,
+                        _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
+            conn.execute(text("""
+                INSERT INTO opcije_soba (cenovnik_id, soba_id, blokirano, istaknuto,
+                    blokirano_subagenci, blokirano_sajt, prevoz, tip_aranzmana, tip_cene,
+                    popust_sopstveni_prevoz)
+                VALUES (:c, :s, :blokirano, :istaknuto, :bsub, :bsite, :prevoz, :ta, :tc, :psp)
+                ON CONFLICT (cenovnik_id, soba_id) DO UPDATE SET
+                    blokirano = EXCLUDED.blokirano, istaknuto = EXCLUDED.istaknuto,
+                    blokirano_subagenci = EXCLUDED.blokirano_subagenci,
+                    blokirano_sajt = EXCLUDED.blokirano_sajt, prevoz = EXCLUDED.prevoz,
+                    tip_aranzmana = EXCLUDED.tip_aranzmana, tip_cene = EXCLUDED.tip_cene,
+                    popust_sopstveni_prevoz = EXCLUDED.popust_sopstveni_prevoz,
+                    updated_at = NOW()
+            """), {"c": item_id, "s": soba_id, "blokirano": body.blokirano, "istaknuto": body.istaknuto,
+                   "bsub": body.blokirano_subagenci, "bsite": body.blokirano_sajt,
+                   "prevoz": body.prevoz, "ta": body.tip_aranzmana, "tc": body.tip_cene,
+                   "psp": body.popust_sopstveni_prevoz})
+            r = conn.execute(text("""
+                SELECT blokirano, istaknuto, blokirano_subagenci, blokirano_sajt,
+                       prevoz, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
+                FROM opcije_soba WHERE cenovnik_id = :c AND soba_id = :s
+            """), {"c": item_id, "s": soba_id}).mappings().first()
+            return {"postoji": True, "soba_id": soba_id, **_bez_meta(r)}
+
+    @api.delete("/cenovnici/{item_id}/opcije-soba/{soba_id}")
+    def opcije_soba_delete(item_id: int, soba_id: int, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
+            conn.execute(text("DELETE FROM opcije_soba WHERE cenovnik_id = :c AND soba_id = :s"),
+                         {"c": item_id, "s": soba_id})
+            return {"status": "obrisano", "soba_id": soba_id}
+
+    @api.get("/cenovnici/{item_id}/popust-soba/{soba_id}")
+    def popust_soba_get(item_id: int, soba_id: int, _: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
+            r = conn.execute(text("""
+                SELECT umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja, vazi_od, vazi_do,
+                       tip_aranzmana, tip_cene, popust_sopstveni_prevoz
+                FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s
+            """), {"c": item_id, "s": soba_id}).mappings().first()
+            if not r:
+                return {"postoji": False, "soba_id": soba_id, "umanjenje_vrsta": "iznos",
+                        "umanjenje": None, "tip_popusta": None, "tip_placanja": None,
+                        "vazi_od": None, "vazi_do": None, "tip_aranzmana": None,
+                        "tip_cene": None, "popust_sopstveni_prevoz": None}
+            return {"postoji": True, "soba_id": soba_id, **_bez_meta(r)}
+
+    @api.put("/cenovnici/{item_id}/popust-soba/{soba_id}")
+    def popust_soba_put(item_id: int, soba_id: int, body: PopustSobaIn,
+                        _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
+            conn.execute(text("""
+                INSERT INTO popust_soba (cenovnik_id, soba_id, umanjenje_vrsta, umanjenje,
+                    tip_popusta, tip_placanja, vazi_od, vazi_do, tip_aranzmana, tip_cene,
+                    popust_sopstveni_prevoz)
+                VALUES (:c, :s, :vrsta, :umanjenje, :tp, :tpl, :od, :do, :ta, :tc, :psp)
+                ON CONFLICT (cenovnik_id, soba_id) DO UPDATE SET
+                    umanjenje_vrsta = EXCLUDED.umanjenje_vrsta, umanjenje = EXCLUDED.umanjenje,
+                    tip_popusta = EXCLUDED.tip_popusta, tip_placanja = EXCLUDED.tip_placanja,
+                    vazi_od = EXCLUDED.vazi_od, vazi_do = EXCLUDED.vazi_do,
+                    tip_aranzmana = EXCLUDED.tip_aranzmana, tip_cene = EXCLUDED.tip_cene,
+                    popust_sopstveni_prevoz = EXCLUDED.popust_sopstveni_prevoz,
+                    updated_at = NOW()
+            """), {"c": item_id, "s": soba_id, "vrsta": body.umanjenje_vrsta,
+                   "umanjenje": body.umanjenje, "tp": body.tip_popusta,
+                   "tpl": body.tip_placanja, "od": body.vazi_od, "do": body.vazi_do,
+                   "ta": body.tip_aranzmana, "tc": body.tip_cene,
+                   "psp": body.popust_sopstveni_prevoz})
+            r = conn.execute(text("""
+                SELECT umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja, vazi_od, vazi_do,
+                       tip_aranzmana, tip_cene, popust_sopstveni_prevoz
+                FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s
+            """), {"c": item_id, "s": soba_id}).mappings().first()
+            return {"postoji": True, "soba_id": soba_id, **_bez_meta(r)}
+
+    @api.delete("/cenovnici/{item_id}/popust-soba/{soba_id}")
+    def popust_soba_delete(item_id: int, soba_id: int, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
+            conn.execute(text("DELETE FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s"),
+                         {"c": item_id, "s": soba_id})
+            return {"status": "obrisano", "soba_id": soba_id}
