@@ -761,16 +761,16 @@ export default function CenovniciPage() {
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)}>
-        <TabsList className="h-14 p-2 gap-2">
+        <TabsList className="h-auto p-2 gap-3">
           <TabsTrigger
             value="kreiranje"
-            className="h-full px-7 text-base font-semibold data-[state=active]:shadow-md"
+            className="h-12 rounded-lg px-9 text-base font-semibold data-[state=active]:shadow-md"
           >
             Kreiranje cenovnika
           </TabsTrigger>
           <TabsTrigger
             value="izmena"
-            className="h-full px-7 text-base font-semibold data-[state=active]:shadow-md"
+            className="h-12 rounded-lg px-9 text-base font-semibold data-[state=active]:shadow-md"
           >
             Izmena kreiranih cenovnika
           </TabsTrigger>
