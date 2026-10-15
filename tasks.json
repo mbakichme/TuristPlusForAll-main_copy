@@ -1,27 +1,22 @@
 [
   {
-    "content": "[mesto-grupe-1] DB: mesto_grupa tabela + idempotentna migracija iz mesto.grupa_datuma (init_db)",
+    "content": "[osvezavanje-1] Backend: _osvezi_sobe helper (čuvanje id-jeva virtuelnih po (izvor,struktura)), _sablon refactor, _detail refresh + nova tag, PUT upisuje osvežen snimak",
     "id": "1",
     "status": "completed"
   },
   {
-    "content": "[mesto-grupe-2] Backend: modeli grupe, GET /mesto vraca grupe+grupe_nazivi, POST/PUT pise mesto_grupa (grupa_datuma = prva), /slobodne-sobe + mesto_id param",
+    "content": "[osvezavanje-2] Frontend: SablonSoba.nova + \"nova\" marker u matrici; provera da edit tok propušta virtuelna/nova polja",
     "id": "2",
     "status": "completed"
   },
   {
-    "content": "[mesto-grupe-3] Frontend: types.ts, MestoPage multi-select grupa (Popover+checkbox) + tabela joined nazivi",
+    "content": "[osvezavanje-3] Test test_cenovnici_osvezavanje.py (API + UI) + regresije (virtuelne, opis, zakljucavanje, brisanje)",
     "id": "3",
     "status": "completed"
   },
   {
-    "content": "[mesto-grupe-4] Ripple: GrafikPage filter grupe, PretragaPage merge datumi + mesto_id, PromenaSmestajaDialog grupe[0], RezervacijePage grafikPodaci grupe[0]",
+    "content": "[osvezavanje-4] bun run build, commit, context update",
     "id": "4",
-    "status": "completed"
-  },
-  {
-    "content": "[mesto-grupe-5] Test: API round-trip (GET/POST/PUT grupe), /slobodne-sobe mesto_id; bun run build; context.md",
-    "id": "5",
     "status": "completed"
   }
 ]
