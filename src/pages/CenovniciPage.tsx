@@ -28,7 +28,10 @@ import { toast } from "sonner";
 
 // ── Tipovi (ugovor backend-a) ───────────────────────────────────────────────
 
-interface SablonSoba { id: number; broj_sobe: string; tip: string; opis: string; opis_dodatno: string; }
+interface SablonSoba {
+  id: number; broj_sobe: string; tip: string; opis: string; opis_dodatno: string;
+  izvor_soba_id?: number; virtuelna?: boolean;
+}
 interface SablonPeriod { id: number; datum_od: string; datum_do: string; nocenja: number; }
 interface SablonCena { soba_id: number; period_id: number; cena: string; }
 
@@ -160,10 +163,19 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
         <tbody>
           {sobe.map((soba) => {
             const struktura = [soba.tip, soba.opis].filter(Boolean).join(" · ");
+            const virtTitle = soba.virtuelna && soba.izvor_soba_id !== undefined
+              ? `Virtuelna soba — nastala iz sobe ${soba.izvor_soba_id}`
+              : undefined;
             return (
-              <tr key={soba.id} className="hover:bg-muted/40">
+              <tr
+                key={soba.id}
+                title={virtTitle}
+                className={cn("hover:bg-muted/40", soba.virtuelna && "bg-muted/25")}
+              >
                 <td className="sticky left-0 z-10 w-20 min-w-[5rem] border-b bg-card px-2 py-1.5 text-[13px] font-semibold tabular-nums">
-                  {soba.broj_sobe || "—"}
+                  <span className={cn(soba.virtuelna && "italic text-primary")}>
+                    {soba.broj_sobe || "—"}
+                  </span>
                 </td>
                 <td className="sticky left-20 z-10 w-44 min-w-[11rem] border-b border-r bg-card px-2 py-1.5">
                   <div className="truncate text-[13px] font-medium" title={struktura}>

@@ -99,6 +99,36 @@ def _sablon(conn, mesto_id, grupa_id, smestaj_id):
                         "datum_do": r["datum_do"].isoformat(), "nocenja": nocenja})
     if not sobe or not periodi:
         raise HTTPException(400, "Smeštaj mora imati sobe, a grupa definisane termine")
+    # Virtuelne sobe: za svaku sobu sa dodatnim koeficijentima (soba_koeficijenti)
+    # kreira se red odmah ispod nje — v{broj} (jedan dodatni koeficijent), odnosno
+    # v{broj}-1, v{broj}-2… (više njih). Id je negativan i važi SAMO u okviru
+    # ovog cenovnika; veza sa sobom od koje je nastala je izvor_soba_id.
+    # Ne upisuju se u tabelu sobe — žive u JSONB snimku cenovnika.
+    dodatni: dict[int, list[str]] = {}
+    for r in conn.execute(text("""
+        SELECT k.soba_id, k.struktura FROM soba_koeficijenti k
+        JOIN sobe s ON s.id = k.soba_id
+        WHERE s.veza_id_smestaj = :s ORDER BY k.soba_id, k.id
+    """), {"s": smestaj_id}).fetchall():
+        dodatni.setdefault(r.soba_id, []).append(r.struktura)
+    sa_virtuelnim: list[dict] = []
+    virtual_id = 0
+    for sob in sobe:
+        sa_virtuelnim.append(sob)
+        strukture = dodatni.get(sob["id"], [])
+        broj = sob["broj_sobe"] or str(sob["id"])
+        for i, struktura in enumerate(strukture, start=1):
+            virtual_id -= 1
+            sa_virtuelnim.append({
+                "id": virtual_id,
+                "broj_sobe": f"v{broj}" if len(strukture) == 1 else f"v{broj}-{i}",
+                "tip": struktura,
+                "opis": sob["opis"] or "",
+                "opis_dodatno": sob["opis_dodatno"] or "",
+                "izvor_soba_id": sob["id"],
+                "virtuelna": True,
+            })
+    sobe = sa_virtuelnim
     return {"naziv": f'{ref["mesto_naziv"]}-{ref["smestaj_naziv"]}-{ref["grupa_naziv"]}',
             "mesto_id": mesto_id, "grupa_id": grupa_id, "smestaj_id": smestaj_id,
             "sobe": sobe, "periodi": periodi, "cene": [], "datumod": None, "datumdo": None}
