@@ -20,7 +20,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Pencil, Receipt, Search, CalendarDays, Lock, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Pencil, Receipt, Search, CalendarDays, Lock, Trash2 } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { srLatn } from "date-fns/locale";
@@ -449,12 +449,14 @@ export default function CenovniciPage() {
   const [q, setQ] = useState("");
   const [lista, setLista] = useState<CenovnikRow[]>([]);
   const [listLoading, setListLoading] = useState(true);
+  const [strana, setStrana] = useState(1); // paginacija liste — 5 cenovnika po strani
   const [editDetail, setEditDetail] = useState<CenovnikDetail | null>(null);
   const [editCene, setEditCene] = useState<Record<string, string>>({});
   const [editOd, setEditOd] = useState("");
   const [editDo, setEditDo] = useState("");
   const [editOpis, setEditOpis] = useState("");
   const [editSnapshot, setEditSnapshot] = useState<string | null>(null);
+  const [editZakljucano, setEditZakljucano] = useState(false);
   const [loadingEdit, setLoadingEdit] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const listReq = useRef(0);
@@ -495,6 +497,7 @@ export default function CenovniciPage() {
   // Pretraga cenovnika — 400 ms debounce, zaštita od zastarelih odgovora
   useEffect(() => {
     const req = ++listReq.current;
+    setStrana(1); // nova pretraga uvek počinje od prve strane
     const t = setTimeout(() => {
       setListLoading(true);
       const qs = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
@@ -531,6 +534,13 @@ export default function CenovniciPage() {
     && snapshotStringa(createCene, createOd, createDo, createOpis) !== createSnapshot;
   const editDirty = editSnapshot !== null
     && snapshotStringa(editCene, editOd, editDo, editOpis) !== editSnapshot;
+
+  // Paginacija liste cenovnika: 5 poslednjih kreiranih na prvoj strani, ostatak na
+  // sledećim — lista je već sortirana po id DESC (najnoviji prvi).
+  const STRANICA = 5;
+  const ukupnoStrana = Math.max(1, Math.ceil(lista.length / STRANICA));
+  const aktivnaStrana = Math.min(strana, ukupnoStrana);
+  const redoviStrane = lista.slice((aktivnaStrana - 1) * STRANICA, aktivnaStrana * STRANICA);
 
   useEffect(() => {
     if (!createDirty && !editDirty) return;
@@ -729,6 +739,7 @@ export default function CenovniciPage() {
         setEditDo("");
         setEditOpis("");
         setEditSnapshot(null);
+        setEditZakljucano(false);
       }
       toast.success(`Cenovnik „${red.naziv}“ je obrisan`);
       setObrisiRed(null);
@@ -758,6 +769,7 @@ export default function CenovniciPage() {
       setEditDo(d.datumdo ?? "");
       setEditOpis(d.opis ?? "");
       setEditSnapshot(snapshotStringa(cene, d.datumod ?? "", d.datumdo ?? "", d.opis ?? ""));
+      setEditZakljucano(false); // tek otvoren cenovnik je otključan
       requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (e) {
       if (req !== editReq.current) return;
@@ -791,6 +803,7 @@ export default function CenovniciPage() {
       setEditDo(d.datumdo ?? "");
       setEditOpis(d.opis ?? "");
       setEditSnapshot(snapshotStringa(c, d.datumod ?? "", d.datumdo ?? "", d.opis ?? ""));
+      setEditZakljucano(true); // posle čuvanja polja cenovnika su zaključana
       if (createSaved?.id === d.id) primeniCreateDraft(d, { id: d.id, uuid: d.uuid });
       toast.success("Izmene cenovnika su sačuvane");
       osveziListu();
@@ -821,7 +834,12 @@ export default function CenovniciPage() {
         <p className="text-sm text-muted-foreground">Matrica cena smeštaja po grupama perioda</p>
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)}>
+      <Tabs value={tab} onValueChange={(v) => {
+        // Prelazak na tab Izmena sklanja kreiranu tabelu iz taba Kreiranje — čak i
+        // sa nesačuvanim izmenama — da cene dva editora ne dođu u preklapanje.
+        if (v === "izmena" && tab !== "izmena") resetujCreateDraft();
+        setTab(v as TabKey);
+      }}>
         <TabsList className="h-auto p-2 gap-3">
           <TabsTrigger
             value="kreiranje"
@@ -1011,7 +1029,7 @@ export default function CenovniciPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    lista.map((row) => (
+                    redoviStrane.map((row) => (
                       <TableRow
                         key={row.id}
                         onClick={() => otvoriEdit(row)}
@@ -1063,6 +1081,34 @@ export default function CenovniciPage() {
                   )}
                 </TableBody>
               </Table>
+              {ukupnoStrana > 1 ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <p className="text-xs text-muted-foreground">
+                    Ukupno {lista.length} {pluralSr(lista.length, "cenovnik", "cenovnika", "cenovnika")} · strana{" "}
+                    {aktivnaStrana} od {ukupnoStrana}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={aktivnaStrana <= 1}
+                      onClick={() => setStrana(aktivnaStrana - 1)}
+                    >
+                      <ChevronLeft className="mr-1 h-4 w-4" />
+                      Prethodna
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={aktivnaStrana >= ukupnoStrana}
+                      onClick={() => setStrana(aktivnaStrana + 1)}
+                    >
+                      Sledeća
+                      <ChevronRight className="ml-1 h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -1100,8 +1146,14 @@ export default function CenovniciPage() {
                 onOpisCenovnika={setEditOpis}
                 onSave={sacuvajEdit}
                 saving={savingEdit}
-                disabled={loadingEdit || savingEdit}
+                disabled={loadingEdit || savingEdit || editZakljucano}
                 saveLabel="Sačuvaj izmene"
+                onIzmeni={editZakljucano ? () => {
+                  setEditZakljucano(false);
+                  toast.info("Polja za unos cena su otključana");
+                } : undefined}
+                izmeniDisabled={savingEdit}
+                zakljucano={editZakljucano}
               />
             ) : null}
           </div>
