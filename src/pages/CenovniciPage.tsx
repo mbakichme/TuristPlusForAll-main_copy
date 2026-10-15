@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -106,6 +107,29 @@ function ceneZaPayload(cene: Record<string, string>, sobe: SablonSoba[], periodi
 /** Otisak stanja matrice za poređenje „nesačuvano“. */
 function snapshotStringa(cene: Record<string, string>, od: string, ddo: string, opis: string): string {
   return JSON.stringify({ c: cene, od, ddo, opis });
+}
+
+/** Unos cene uz uključeno „Kopiraj cene“: vrednost se odmah upisuje i u sve ostale
+ *  sobe šablona sa istom strukturom (tip), istim opisom i iste vrste
+ *  (stvarna → stvarne, virtuelna → virtuelne). Primer: soba 12 (1/3 · STD) →
+ *  18, 21, 22… ; v12 (1/2 · STD) → v18, v6… */
+function ceneSaKopiranjem(
+  prev: Record<string, string>,
+  sobe: SablonSoba[],
+  sobaId: number,
+  periodId: number,
+  vrednost: string,
+): Record<string, string> {
+  const izvor = sobe.find((s) => s.id === sobaId);
+  if (!izvor) return { ...prev, [cellKey(sobaId, periodId)]: vrednost };
+  const next = { ...prev, [cellKey(sobaId, periodId)]: vrednost };
+  for (const s of sobe) {
+    if (s.id === izvor.id) continue;
+    if (s.tip !== izvor.tip || (s.opis ?? "") !== (izvor.opis ?? "")) continue;
+    if (!!s.virtuelna !== !!izvor.virtuelna) continue;
+    next[cellKey(s.id, periodId)] = vrednost;
+  }
+  return next;
 }
 
 /** ISO yyyy-mm-dd → dd.mm.yyyy (prikaz); „—“ za prazno. */
@@ -353,6 +377,8 @@ interface UrednikCenovnikaProps {
   onIzmeni?: () => void;
   izmeniDisabled?: boolean;
   zakljucano?: boolean;
+  kopiraj: boolean;
+  onKopirajChange: (v: boolean) => void;
 }
 
 function UrednikCenovnika(p: UrednikCenovnikaProps) {
@@ -404,13 +430,30 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
             Šablon ne sadrži {p.sobe.length === 0 ? "sobe" : "periode"} za izabrani smeštaj.
           </p>
         ) : (
-          <MatricaCena
-            sobe={p.sobe}
-            periodi={p.periodi}
-            cene={p.cene}
-            onCenaChange={p.onCenaChange}
-            disabled={p.disabled}
-          />
+          <>
+            <label
+              htmlFor={`${p.idPrefix}-kopiraj`}
+              className="flex w-fit cursor-pointer items-center gap-2 text-sm"
+            >
+              <Checkbox
+                id={`${p.idPrefix}-kopiraj`}
+                checked={p.kopiraj}
+                onCheckedChange={(c) => p.onKopirajChange(c === true)}
+                disabled={p.disabled}
+              />
+              <span className="font-medium">Kopiraj cene</span>
+              <span className="text-xs text-muted-foreground">
+                — uneta cena se automatski upisuje u sve sobe iste strukture i opisa
+              </span>
+            </label>
+            <MatricaCena
+              sobe={p.sobe}
+              periodi={p.periodi}
+              cene={p.cene}
+              onCenaChange={p.onCenaChange}
+              disabled={p.disabled}
+            />
+          </>
         )}
       </CardContent>
     </Card>
@@ -443,6 +486,7 @@ export default function CenovniciPage() {
   const [createZakljucano, setCreateZakljucano] = useState(false);
   const [loadingSablon, setLoadingSablon] = useState(false);
   const [savingCreate, setSavingCreate] = useState(false);
+  const [kopirajCene, setKopirajCene] = useState(false); // opcija „Kopiraj cene“ (zajednička za oba editora)
   const sablonReq = useRef(0);
 
   // Tab „Izmena kreiranih cenovnika“
@@ -815,9 +859,17 @@ export default function CenovniciPage() {
   }
 
   const postaviCreateCenu = (sobaId: number, periodId: number, vrednost: string) =>
-    setCreateCene((prev) => ({ ...prev, [cellKey(sobaId, periodId)]: vrednost }));
+    setCreateCene((prev) =>
+      kopirajCene && createDraft
+        ? ceneSaKopiranjem(prev, createDraft.sobe, sobaId, periodId, vrednost)
+        : { ...prev, [cellKey(sobaId, periodId)]: vrednost },
+    );
   const postaviEditCenu = (sobaId: number, periodId: number, vrednost: string) =>
-    setEditCene((prev) => ({ ...prev, [cellKey(sobaId, periodId)]: vrednost }));
+    setEditCene((prev) =>
+      kopirajCene && editDetail
+        ? ceneSaKopiranjem(prev, editDetail.sobe, sobaId, periodId, vrednost)
+        : { ...prev, [cellKey(sobaId, periodId)]: vrednost },
+    );
 
   if (loading) {
     return (
@@ -973,6 +1025,8 @@ export default function CenovniciPage() {
               } : undefined}
               izmeniDisabled={savingCreate}
               zakljucano={createZakljucano}
+              kopiraj={kopirajCene}
+              onKopirajChange={setKopirajCene}
             />
           ) : (
             <Card>
@@ -1154,6 +1208,8 @@ export default function CenovniciPage() {
                 } : undefined}
                 izmeniDisabled={savingEdit}
                 zakljucano={editZakljucano}
+                kopiraj={kopirajCene}
+                onKopirajChange={setKopirajCene}
               />
             ) : null}
           </div>
