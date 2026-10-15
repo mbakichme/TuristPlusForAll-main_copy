@@ -172,14 +172,28 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
               <tr
                 key={soba.id}
                 title={virtTitle}
-                className={cn("hover:bg-muted/40", soba.virtuelna && "bg-muted/25")}
+                className={cn("hover:bg-muted/40", soba.virtuelna && "bg-violet-500/5 hover:bg-violet-500/10")}
               >
-                <td className="sticky left-0 z-10 w-20 min-w-[5rem] border-b bg-card px-2 py-1.5 text-[13px] font-semibold tabular-nums">
-                  <span className={cn(soba.virtuelna && "italic text-primary")}>
-                    {soba.broj_sobe || "—"}
-                  </span>
+                <td
+                  className={cn(
+                    "sticky left-0 z-10 w-20 min-w-[5rem] border-b px-2 py-1.5 text-[13px] font-semibold tabular-nums",
+                    soba.virtuelna ? "border-l-2 border-l-violet-500/60 bg-violet-500/5" : "bg-card",
+                  )}
+                >
+                  {soba.virtuelna ? (
+                    <span className="inline-flex max-w-full items-center truncate rounded-full border border-violet-500/40 bg-violet-500/10 px-1.5 py-px text-[11px] italic text-violet-600 dark:text-violet-400">
+                      {soba.broj_sobe || "—"}
+                    </span>
+                  ) : (
+                    <span>{soba.broj_sobe || "—"}</span>
+                  )}
                 </td>
-                <td className="sticky left-20 z-10 w-44 min-w-[11rem] border-b border-r bg-card px-2 py-1.5">
+                <td
+                  className={cn(
+                    "sticky left-20 z-10 w-44 min-w-[11rem] border-b border-r px-2 py-1.5",
+                    soba.virtuelna ? "bg-violet-500/5" : "bg-card",
+                  )}
+                >
                   <div className="truncate text-[13px] font-medium" title={struktura}>
                     {struktura || "—"}
                   </div>
