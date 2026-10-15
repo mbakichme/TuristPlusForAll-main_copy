@@ -20,7 +20,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Pencil, Receipt, Search, CalendarDays } from "lucide-react";
+import { Loader2, Pencil, Receipt, Search, CalendarDays, Lock } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { srLatn } from "date-fns/locale";
@@ -212,6 +212,8 @@ interface OpcijeDatumaProps {
   saving: boolean;
   disabled?: boolean;
   label: string;
+  onIzmeni?: () => void;
+  izmeniDisabled?: boolean;
 }
 
 function DatumCenovnika({ id, value, onChange, disabled }: {
@@ -253,7 +255,7 @@ function DatumCenovnika({ id, value, onChange, disabled }: {
   );
 }
 
-function OpcijeDatuma({ idPrefix, od, ddo, onOd, onDdo, onSave, saving, disabled, label }: OpcijeDatumaProps) {
+function OpcijeDatuma({ idPrefix, od, ddo, onOd, onDdo, onSave, saving, disabled, label, onIzmeni, izmeniDisabled }: OpcijeDatumaProps) {
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-muted/40 px-3 py-2.5">
       <div className="flex flex-col gap-1.5">
@@ -268,6 +270,12 @@ function OpcijeDatuma({ idPrefix, od, ddo, onOd, onDdo, onSave, saving, disabled
         {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
         {label}
       </Button>
+      {onIzmeni && (
+        <Button variant="outline" onClick={onIzmeni} disabled={izmeniDisabled}>
+          <Pencil className="mr-2 h-4 w-4" />
+          Izmeni cenovnik
+        </Button>
+      )}
     </div>
   );
 }
@@ -292,6 +300,9 @@ interface UrednikCenovnikaProps {
   saving: boolean;
   disabled?: boolean;
   saveLabel: string;
+  onIzmeni?: () => void;
+  izmeniDisabled?: boolean;
+  zakljucano?: boolean;
 }
 
 function UrednikCenovnika(p: UrednikCenovnikaProps) {
@@ -307,6 +318,12 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
             </CardDescription>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {p.zakljucano ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/40 bg-sky-500/10 px-2.5 py-0.5 text-xs font-medium text-sky-600 dark:text-sky-500">
+                <Lock className="h-3 w-3" />
+                Zaključano
+              </span>
+            ) : null}
             {p.prljavo ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-500">
                 Nesačuvane izmene
@@ -327,6 +344,8 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
           saving={p.saving}
           disabled={p.disabled}
           label={p.saveLabel}
+          onIzmeni={p.onIzmeni}
+          izmeniDisabled={p.izmeniDisabled}
         />
         {p.sobe.length === 0 || p.periodi.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
@@ -368,6 +387,7 @@ export default function CenovniciPage() {
   const [createDo, setCreateDo] = useState("");
   const [createSnapshot, setCreateSnapshot] = useState<string | null>(null);
   const [createSaved, setCreateSaved] = useState<{ id: number; uuid: string } | null>(null);
+  const [createZakljucano, setCreateZakljucano] = useState(false);
   const [loadingSablon, setLoadingSablon] = useState(false);
   const [savingCreate, setSavingCreate] = useState(false);
   const sablonReq = useRef(0);
@@ -509,6 +529,7 @@ export default function CenovniciPage() {
     setCreateDo("");
     setCreateSnapshot(null);
     setCreateSaved(null);
+    setCreateZakljucano(false);
   }
 
   function izborMesta(v: string) {
@@ -564,6 +585,7 @@ export default function CenovniciPage() {
       });
       const d = await apiFetch<CenovnikDraft>(`/cenovnici/sablon?${params}`);
       if (req !== sablonReq.current) return;
+      setCreateZakljucano(false); // novi šablon je uvek otključan
       primeniCreateDraft(d, null);
     } catch (e) {
       if (req !== sablonReq.current) return;
@@ -604,6 +626,7 @@ export default function CenovniciPage() {
           });
       const biloKreiranje = !createSaved;
       primeniCreateDraft(detail, { id: detail.id, uuid: detail.uuid });
+      setCreateZakljucano(true); // posle čuvanja polja cenovnika su zaključana
       if (editDetail?.id === detail.id) {
         const c = ceneMap(detail.cene ?? []);
         setEditDetail(detail);
@@ -834,8 +857,14 @@ export default function CenovniciPage() {
               onDdo={setCreateDo}
               onSave={sacuvajCreate}
               saving={savingCreate}
-              disabled={loadingSablon || savingCreate}
+              disabled={loadingSablon || savingCreate || createZakljucano}
               saveLabel="Sačuvaj cenovnik"
+              onIzmeni={createZakljucano && createSaved ? () => {
+                setCreateZakljucano(false);
+                toast.info("Polja za unos cena su otključana");
+              } : undefined}
+              izmeniDisabled={savingCreate}
+              zakljucano={createZakljucano}
             />
           ) : (
             <Card>
