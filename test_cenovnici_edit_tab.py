@@ -110,6 +110,12 @@ with sync_playwright() as p:
     redovi.first.click()
     cena_edit = pg.get_by_label(RE_CENA).first
     cena_edit.wait_for(state="visible", timeout=15000)
+    check("otvoren cenovnik je zaključan u startu", cena_edit.is_disabled()
+          and pg.get_by_text("Zaključano", exact=True).count() > 0
+          and pg.get_by_role("button", name="Izmeni cenovnik", exact=True).count() > 0)
+    pg.get_by_role("button", name="Izmeni cenovnik", exact=True).click()
+    pg.wait_for_timeout(300)
+    check("„Izmeni cenovnik“ (na startu) otključava", cena_edit.is_enabled())
     cena_edit.fill("55")
     pg.get_by_role("button", name="Sačuvaj izmene").click()
     pg.get_by_text("Izmene cenovnika su sačuvane").wait_for(timeout=10000)

@@ -107,6 +107,9 @@ with sync_playwright() as p:
     check("UI: editor u tabu Izmena pokazuje sačuvani opis", edit_opis.input_value() == "Opis unet kroz UI")
     check("UI: red u listi prikazuje opis ispod naziva",
           red.first.filter(has_text="Opis unet kroz UI").count() > 0)
+    check("UI: otvoren cenovnik je zaključan u startu", edit_opis.is_disabled())
+    pg.get_by_role("button", name="Izmeni cenovnik", exact=True).click()
+    pg.wait_for_timeout(300)
     edit_opis.fill("Opis izmenjen kroz UI")
     with pg.expect_response(lambda r: r.url.rstrip("/").endswith(f"/api/cenovnici/{ui_cid}")
                             and r.request.method == "PUT") as ri2:

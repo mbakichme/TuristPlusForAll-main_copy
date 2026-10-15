@@ -209,6 +209,10 @@ with sync_playwright() as p:
     check("UI: virtuelna soba ima violet pill oznaku",
           "bg-violet-500/10" in cellv.first.evaluate(
               "el => [...el.querySelectorAll('span')].map(s => s.className).join(' ')"))
+    check("UI: otvoren cenovnik je zaključan u startu",
+          row905.get_by_role("textbox").first.is_disabled())
+    pg.get_by_role("button", name="Izmeni cenovnik", exact=True).click()
+    pg.wait_for_timeout(300)
     row905.get_by_role("textbox").first.fill("123")
     pg.get_by_role("button", name="Sačuvaj izmene").click()
     pg.get_by_text("Izmene cenovnika su sačuvane").wait_for(timeout=10000)

@@ -813,7 +813,7 @@ export default function CenovniciPage() {
       setEditDo(d.datumdo ?? "");
       setEditOpis(d.opis ?? "");
       setEditSnapshot(snapshotStringa(cene, d.datumod ?? "", d.datumdo ?? "", d.opis ?? ""));
-      setEditZakljucano(false); // tek otvoren cenovnik je otključan
+      setEditZakljucano(true); // otvoren cenovnik je zaključan — „Izmeni cenovnik“ otključava
       requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (e) {
       if (req !== editReq.current) return;

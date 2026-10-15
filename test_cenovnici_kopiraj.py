@@ -132,6 +132,10 @@ with sync_playwright() as p:
     expect(redovi).to_have_count(1, timeout=10000)
     redovi.first.click()
     inp("12").first.wait_for(state="visible", timeout=15000)
+    check("izmena: otvoren cenovnik je zaključan u startu",
+          inp("12").first.is_disabled() and pg.get_by_text("Zaključano", exact=True).count() > 0)
+    pg.get_by_role("button", name="Izmeni cenovnik", exact=True).click()
+    pg.wait_for_timeout(300)
 
     chk2 = pg.get_by_role("checkbox", name="Kopiraj cene")
     check("checkbox dostupan i u tabu Izmena", chk2.is_visible())

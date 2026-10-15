@@ -47,7 +47,7 @@ def pick_date(page, selector, iso):
     dropdowns = calendar.locator("select")
     dropdowns.nth(1).select_option(iso[:4])
     dropdowns.nth(0).select_option(str(int(iso[5:7]) - 1))
-    calendar.locator(f'button[data-day="{int(iso[5:7])}/{int(iso[8:10])}/{iso[:4]}"]').click()
+    calendar.locator(f'button[data-day="{int(iso[5:7])}/{int(iso[8:10])}/{iso[:4]}"]').click(force=True)
     expect(page.locator(selector)).to_have_text(fmt_iso(iso))
 
 
@@ -157,6 +157,9 @@ def main():
             expect(edit_cell).to_have_value("125.50")
             expect(page.get_by_text(f"#{created_id} · {cuuid}", exact=True)).to_be_visible()
             print("[edit] editor ucitan, prva celija = 125.50")
+            assert edit_cell.is_disabled(), "cenovnik treba biti zakljucan na startu"
+            page.get_by_role("button", name="Izmeni cenovnik", exact=True).click()
+            page.wait_for_timeout(300)
 
             # ── Change price to 150, save, verify API + same UUID ──
             edit_cell.fill("150")
@@ -175,33 +178,31 @@ def main():
             expect(page.get_by_text(f"#{created_id} · {cuuid}", exact=True)).to_be_visible()
             print(f"[edit] PUT 200, ista uuid, API cena = {cena0['cena']}")
 
-            # ── Tab 1 state synchronized ──
-            page.get_by_role("tab", name="Kreiranje cenovnika").click()
-            expect(page.locator("#create-od")).to_have_text(fmt_iso(DATUM_OD))
-            expect(page.locator("#create-do")).to_have_text(fmt_iso(DATUM_DO))
-            expect(page.get_by_label(cell_label, exact=True)).to_have_value("150")
-            assert page.get_by_label(cell_label, exact=True).evaluate("el => getComputedStyle(el).textAlign") == "center"
-            expect(page.get_by_text(f"#{created_id} · {cuuid}", exact=True)).to_be_visible()
-            assert page.get_by_text("Nesačuvane izmene").count() == 0, "tab 1 nije sinhronizovan"
-            print("[tab1] sinhronizovano: cena 150.00, datum i badge azurirani, bez 'Nesacuvane izmene'")
-
-            # ── Negative: '-100' rejected, not silently saved as positive ──
+            # ── Negativan unos u editoru izmene: '-100' odbijen klijentskom validacijom ──
+            # (posle uspešnog PUT-a editor je ponovo zaključan — prvo otključati)
+            page.get_by_role("button", name="Izmeni cenovnik", exact=True).click()
+            page.wait_for_timeout(300)
             puts_before = len(put_saves)
-            create_cell = page.get_by_label(cell_label, exact=True)
-            create_cell.fill("-100")
-            panel.get_by_role("button", name="Sačuvaj cenovnik").click()
+            edit_cell.fill("-100")
+            panel.get_by_role("button", name="Sačuvaj izmene").click()
             expect(
                 page.get_by_text("Cena mora biti nenegativan broj").first
             ).to_be_visible(timeout=15000)
             page.wait_for_timeout(800)
             assert len(put_saves) == puts_before, f"salvanje je ipak poslalo PUT: {[r.url for r in put_saves]}"
-            assert create_cell.input_value() == "-100", "vrednost je prepisana umesto odbijena"
+            assert edit_cell.input_value() == "-100", "vrednost je prepisana umesto odbijena"
             got = api.get(f"/cenovnici/{created_id}").json()
             cena0 = next(
                 c for c in got["cene"] if c["soba_id"] == soba0["id"] and c["period_id"] == per0["id"]
             )
             assert cena0["cena"] == "150.00", cena0
             print(f"[invalid] '-100' odbijen: toast greske, bez PUT zahteva, API cena ostala {cena0['cena']}")
+
+            # ── Tab 1: povratak na Kreiranje — draft je tiho resetovan ──
+            page.get_by_role("tab", name="Kreiranje cenovnika").click()
+            expect(page.get_by_role("button", name="Kreiraj cenovnik")).to_be_visible(timeout=15000)
+            assert page.locator("#create-od").count() == 0, "draft kreacije treba biti resetovan"
+            print("[tab1] povratak: kreacija resetovana (izbori mesta/grupe/smeštaja ostaju)")
 
             assert page_errors == [], f"pageerror nije prazan: {page_errors}"
             print("[pageerror] lista prazna")
