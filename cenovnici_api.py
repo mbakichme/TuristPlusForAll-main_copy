@@ -28,6 +28,7 @@ class CenovnikIzmena(BaseModel):
     datumod: date
     datumdo: date
     cene: list[CenaIn] = Field(default_factory=list, max_length=100000)
+    opis: str | None = None  # None = ne menjaj postojeći opis (stari klijenti)
 
     @model_validator(mode="after")
     def validni_datumi(self):
@@ -35,11 +36,22 @@ class CenovnikIzmena(BaseModel):
             raise ValueError("Aktivan od mora biti pre ili isti kao Aktivan do")
         return self
 
+    @field_validator("opis")
+    @classmethod
+    def validan_opis(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if len(v) > 500:
+            raise ValueError("Opis cenovnika može imati najviše 500 znakova")
+        return v
+
 
 class CenovnikNovi(CenovnikIzmena):
     mesto_id: int
     grupa_id: int
     smestaj_id: int
+    opis: str = ""  # novi cenovnik uvek dobija opis (prazan ako nije unet)
 
 
 def init_cenovnici(engine):
@@ -47,13 +59,17 @@ def init_cenovnici(engine):
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS cenovnici (
                 id SERIAL PRIMARY KEY, uuid UUID NOT NULL UNIQUE,
-                naziv TEXT NOT NULL, mesto_id INTEGER NOT NULL,
+                naziv TEXT NOT NULL, opis TEXT NOT NULL DEFAULT '',
+                mesto_id INTEGER NOT NULL,
                 grupa_id INTEGER NOT NULL, smestaj_id INTEGER NOT NULL,
                 sobe JSONB NOT NULL, periodi JSONB NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
+        conn.execute(text(
+            "ALTER TABLE cenovnici ADD COLUMN IF NOT EXISTS opis TEXT NOT NULL DEFAULT ''"
+        ))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS cenovnik_opcije (
                 cenovnik_id INTEGER PRIMARY KEY REFERENCES cenovnici(id) ON DELETE CASCADE,
@@ -131,7 +147,8 @@ def _sablon(conn, mesto_id, grupa_id, smestaj_id):
     sobe = sa_virtuelnim
     return {"naziv": f'{ref["mesto_naziv"]}-{ref["smestaj_naziv"]}-{ref["grupa_naziv"]}',
             "mesto_id": mesto_id, "grupa_id": grupa_id, "smestaj_id": smestaj_id,
-            "sobe": sobe, "periodi": periodi, "cene": [], "datumod": None, "datumdo": None}
+            "sobe": sobe, "periodi": periodi, "cene": [], "datumod": None, "datumdo": None,
+            "opis": ""}
 
 
 def _detail(conn, item_id, lock=False):
@@ -166,6 +183,9 @@ def _save_values(conn, item_id, body, snapshot):
         INSERT INTO cenovnik_opcije (cenovnik_id, datumod, datumdo) VALUES (:id, :od, :do)
         ON CONFLICT (cenovnik_id) DO UPDATE SET datumod = EXCLUDED.datumod, datumdo = EXCLUDED.datumdo
     """), {"id": item_id, "od": body.datumod, "do": body.datumdo})
+    if body.opis is not None:
+        conn.execute(text("UPDATE cenovnici SET opis = :opis WHERE id = :id"),
+                     {"id": item_id, "opis": body.opis})
     conn.execute(text("DELETE FROM cenovnik_cene WHERE cenovnik_id = :id"), {"id": item_id})
     if body.cene:
         conn.execute(text("""
@@ -185,10 +205,11 @@ def register_cenovnici(api, engine, get_current_user):
     def lista(q: str = "", _: dict = Depends(get_current_user)):
         with engine.connect() as conn:
             return [dict(r) for r in conn.execute(text("""
-                SELECT c.id, c.uuid::text AS uuid, c.naziv, c.mesto_id, c.grupa_id, c.smestaj_id,
+                SELECT c.id, c.uuid::text AS uuid, c.naziv, c.opis, c.mesto_id, c.grupa_id, c.smestaj_id,
                        o.datumod, o.datumdo FROM cenovnici c
                 JOIN cenovnik_opcije o ON o.cenovnik_id = c.id
-                WHERE (:q = '' OR c.naziv ILIKE :like OR c.uuid::text ILIKE :like OR c.id::text ILIKE :like)
+                WHERE (:q = '' OR c.naziv ILIKE :like OR c.opis ILIKE :like
+                       OR c.uuid::text ILIKE :like OR c.id::text ILIKE :like)
                 ORDER BY c.id DESC
             """), {"q": q.strip(), "like": f"%{q.strip()}%"}).mappings()]
 
@@ -202,12 +223,13 @@ def register_cenovnici(api, engine, get_current_user):
         with engine.begin() as conn:
             snap = _sablon(conn, body.mesto_id, body.grupa_id, body.smestaj_id)
             item_id = conn.execute(text("""
-                INSERT INTO cenovnici (uuid, naziv, mesto_id, grupa_id, smestaj_id, sobe, periodi)
-                VALUES (:uuid, :naziv, :mesto_id, :grupa_id, :smestaj_id, CAST(:sobe AS JSONB), CAST(:periodi AS JSONB))
+                INSERT INTO cenovnici (uuid, naziv, mesto_id, grupa_id, smestaj_id, sobe, periodi, opis)
+                VALUES (:uuid, :naziv, :mesto_id, :grupa_id, :smestaj_id, CAST(:sobe AS JSONB), CAST(:periodi AS JSONB), :opis)
                 RETURNING id
             """), {"uuid": str(uuid4()), "naziv": snap["naziv"], "mesto_id": body.mesto_id,
                    "grupa_id": body.grupa_id, "smestaj_id": body.smestaj_id,
-                   "sobe": json.dumps(snap["sobe"]), "periodi": json.dumps(snap["periodi"])}).scalar_one()
+                   "sobe": json.dumps(snap["sobe"]), "periodi": json.dumps(snap["periodi"]),
+                   "opis": body.opis}).scalar_one()
             _save_values(conn, item_id, body, snap)
             return _detail(conn, item_id)
 

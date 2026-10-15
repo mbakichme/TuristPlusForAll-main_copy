@@ -45,6 +45,7 @@ interface CenovnikDraft {
   cene: SablonCena[];
   datumod: string | null;
   datumdo: string | null;
+  opis: string;
 }
 
 interface CenovnikDetail extends CenovnikDraft { id: number; uuid: string; }
@@ -53,6 +54,7 @@ interface CenovnikRow {
   id: number;
   uuid: string;
   naziv: string;
+  opis: string;
   mesto_id: number;
   grupa_id: number;
   smestaj_id: number;
@@ -102,8 +104,8 @@ function ceneZaPayload(cene: Record<string, string>, sobe: SablonSoba[], periodi
 }
 
 /** Otisak stanja matrice za poređenje „nesačuvano“. */
-function snapshotStringa(cene: Record<string, string>, od: string, ddo: string): string {
-  return JSON.stringify({ c: cene, od, ddo });
+function snapshotStringa(cene: Record<string, string>, od: string, ddo: string, opis: string): string {
+  return JSON.stringify({ c: cene, od, ddo, opis });
 }
 
 /** ISO yyyy-mm-dd → dd.mm.yyyy (prikaz); „—“ za prazno. */
@@ -220,6 +222,8 @@ interface OpcijeDatumaProps {
   ddo: string;
   onOd: (v: string) => void;
   onDdo: (v: string) => void;
+  opis: string;
+  onOpis: (v: string) => void;
   onSave: () => void;
   saving: boolean;
   disabled?: boolean;
@@ -267,7 +271,7 @@ function DatumCenovnika({ id, value, onChange, disabled }: {
   );
 }
 
-function OpcijeDatuma({ idPrefix, od, ddo, onOd, onDdo, onSave, saving, disabled, label, onIzmeni, izmeniDisabled }: OpcijeDatumaProps) {
+function OpcijeDatuma({ idPrefix, od, ddo, onOd, onDdo, opis, onOpis, onSave, saving, disabled, label, onIzmeni, izmeniDisabled }: OpcijeDatumaProps) {
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-muted/40 px-3 py-2.5">
       <div className="flex flex-col gap-1.5">
@@ -277,6 +281,18 @@ function OpcijeDatuma({ idPrefix, od, ddo, onOd, onDdo, onSave, saving, disabled
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${idPrefix}-do`} className="text-xs text-muted-foreground">Aktivan do</Label>
         <DatumCenovnika id={`${idPrefix}-do`} value={ddo} onChange={onDdo} disabled={disabled} />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={`${idPrefix}-opis`} className="text-xs text-muted-foreground">Opis cenovnika</Label>
+        <Input
+          id={`${idPrefix}-opis`}
+          value={opis}
+          onChange={(e) => onOpis(e.target.value)}
+          disabled={disabled}
+          maxLength={500}
+          placeholder="npr. Termin 22.06–29.06, polazak iz Novog Sada"
+          className="h-9 w-72 min-w-56 bg-background font-normal"
+        />
       </div>
       <Button onClick={onSave} disabled={saving || disabled}>
         {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -308,6 +324,8 @@ interface UrednikCenovnikaProps {
   ddo: string;
   onOd: (v: string) => void;
   onDdo: (v: string) => void;
+  opisCenovnika: string;
+  onOpisCenovnika: (v: string) => void;
   onSave: () => void;
   saving: boolean;
   disabled?: boolean;
@@ -352,6 +370,8 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
           ddo={p.ddo}
           onOd={p.onOd}
           onDdo={p.onDdo}
+          opis={p.opisCenovnika}
+          onOpis={p.onOpisCenovnika}
           onSave={p.onSave}
           saving={p.saving}
           disabled={p.disabled}
@@ -397,6 +417,7 @@ export default function CenovniciPage() {
   const [createCene, setCreateCene] = useState<Record<string, string>>({});
   const [createOd, setCreateOd] = useState("");
   const [createDo, setCreateDo] = useState("");
+  const [createOpis, setCreateOpis] = useState("");
   const [createSnapshot, setCreateSnapshot] = useState<string | null>(null);
   const [createSaved, setCreateSaved] = useState<{ id: number; uuid: string } | null>(null);
   const [createZakljucano, setCreateZakljucano] = useState(false);
@@ -412,6 +433,7 @@ export default function CenovniciPage() {
   const [editCene, setEditCene] = useState<Record<string, string>>({});
   const [editOd, setEditOd] = useState("");
   const [editDo, setEditDo] = useState("");
+  const [editOpis, setEditOpis] = useState("");
   const [editSnapshot, setEditSnapshot] = useState<string | null>(null);
   const [loadingEdit, setLoadingEdit] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -486,9 +508,9 @@ export default function CenovniciPage() {
   }, [smestaji, mestoId, grupaId]);
 
   const createDirty = createSnapshot !== null
-    && snapshotStringa(createCene, createOd, createDo) !== createSnapshot;
+    && snapshotStringa(createCene, createOd, createDo, createOpis) !== createSnapshot;
   const editDirty = editSnapshot !== null
-    && snapshotStringa(editCene, editOd, editDo) !== editSnapshot;
+    && snapshotStringa(editCene, editOd, editDo, editOpis) !== editSnapshot;
 
   useEffect(() => {
     if (!createDirty && !editDirty) return;
@@ -543,6 +565,7 @@ export default function CenovniciPage() {
     setCreateCene({});
     setCreateOd("");
     setCreateDo("");
+    setCreateOpis("");
     setCreateSnapshot(null);
     setCreateSaved(null);
     setCreateZakljucano(false);
@@ -581,7 +604,8 @@ export default function CenovniciPage() {
     setCreateCene(cene);
     setCreateOd(d.datumod ?? "");
     setCreateDo(d.datumdo ?? "");
-    setCreateSnapshot(snapshotStringa(cene, d.datumod ?? "", d.datumdo ?? ""));
+    setCreateOpis(d.opis ?? "");
+    setCreateSnapshot(snapshotStringa(cene, d.datumod ?? "", d.datumdo ?? "", d.opis ?? ""));
     setCreateSaved(saved);
   }
 
@@ -627,7 +651,7 @@ export default function CenovniciPage() {
       const detail = createSaved
         ? await apiFetch<CenovnikDetail>(`/cenovnici/${createSaved.id}`, {
             method: "PUT",
-            body: JSON.stringify({ datumod: createOd, datumdo: createDo, cene }),
+            body: JSON.stringify({ datumod: createOd, datumdo: createDo, cene, opis: createOpis }),
           })
         : await apiFetch<CenovnikDetail>("/cenovnici", {
             method: "POST",
@@ -638,6 +662,7 @@ export default function CenovniciPage() {
               datumod: createOd,
               datumdo: createDo,
               cene,
+              opis: createOpis,
             }),
           });
       const biloKreiranje = !createSaved;
@@ -649,7 +674,8 @@ export default function CenovniciPage() {
         setEditCene(c);
         setEditOd(detail.datumod ?? "");
         setEditDo(detail.datumdo ?? "");
-        setEditSnapshot(snapshotStringa(c, detail.datumod ?? "", detail.datumdo ?? ""));
+        setEditOpis(detail.opis ?? "");
+        setEditSnapshot(snapshotStringa(c, detail.datumod ?? "", detail.datumdo ?? "", detail.opis ?? ""));
       }
       osveziListu();
       toast.success(biloKreiranje ? "Cenovnik je kreiran" : "Izmene cenovnika su sačuvane");
@@ -681,6 +707,7 @@ export default function CenovniciPage() {
         setEditCene({});
         setEditOd("");
         setEditDo("");
+        setEditOpis("");
         setEditSnapshot(null);
       }
       toast.success(`Cenovnik „${red.naziv}“ je obrisan`);
@@ -709,7 +736,8 @@ export default function CenovniciPage() {
       setEditCene(cene);
       setEditOd(d.datumod ?? "");
       setEditDo(d.datumdo ?? "");
-      setEditSnapshot(snapshotStringa(cene, d.datumod ?? "", d.datumdo ?? ""));
+      setEditOpis(d.opis ?? "");
+      setEditSnapshot(snapshotStringa(cene, d.datumod ?? "", d.datumdo ?? "", d.opis ?? ""));
       requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (e) {
       if (req !== editReq.current) return;
@@ -734,14 +762,15 @@ export default function CenovniciPage() {
       const cene = ceneZaPayload(editCene, editDetail.sobe, editDetail.periodi);
       const d = await apiFetch<CenovnikDetail>(`/cenovnici/${editDetail.id}`, {
         method: "PUT",
-        body: JSON.stringify({ datumod: editOd, datumdo: editDo, cene }),
+        body: JSON.stringify({ datumod: editOd, datumdo: editDo, cene, opis: editOpis }),
       });
       const c = ceneMap(d.cene ?? []);
       setEditDetail(d);
       setEditCene(c);
       setEditOd(d.datumod ?? "");
       setEditDo(d.datumdo ?? "");
-      setEditSnapshot(snapshotStringa(c, d.datumod ?? "", d.datumdo ?? ""));
+      setEditOpis(d.opis ?? "");
+      setEditSnapshot(snapshotStringa(c, d.datumod ?? "", d.datumdo ?? "", d.opis ?? ""));
       if (createSaved?.id === d.id) primeniCreateDraft(d, { id: d.id, uuid: d.uuid });
       toast.success("Izmene cenovnika su sačuvane");
       osveziListu();
@@ -894,6 +923,8 @@ export default function CenovniciPage() {
               ddo={createDo}
               onOd={setCreateOd}
               onDdo={setCreateDo}
+              opisCenovnika={createOpis}
+              onOpisCenovnika={setCreateOpis}
               onSave={sacuvajCreate}
               saving={savingCreate}
               disabled={loadingSablon || savingCreate || createZakljucano}
@@ -970,8 +1001,13 @@ export default function CenovniciPage() {
                         )}
                       >
                         <TableCell className="font-mono text-xs tabular-nums">{row.id}</TableCell>
-                        <TableCell className="max-w-64 truncate font-medium" title={row.naziv}>
-                          {row.naziv}
+                        <TableCell className="max-w-64 font-medium" title={row.naziv}>
+                          <span className="block truncate">{row.naziv}</span>
+                          {row.opis ? (
+                            <span className="block max-w-64 truncate text-[11px] font-normal text-muted-foreground" title={row.opis}>
+                              {row.opis}
+                            </span>
+                          ) : null}
                         </TableCell>
                         <TableCell className="font-mono text-[11px] text-muted-foreground">
                           <span className="block max-w-52 truncate" title={row.uuid}>{row.uuid}</span>
@@ -1040,6 +1076,8 @@ export default function CenovniciPage() {
                 ddo={editDo}
                 onOd={setEditOd}
                 onDdo={setEditDo}
+                opisCenovnika={editOpis}
+                onOpisCenovnika={setEditOpis}
                 onSave={sacuvajEdit}
                 saving={savingEdit}
                 disabled={loadingEdit || savingEdit}
