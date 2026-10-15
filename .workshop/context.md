@@ -24,12 +24,19 @@
 - Dirty-guard: isti AlertDialog mehanizam kao Cenovnici (beforeunload + document click capture + "Odbaciti nesačuvane izmene?")
 - Test: `test_koeficijenti_api.py` + `test_koeficijenti_ui.py` (Playwright; ručni red posle save-a tražiti preko filter(has=combobox) + get_by_role("textbox").nth(), NE po labeli sa red-br — sortiranje menja poziciju)
 
-## Sobe (/agencija/sobe) + koeficijenti (2026-10-14, commit e499863)
-- GET /sobe vraća i `mesto_naziv` (JOIN mesto) i `koeficijenti` (lista zapisa za sobu.tip, grupisano po strukturi); server q-pretraga uključuje m.naziv
-- POST /sobe i PUT /sobe (promena tipa) pozivaju `osiguraj_auto_red(conn, tip)` — soba 1/2 inicijalno dobija koeficijent 1/2 (nule, rucno=FALSE); druga soba istog tipa ne duplira red
-- koeficijenti_api novi endpointi: GET /koeficijenti/struktura?struktura=1/2 (implicitni auto-red sa nulama kad nema zapisa), POST /koeficijenti/red (rucno=TRUE, 201), DELETE /koeficijenti/red/{id} (samo rucno; auto → 400, nepoznat → 404)
-- SobePage: kolone Smeštaj | Mesto | Broj sobe | Tip | Koeficijenti (dugme sa vrednostima "0 · 1.5") | Status | Opis | Akcije; dialog sa listom koeficijenata, "Dodaj koeficijent" formom (Adl/Chd/Inf/koef, ista validacija) i trash-om samo na ručnim redovima
-- Test: `test_sobe_koeficijenti_ui.py` (kreira sobu TST/8 preko UI-ja, testira auto koef, dialog, brisanje; čisti svoje podatke); sheet polja NEMAJU programski vezane labele → test koristi get_by_placeholder; red ima 3 dugmeta (koef, pencil, trash=button.text-destructive)
+## Sobe (/agencija/sobe) + koeficijenti (2026-10-14, commit 90d6035; ispravka e499863)
+- GET /sobe vraća i `mesto_naziv` (JOIN mesto) i `koeficijenti` kao NAZIVE (string[]): osnovni = soba.tip + dodati iz `soba_koeficijenti` (id, soba_id FK CASCADE, struktura, UNIQUE(soba_id,struktura)); server q-pretraga uključuje m.naziv
+- POST /sobe i PUT /sobe (promena tipa) pozivaju `osiguraj_auto_red(conn, tip)` — soba 1/2 inicijalno dobija koeficijent (zapis sa vrednostima) 1/2 na Koeficijentima prodaje; druga soba istog tipa ne duplira red
+- Koeficijent (naziv) = polje struktura iz koeficijenti_prodaje; kolona Sobe prikazuje nazive "1/2 · 1/3" (NE vrednosti)
+- Endpointi: GET /sobe/{id}/koeficijenti → {tip, dodati[]}; POST /sobe/{id}/koeficijenti {struktura} (400: dupliran/osnovni/nedefinisan — definisan = postoji u sobe.tip ili koeficijenti_prodaje); DELETE /sobe/{id}/koeficijenti?struktura= (osnovni → 400, nepoznat → 404); GET /koeficijenti/struktura?struktura= i POST /koeficijenti/red + DELETE /koeficijenti/red/{id} (rucno-only) i dalje postoje
+- SobePage: kolone Smeštaj | Mesto | Broj sobe | **Tip (opis)** (spojene, commit bc1840f — "1/2 (STD)", pun opis na hover) | Koeficijenti (dugme sa nazivima) | Status | Akcije; dialog: lista naziva sa Badge Osnovni/Dodatni, trash samo na dodatnim, "Dodaj koeficijent" → Select definisanih naziva (GET /koeficijenti strukture ∪ redovi struktura, minus već dodate)
+- Test: `test_sobe_koeficijenti_ui.py` (kreira sobu TST/8 preko UI-ja, testira naziv u koloni, dialog, dodatni 1/2, brisanje; čisti svoje podatke); sheet polja NEMAJU programski vezane labele → test koristi get_by_placeholder; red ima 3 dugmeta (koef, pencil, trash=button.text-destructive)
+
+## Pretraga (/prodaja/pretraga) — vezivanje Grupe termina za vilu (2026-10-14, commit d51b08f)
+- `/slobodne-sobe?mesto_id=&datum_od=&datum_do=`: smeštaj prolazi SAMO ako njegova grupa termina (`smestaj.grupa_datuma`) definiše TAČAN termin — EXISTS `period_datum pd WHERE pd.grupa_id = s.grupa_datuma AND pd.datum_od = :od AND pd.datum_do = :do` (EXACT match, ne containment — grupa 15 ima 19.06→29.06 (10 noći) pa 22.06→29.06 NE sme proći); + postojeća provera zauzeća (aranzman po nazivu vile + soba, overlap)
+- Isti naziv vile = više instanci smeštaja (po jedna po grupi, npr. ELENI 2 id=10 grupa 6 + id=38 grupa 15); rezultat je sekcija po instanci; zauzeće se i dalje gleda po nazivu (legacy) pa instanca iste vile dele zauzeće
+- Test `test_pretraga_termin.py`: API == SQL ground-truth za 22.06→29.06 (grupa 17), 24.06→04.07 (grupa 6), 19.06→29.06 (grupa 15); ELENI 2/ELENI 2 C/PENNY C ne smeju za 22.06; 401 bez tokena
+- UI Playwright: kalendar se otvara u tekućem mesecu → "Sledeći mesec" navigacija; dani NEMAJU aria-label (filter has_text); nakon izbora dana popover OSTAJE otvoren — ne klikati trigger ponovo; dugme je "Pretraži" (ne "Pretraga"); TrajanjeOpcije dugme "7 noćenja | Povratak: ..." klik sa force=True (transition nestabilnost)
 
 ## Rezervacije (RezervacijePage) — Sačuvaj/Izmeni (gotovo)
 - Backend: `POST /rezervacije` (novi) + `PUT /rezervacije/{kljuc}` (izmena); numeracija MAX(broj) unutar godine iz datumod + 1; advisory lock + UNIQUE(kljuc) + retry
@@ -37,7 +44,7 @@
 - **Zauzeće termina (sudar)**: `_rez_proveri_konflikt` (isti smeštaj+soba+overlap datumod<do AND datumdo>od); 409; test `test_rezervacija_konflikt.py`
 
 ## Status
-- 2026-10-14: Koeficijenti prodaje — NOVO (vidi sekciju iznad); commit 6fcacfb; grafik tooltip fix commit 2be1415
+- 2026-10-14: Pretraga — vezivanje Grupe termina za vilu u /slobodne-sobe (commit d51b08f); Sobe Tip+Opis spojene (bc1840f); Koeficijenti prodaje (6fcacfb); grafik tooltip fix (2be1415)
 - 2026-10-13: Cenovnici (/agencija/cenovnici) — dva taba (Kreiranje + Izmena); `cenovnici_api.py`: tabele cenovnici (id + UUID UNIQUE, naziv mesto-smestaj-grupa, sobe/periodi JSONB SNIMAK), cenovnik_opcije (datumod/do), cenovnik_cene (NUMERIC 14,2); cena = ceo termin (osnova po sobi/osobi KASNIJE kroz opcije); više cenovnika po istoj kombinaciji; MatricaCena 76px kolone, cene cele bez .00 centrirane, header datumi bez godine jedan ispod drugog; DatumCenovnika (react-day-picker srLatn, weekStartsOn=1, dd.mm.yyyy prikaz, labele IZNAD); dirty-guard AlertDialog
 - 2026-10-12: grafik Grupa termina scoping (aranzman.smestaj_id + legacy fallback); import soba Kasandra grupe 15/16/17; 21 TS grešaka popravljenо
 - Gotovo: Ugovori, Subagenti, Predračuni, import, Izvodi, Rezervacije (Sačuvaj/Izmeni + zaključavanje), Grafik (sticky header datumi, pojasevi jedan red, broj na prvom periodu, Klasična/Brza rezervacija popup), Mesto multi-grupe, Pretraga
