@@ -30,7 +30,7 @@ import { toast } from "sonner";
 
 interface SablonSoba {
   id: number; broj_sobe: string; tip: string; opis: string; opis_dodatno: string;
-  izvor_soba_id?: number; virtuelna?: boolean;
+  izvor_soba_id?: number; virtuelna?: boolean; nova?: boolean;
 }
 interface SablonPeriod { id: number; datum_od: string; datum_do: string; nocenja: number; }
 interface SablonCena { soba_id: number; period_id: number; cena: string; }
@@ -198,6 +198,11 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled }: MatricaCen
                   <div className="truncate text-[13px] font-medium" title={struktura}>
                     {struktura || "—"}
                   </div>
+                  {soba.nova ? (
+                    <div className="text-[9px] font-medium italic leading-tight text-violet-600 dark:text-violet-400">
+                      nova
+                    </div>
+                  ) : null}
                   {soba.opis_dodatno ? (
                     <div className="truncate text-[9px] leading-tight text-muted-foreground" title={soba.opis_dodatno}>
                       {soba.opis_dodatno}

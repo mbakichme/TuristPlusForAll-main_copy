@@ -87,6 +87,62 @@ def init_cenovnici(engine):
         """))
 
 
+def _osvezi_sobe(conn, smestaj_id, stari_sobe=None, taguj_nove=False):
+    """Spisak soba za cenovnik: realne sobe smeštaja iz žive baze + virtuelne sobe
+    po dodatnim koeficijentima (soba_koeficijenti) — v{broj} (jedan dodatni
+    koeficijent), odnosno v{broj}-1, v{broj}-2… (više njih), redom ispod izvorne sobe.
+
+    Ako je dat stari snimak (stari_sobe), virtuelna soba ZADRŽAVA stari id dok se
+    i dalje poklapa kombinacija (izvor_soba_id, struktura) — tako postojeće cene
+    ostaju vezane za ispravan red — a nove virtuelne sobe dobijaju id ispod
+    najnižeg starog. Sobe/koeficijenti koji više ne postoje nestaju iz spiska.
+    Id je negativan i važi SAMO u okviru cenovnika; ne upisuju se u tabelu sobe —
+    žive u JSONB snimku cenovnika."""
+    sobe = [dict(r) for r in conn.execute(text("""
+        SELECT id, broj_sobe, tip, opis, opis_dodatno FROM sobe
+        WHERE veza_id_smestaj = :s ORDER BY broj_sobe, id
+    """), {"s": smestaj_id}).mappings()]
+    dodatni: dict[int, list[str]] = {}
+    for r in conn.execute(text("""
+        SELECT k.soba_id, k.struktura FROM soba_koeficijenti k
+        JOIN sobe s ON s.id = k.soba_id
+        WHERE s.veza_id_smestaj = :s ORDER BY k.soba_id, k.id
+    """), {"s": smestaj_id}).fetchall():
+        dodatni.setdefault(r.soba_id, []).append(r.struktura)
+    stari_virt: dict[tuple[int, str], int] = {}
+    for s in (stari_sobe or []):
+        if s.get("virtuelna"):
+            stari_virt[(s.get("izvor_soba_id"), s.get("tip"))] = s["id"]
+    najnizi = min((s["id"] for s in (stari_sobe or []) if s.get("virtuelna")), default=0)
+    stari_idjevi = {s["id"] for s in (stari_sobe or [])}
+    sa_virtuelnim: list[dict] = []
+    for sob in sobe:
+        sa_virtuelnim.append(sob)
+        strukture = dodatni.get(sob["id"], [])
+        broj = sob["broj_sobe"] or str(sob["id"])
+        for i, struktura in enumerate(strukture, start=1):
+            kljuc = (sob["id"], struktura)
+            if kljuc in stari_virt:
+                vid = stari_virt.pop(kljuc)
+            else:
+                najnizi -= 1
+                vid = najnizi
+            sa_virtuelnim.append({
+                "id": vid,
+                "broj_sobe": f"v{broj}" if len(strukture) == 1 else f"v{broj}-{i}",
+                "tip": struktura,
+                "opis": sob["opis"] or "",
+                "opis_dodatno": sob["opis_dodatno"] or "",
+                "izvor_soba_id": sob["id"],
+                "virtuelna": True,
+            })
+    if taguj_nove:
+        for s in sa_virtuelnim:
+            if s["id"] not in stari_idjevi:
+                s["nova"] = True
+    return sa_virtuelnim
+
+
 def _sablon(conn, mesto_id, grupa_id, smestaj_id):
     ref = conn.execute(text("""
         SELECT m.naziv AS mesto_naziv, s.naziv AS smestaj_naziv, g.naziv AS grupa_naziv
@@ -115,36 +171,9 @@ def _sablon(conn, mesto_id, grupa_id, smestaj_id):
                         "datum_do": r["datum_do"].isoformat(), "nocenja": nocenja})
     if not sobe or not periodi:
         raise HTTPException(400, "Smeštaj mora imati sobe, a grupa definisane termine")
-    # Virtuelne sobe: za svaku sobu sa dodatnim koeficijentima (soba_koeficijenti)
-    # kreira se red odmah ispod nje — v{broj} (jedan dodatni koeficijent), odnosno
-    # v{broj}-1, v{broj}-2… (više njih). Id je negativan i važi SAMO u okviru
-    # ovog cenovnika; veza sa sobom od koje je nastala je izvor_soba_id.
-    # Ne upisuju se u tabelu sobe — žive u JSONB snimku cenovnika.
-    dodatni: dict[int, list[str]] = {}
-    for r in conn.execute(text("""
-        SELECT k.soba_id, k.struktura FROM soba_koeficijenti k
-        JOIN sobe s ON s.id = k.soba_id
-        WHERE s.veza_id_smestaj = :s ORDER BY k.soba_id, k.id
-    """), {"s": smestaj_id}).fetchall():
-        dodatni.setdefault(r.soba_id, []).append(r.struktura)
-    sa_virtuelnim: list[dict] = []
-    virtual_id = 0
-    for sob in sobe:
-        sa_virtuelnim.append(sob)
-        strukture = dodatni.get(sob["id"], [])
-        broj = sob["broj_sobe"] or str(sob["id"])
-        for i, struktura in enumerate(strukture, start=1):
-            virtual_id -= 1
-            sa_virtuelnim.append({
-                "id": virtual_id,
-                "broj_sobe": f"v{broj}" if len(strukture) == 1 else f"v{broj}-{i}",
-                "tip": struktura,
-                "opis": sob["opis"] or "",
-                "opis_dodatno": sob["opis_dodatno"] or "",
-                "izvor_soba_id": sob["id"],
-                "virtuelna": True,
-            })
-    sobe = sa_virtuelnim
+    # Virtuelne sobe po dodatnim koeficijentima — novi cenovnik nema stari snimak,
+    # pa su id-jevi deterministički (-1, -2…), identični preview-u i POST payload-u.
+    sobe = _osvezi_sobe(conn, smestaj_id)
     return {"naziv": f'{ref["mesto_naziv"]}-{ref["smestaj_naziv"]}-{ref["grupa_naziv"]}',
             "mesto_id": mesto_id, "grupa_id": grupa_id, "smestaj_id": smestaj_id,
             "sobe": sobe, "periodi": periodi, "cene": [], "datumod": None, "datumdo": None,
@@ -160,6 +189,12 @@ def _detail(conn, item_id, lock=False):
         raise HTTPException(404, "Cenovnik nije pronađen")
     result = dict(r)
     result["uuid"] = str(result["uuid"])
+    # Osveži spisak soba prema živom stanju (dodato/obrisano u Sobe, dodatni/
+    # uklonjeni koeficijenti → virtuelne sobe). Virtuelne sobe koje se i dalje
+    # poklapaju zadržavaju id pa cene ostaju vezane za ispravan red; nove sobe
+    # nose oznaku "nova". Cene za nestale sobe se brišu pri snimanju (PUT).
+    result["sobe"] = _osvezi_sobe(conn, result["smestaj_id"], result.get("sobe"),
+                                  taguj_nove=True)
     result["cene"] = [{"soba_id": x.soba_id, "period_id": x.period_id, "cena": str(x.cena)}
                       for x in conn.execute(text("""
                           SELECT soba_id, period_id, cena FROM cenovnik_cene
@@ -238,6 +273,12 @@ def register_cenovnici(api, engine, get_current_user):
         with engine.begin() as conn:
             snap = _detail(conn, item_id, lock=True)
             _save_values(conn, item_id, body, snap)
+            # Osvežen snimak soba (nove sobe/virtuelne sobe dodate, obrisane/uklonjeni
+            # koeficijenti nestali) upisuje se nazad u cenovnik. Cene za nestale sobe
+            # je _save_values obrisao (DELETE-all + reinsert samo soba iz payload-a).
+            ciste = [{k: v for k, v in s.items() if k != "nova"} for s in snap["sobe"]]
+            conn.execute(text("UPDATE cenovnici SET sobe = CAST(:sobe AS JSONB) WHERE id = :id"),
+                         {"id": item_id, "sobe": json.dumps(ciste)})
             return _detail(conn, item_id)
 
     @api.delete("/cenovnici/{item_id}")
