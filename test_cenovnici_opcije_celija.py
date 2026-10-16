@@ -224,13 +224,13 @@ with sync_playwright() as p:
     pg.keyboard.press("Escape")
     expect(dijalog).to_have_count(0, timeout=5000)
 
-    def td_klasa(soba_id, od, do):
-        celija = pg.get_by_label(f"Cena — soba {soba_id}, period {od}–{do}").locator("xpath=..")
-        return celija.get_attribute("class") or ""
+    def input_klasa(soba_id, od, do):
+        return pg.get_by_label(f"Cena — soba {soba_id}, period {od}–{do}").get_attribute("class") or ""
 
-    check("UI: kliknuto polje SVETLO PLAVO, susedno polje bez obeležja",
-          "bg-sky-500/10" in td_klasa("12", ui_od, ui_do)
-          and "bg-sky-500/10" not in td_klasa("18", ui_od, ui_do))
+    check("UI: kliknuto polje SVETLO PLAVO na INPUTU (td bez tinta), susedno bez obeležja",
+          "bg-sky-500/15" in input_klasa("12", ui_od, ui_do)
+          and "border-sky-400/70" in input_klasa("12", ui_od, ui_do)
+          and "bg-sky-500/15" not in input_klasa("18", ui_od, ui_do))
 
     # ponovo otvori isto polje → prefill iz cell-zapisa, pa Obriši
     pg.get_by_title(polje12, exact=True).click()
@@ -244,7 +244,7 @@ with sync_playwright() as p:
     pg.keyboard.press("Escape")
     expect(dijalog).to_have_count(0, timeout=5000)
     check("UI: posle brisanja polje više nije plavo",
-          "bg-sky-500/10" not in td_klasa("12", ui_od, ui_do))
+          "bg-sky-500/15" not in input_klasa("12", ui_od, ui_do))
 
     # otključavanje — ćelije se vraćaju na unos cene (bez klik-površine)
     pg.get_by_role("button", name="Izmeni cenovnik", exact=True).click()

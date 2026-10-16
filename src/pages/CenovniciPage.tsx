@@ -257,13 +257,7 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTerm
                   const imaOpcije = opcijeCelije?.has(k) ?? false;
                   const poljeLabel = `soba ${soba.broj_sobe} · ${fmtIso(p.datum_od)} – ${fmtIso(p.datum_do)}`;
                   return (
-                    <td
-                      key={p.id}
-                      className={cn(
-                        "relative w-[76px] border-b px-1 py-1.5",
-                        imaOpcije && "bg-sky-500/10",
-                      )}
-                    >
+                    <td key={p.id} className="relative w-[76px] border-b px-1 py-1.5">
                       <Input
                         value={cene[k] ?? ""}
                         onChange={(e) => onCenaChange(soba.id, p.id, normalizeCena(e.target.value))}
@@ -273,17 +267,14 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTerm
                         aria-label={`Cena — soba ${soba.broj_sobe}, period ${fmtIso(p.datum_od)}–${fmtIso(p.datum_do)}`}
                         className={cn(
                           "h-8 min-w-0 border-input/60 bg-background px-1.5 text-center text-xs tabular-nums",
-                          imaOpcije && "border-sky-400/70 bg-sky-500/10",
+                          imaOpcije && "border-sky-400/70 bg-sky-500/15",
                         )}
                       />
                       {disabled && onOpcijeCelije ? (
                         <span
                           title={`Opcije · Popusti za polje — ${poljeLabel}`}
                           onClick={() => onOpcijeCelije(soba.id, p.id, poljeLabel)}
-                          className={cn(
-                            "absolute inset-0 z-10 cursor-pointer",
-                            imaOpcije ? "bg-sky-500/15" : "bg-transparent",
-                          )}
+                          className="absolute inset-0 z-10 cursor-pointer bg-transparent"
                         />
                       ) : null}
                     </td>
