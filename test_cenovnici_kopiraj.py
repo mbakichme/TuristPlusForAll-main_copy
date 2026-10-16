@@ -110,9 +110,10 @@ with sync_playwright() as p:
     ui_cid = ri.value.json()["id"]
     d = ri.value.json()
     cm = cene_map(d)
-    p1 = next(x["id"] for x in d["periodi"] if x["datum_od"] == min(y["datum_od"] for y in d["periodi"]))
-    p2 = sorted(y["datum_od"] for y in d["periodi"])[1]
-    p2 = next(x["id"] for x in d["periodi"] if x["datum_od"] == p2)
+    # kolone matrice = redosled perioda iz snimka (grupa 6 ima VIŠE perioda sa istim
+    # datum_od, npr. 25.05–30.05 i 25.05–04.06 — zato NE rezolviramo po datum_od)
+    p1 = d["periodi"][0]["id"]
+    p2 = d["periodi"][1]["id"]
     real = {x["broj_sobe"]: x["id"] for x in d["sobe"] if not x.get("virtuelna")}
     virt = {x["broj_sobe"]: x["id"] for x in d["sobe"] if x.get("virtuelna")}
     check("POST: svih 10 soba 1/3·STD ima 123 na P1",

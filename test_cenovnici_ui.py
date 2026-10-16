@@ -47,7 +47,10 @@ def pick_date(page, selector, iso):
     dropdowns = calendar.locator("select")
     dropdowns.nth(1).select_option(iso[:4])
     dropdowns.nth(0).select_option(str(int(iso[5:7]) - 1))
-    calendar.locator(f'button[data-day="{int(iso[5:7])}/{int(iso[8:10])}/{iso[:4]}"]').click(force=True)
+    dan = calendar.locator(f'button[data-day="{int(iso[5:7])}/{int(iso[8:10])}/{iso[:4]}"]')
+    dan.wait_for(state="attached", timeout=10000)
+    page.wait_for_timeout(250)  # sačekaj da day-picker završi re-render (dva select naviga­cije)
+    dan.click(force=True)
     expect(page.locator(selector)).to_have_text(fmt_iso(iso))
 
 

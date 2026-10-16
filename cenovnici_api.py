@@ -212,12 +212,14 @@ def init_cenovnici(engine):
             )
         """))
         # Opcije po sobi cenovnika (soba_id = id iz JSONB snimka cenovnika, može biti
-        # negativan za virtuelne sobe — zato BEZ FK ka tabeli sobe, po odluci za cenovnike)
+        # negativan za virtuelne sobe — zato BEZ FK ka tabeli sobe, po odluci za cenovnike).
+        # period_id = 0 znači „SVI TERMINI“; konkretan id perioda iz snimka = override za taj termin.
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS opcije_soba (
                 id SERIAL PRIMARY KEY,
                 cenovnik_id INTEGER NOT NULL REFERENCES cenovnici(id) ON DELETE CASCADE,
                 soba_id INTEGER NOT NULL,
+                period_id INTEGER NOT NULL DEFAULT 0,
                 blokirano BOOLEAN NOT NULL DEFAULT FALSE,
                 istaknuto BOOLEAN NOT NULL DEFAULT FALSE,
                 blokirano_subagenci BOOLEAN NOT NULL DEFAULT FALSE,
@@ -226,14 +228,32 @@ def init_cenovnici(engine):
                 popust_sopstveni_prevoz NUMERIC(14,2),
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                UNIQUE (cenovnik_id, soba_id)
+                CONSTRAINT opcije_soba_unique_csp UNIQUE (cenovnik_id, soba_id, period_id)
             )
+        """))
+        # Migracija postojeće baze: period_id + zamena starog UNIQUE(cenovnik_id, soba_id)
+        conn.execute(text(
+            "ALTER TABLE opcije_soba ADD COLUMN IF NOT EXISTS period_id INTEGER NOT NULL DEFAULT 0"
+        ))
+        conn.execute(text(
+            "ALTER TABLE opcije_soba DROP CONSTRAINT IF EXISTS opcije_soba_cenovnik_id_soba_id_key"
+        ))
+        conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                               WHERE conname = 'opcije_soba_unique_csp') THEN
+                    ALTER TABLE opcije_soba
+                        ADD CONSTRAINT opcije_soba_unique_csp
+                        UNIQUE (cenovnik_id, soba_id, period_id);
+                END IF;
+            END $$;
         """))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS popust_soba (
                 id SERIAL PRIMARY KEY,
                 cenovnik_id INTEGER NOT NULL REFERENCES cenovnici(id) ON DELETE CASCADE,
                 soba_id INTEGER NOT NULL,
+                period_id INTEGER NOT NULL DEFAULT 0,
                 umanjenje_vrsta TEXT NOT NULL CHECK (umanjenje_vrsta IN ('iznos', 'procenat')),
                 umanjenje NUMERIC(14,2) NOT NULL CHECK (umanjenje > 0),
                 tip_popusta TEXT NOT NULL,
@@ -243,10 +263,26 @@ def init_cenovnici(engine):
                 popust_sopstveni_prevoz NUMERIC(14,2),
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                UNIQUE (cenovnik_id, soba_id),
+                CONSTRAINT popust_soba_unique_csp UNIQUE (cenovnik_id, soba_id, period_id),
                 CHECK (umanjenje_vrsta <> 'procenat' OR umanjenje <= 100),
                 CHECK (vazi_od IS NULL OR vazi_do IS NULL OR vazi_od <= vazi_do)
             )
+        """))
+        conn.execute(text(
+            "ALTER TABLE popust_soba ADD COLUMN IF NOT EXISTS period_id INTEGER NOT NULL DEFAULT 0"
+        ))
+        conn.execute(text(
+            "ALTER TABLE popust_soba DROP CONSTRAINT IF EXISTS popust_soba_cenovnik_id_soba_id_key"
+        ))
+        conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                               WHERE conname = 'popust_soba_unique_csp') THEN
+                    ALTER TABLE popust_soba
+                        ADD CONSTRAINT popust_soba_unique_csp
+                        UNIQUE (cenovnik_id, soba_id, period_id);
+                END IF;
+            END $$;
         """))
 
 
@@ -479,42 +515,54 @@ def register_cenovnici(api, engine, get_current_user):
             raise HTTPException(status_code=404, detail="Cenovnik nije pronađen")
         return [int(s["id"]) for s in (cen.sobe or []) if s.get("id") is not None]
 
-    def _upsert_opcije(conn, item_id: int, soba_id: int, body: OpcijeSobaIn) -> None:
+    def _upsert_opcije(conn, item_id: int, soba_id: int, body: OpcijeSobaIn,
+                       period_id: int = 0) -> None:
         conn.execute(text("""
-            INSERT INTO opcije_soba (cenovnik_id, soba_id, blokirano, istaknuto,
+            INSERT INTO opcije_soba (cenovnik_id, soba_id, period_id, blokirano, istaknuto,
                 blokirano_subagenci, blokirano_sajt, prevoz, tip_aranzmana, tip_cene,
                 popust_sopstveni_prevoz)
-            VALUES (:c, :s, :blokirano, :istaknuto, :bsub, :bsite, :prevoz, :ta, :tc, :psp)
-            ON CONFLICT (cenovnik_id, soba_id) DO UPDATE SET
+            VALUES (:c, :s, :p, :blokirano, :istaknuto, :bsub, :bsite, :prevoz, :ta, :tc, :psp)
+            ON CONFLICT (cenovnik_id, soba_id, period_id) DO UPDATE SET
                 blokirano = EXCLUDED.blokirano, istaknuto = EXCLUDED.istaknuto,
                 blokirano_subagenci = EXCLUDED.blokirano_subagenci,
                 blokirano_sajt = EXCLUDED.blokirano_sajt, prevoz = EXCLUDED.prevoz,
                 tip_aranzmana = EXCLUDED.tip_aranzmana, tip_cene = EXCLUDED.tip_cene,
                 popust_sopstveni_prevoz = EXCLUDED.popust_sopstveni_prevoz,
                 updated_at = NOW()
-        """), {"c": item_id, "s": soba_id, "blokirano": body.blokirano, "istaknuto": body.istaknuto,
+        """), {"c": item_id, "s": soba_id, "p": period_id,
+               "blokirano": body.blokirano, "istaknuto": body.istaknuto,
                "bsub": body.blokirano_subagenci, "bsite": body.blokirano_sajt,
                "prevoz": body.prevoz, "ta": body.tip_aranzmana, "tc": body.tip_cene,
                "psp": body.popust_sopstveni_prevoz})
 
-    def _upsert_popust(conn, item_id: int, soba_id: int, body: PopustSobaIn) -> None:
+    def _upsert_popust(conn, item_id: int, soba_id: int, body: PopustSobaIn,
+                       period_id: int = 0) -> None:
         conn.execute(text("""
-            INSERT INTO popust_soba (cenovnik_id, soba_id, umanjenje_vrsta, umanjenje,
+            INSERT INTO popust_soba (cenovnik_id, soba_id, period_id, umanjenje_vrsta, umanjenje,
                 tip_popusta, tip_placanja, vazi_od, vazi_do, tip_aranzmana, tip_cene,
                 popust_sopstveni_prevoz)
-            VALUES (:c, :s, :vrsta, :umanjenje, :tp, :tpl, :od, :do, :ta, :tc, :psp)
-            ON CONFLICT (cenovnik_id, soba_id) DO UPDATE SET
+            VALUES (:c, :s, :p, :vrsta, :umanjenje, :tp, :tpl, :od, :do, :ta, :tc, :psp)
+            ON CONFLICT (cenovnik_id, soba_id, period_id) DO UPDATE SET
                 umanjenje_vrsta = EXCLUDED.umanjenje_vrsta, umanjenje = EXCLUDED.umanjenje,
                 tip_popusta = EXCLUDED.tip_popusta, tip_placanja = EXCLUDED.tip_placanja,
                 vazi_od = EXCLUDED.vazi_od, vazi_do = EXCLUDED.vazi_do,
                 tip_aranzmana = EXCLUDED.tip_aranzmana, tip_cene = EXCLUDED.tip_cene,
                 popust_sopstveni_prevoz = EXCLUDED.popust_sopstveni_prevoz,
                 updated_at = NOW()
-        """), {"c": item_id, "s": soba_id, "vrsta": body.umanjenje_vrsta,
+        """), {"c": item_id, "s": soba_id, "p": period_id,
+               "vrsta": body.umanjenje_vrsta,
                "umanjenje": body.umanjenje, "tp": body.tip_popusta,
                "tpl": body.tip_placanja, "od": body.vazi_od, "do": body.vazi_do,
                "ta": body.tip_aranzmana, "tc": body.tip_cene,
                "psp": body.popust_sopstveni_prevoz})
+
+    def _proveri_period_u_cenovniku(conn, item_id: int, period_id: int) -> None:
+        """400 ako period_id nije u JSONB snimku perioda cenovnika (404 ako cenovnik ne postoji)."""
+        r = conn.execute(text("SELECT periodi FROM cenovnici WHERE id = :i"), {"i": item_id}).first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Cenovnik nije pronađen")
+        if not any(p.get("id") == period_id for p in (r.periodi or [])):
+            raise HTTPException(status_code=400, detail="Period ne pripada ovom cenovniku")
 
     @api.get("/cenovnici/{item_id}/opcije-soba/{soba_id}")
     def opcije_soba_get(item_id: int, soba_id: int, _: dict = Depends(get_current_user)):
@@ -523,7 +571,7 @@ def register_cenovnici(api, engine, get_current_user):
             r = conn.execute(text("""
                 SELECT blokirano, istaknuto, blokirano_subagenci, blokirano_sajt,
                        prevoz, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
-                FROM opcije_soba WHERE cenovnik_id = :c AND soba_id = :s
+                FROM opcije_soba WHERE cenovnik_id = :c AND soba_id = :s AND period_id = 0
             """), {"c": item_id, "s": soba_id}).mappings().first()
             if not r:
                 return {"postoji": False, "soba_id": soba_id, "blokirano": False, "istaknuto": False,
@@ -536,11 +584,14 @@ def register_cenovnici(api, engine, get_current_user):
                         _: dict = Depends(get_current_user)):
         with engine.begin() as conn:
             _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
+            # opseg ovog dijaloga = soba za SVE termine: briše i pojedinačne override-e termina
+            conn.execute(text("DELETE FROM opcije_soba WHERE cenovnik_id = :c AND soba_id = :s"),
+                         {"c": item_id, "s": soba_id})
             _upsert_opcije(conn, item_id, soba_id, body)
             r = conn.execute(text("""
                 SELECT blokirano, istaknuto, blokirano_subagenci, blokirano_sajt,
                        prevoz, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
-                FROM opcije_soba WHERE cenovnik_id = :c AND soba_id = :s
+                FROM opcije_soba WHERE cenovnik_id = :c AND soba_id = :s AND period_id = 0
             """), {"c": item_id, "s": soba_id}).mappings().first()
             return {"postoji": True, "soba_id": soba_id, **_bez_meta(r)}
 
@@ -559,7 +610,7 @@ def register_cenovnici(api, engine, get_current_user):
             r = conn.execute(text("""
                 SELECT umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja, vazi_od, vazi_do,
                        tip_aranzmana, tip_cene, popust_sopstveni_prevoz
-                FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s
+                FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s AND period_id = 0
             """), {"c": item_id, "s": soba_id}).mappings().first()
             if not r:
                 return {"postoji": False, "soba_id": soba_id, "umanjenje_vrsta": "iznos",
@@ -573,11 +624,14 @@ def register_cenovnici(api, engine, get_current_user):
                         _: dict = Depends(get_current_user)):
         with engine.begin() as conn:
             _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
+            # opseg ovog dijaloga = soba za SVE termine: briše i override-e termina
+            conn.execute(text("DELETE FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s"),
+                         {"c": item_id, "s": soba_id})
             _upsert_popust(conn, item_id, soba_id, body)
             r = conn.execute(text("""
                 SELECT umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja, vazi_od, vazi_do,
                        tip_aranzmana, tip_cene, popust_sopstveni_prevoz
-                FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s
+                FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s AND period_id = 0
             """), {"c": item_id, "s": soba_id}).mappings().first()
             return {"postoji": True, "soba_id": soba_id, **_bez_meta(r)}
 
@@ -596,7 +650,7 @@ def register_cenovnici(api, engine, get_current_user):
         with engine.connect() as conn:
             ids = _sobe_ids_u_cenovniku(conn, item_id)
             redovi = conn.execute(text("""
-                SELECT soba_id, blokirano, istaknuto, blokirano_subagenci, blokirano_sajt,
+                SELECT soba_id, period_id, blokirano, istaknuto, blokirano_subagenci, blokirano_sajt,
                        prevoz, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
                 FROM opcije_soba WHERE cenovnik_id = :c
             """), {"c": item_id}).mappings().all()
@@ -608,6 +662,8 @@ def register_cenovnici(api, engine, get_current_user):
     def opcije_sve_put(item_id: int, body: OpcijeSobaIn, _: dict = Depends(get_current_user)):
         with engine.begin() as conn:
             ids = _sobe_ids_u_cenovniku(conn, item_id)
+            # opseg = ceo cenovnik (sve sobe, svi termini): briše i override-e termina
+            conn.execute(text("DELETE FROM opcije_soba WHERE cenovnik_id = :c"), {"c": item_id})
             for s in ids:
                 _upsert_opcije(conn, item_id, s, body)
             return {"status": "sacuvano", "broj_soba": len(ids), "soba_id": ids}
@@ -625,7 +681,7 @@ def register_cenovnici(api, engine, get_current_user):
         with engine.connect() as conn:
             ids = _sobe_ids_u_cenovniku(conn, item_id)
             redovi = conn.execute(text("""
-                SELECT soba_id, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja,
+                SELECT soba_id, period_id, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja,
                        vazi_od, vazi_do, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
                 FROM popust_soba WHERE cenovnik_id = :c
             """), {"c": item_id}).mappings().all()
@@ -637,6 +693,8 @@ def register_cenovnici(api, engine, get_current_user):
     def popust_sve_put(item_id: int, body: PopustSobaIn, _: dict = Depends(get_current_user)):
         with engine.begin() as conn:
             ids = _sobe_ids_u_cenovniku(conn, item_id)
+            # opseg = ceo cenovnik (sve sobe, svi termini): briše i override-e termina
+            conn.execute(text("DELETE FROM popust_soba WHERE cenovnik_id = :c"), {"c": item_id})
             for s in ids:
                 _upsert_popust(conn, item_id, s, body)
             return {"status": "sacuvano", "broj_soba": len(ids), "soba_id": ids}
@@ -647,4 +705,79 @@ def register_cenovnici(api, engine, get_current_user):
             _sobe_ids_u_cenovniku(conn, item_id)  # 404 za nepoznat cenovnik
             r = conn.execute(text("DELETE FROM popust_soba WHERE cenovnik_id = :c"),
                              {"c": item_id})
+            return {"status": "obrisano", "broj": r.rowcount}
+
+    # ── Opcije / popusti za JEDAN termin (sve sobe) — O·P dugme u koloni matrice ──
+    # period_id = konkretan period iz snimka; override nad globalnim (period_id = 0) zapisom.
+
+    @api.get("/cenovnici/{item_id}/opcije-soba-termin/{period_id}")
+    def opcije_termin_get(item_id: int, period_id: int, _: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            ids = _sobe_ids_u_cenovniku(conn, item_id)
+            _proveri_period_u_cenovniku(conn, item_id, period_id)
+            redovi = conn.execute(text("""
+                SELECT soba_id, blokirano, istaknuto, blokirano_subagenci, blokirano_sajt,
+                       prevoz, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
+                FROM opcije_soba WHERE cenovnik_id = :c AND period_id = :p
+            """), {"c": item_id, "p": period_id}).mappings().all()
+            po_sobi = {r["soba_id"]: _bez_meta(r) for r in redovi}
+            zapisi = [{"soba_id": s, **po_sobi[s]} for s in ids if s in po_sobi]
+            return {"sobe": ids, "period_id": period_id, "postoji": bool(zapisi), "zapisi": zapisi}
+
+    @api.put("/cenovnici/{item_id}/opcije-soba-termin/{period_id}")
+    def opcije_termin_put(item_id: int, period_id: int, body: OpcijeSobaIn,
+                          _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            ids = _sobe_ids_u_cenovniku(conn, item_id)
+            _proveri_period_u_cenovniku(conn, item_id, period_id)
+            conn.execute(text("DELETE FROM opcije_soba WHERE cenovnik_id = :c AND period_id = :p"),
+                         {"c": item_id, "p": period_id})
+            for s in ids:
+                _upsert_opcije(conn, item_id, s, body, period_id)
+            return {"status": "sacuvano", "broj_soba": len(ids), "period_id": period_id}
+
+    @api.delete("/cenovnici/{item_id}/opcije-soba-termin/{period_id}")
+    def opcije_termin_delete(item_id: int, period_id: int, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            _sobe_ids_u_cenovniku(conn, item_id)  # 404 za nepoznat cenovnik
+            _proveri_period_u_cenovniku(conn, item_id, period_id)
+            r = conn.execute(
+                text("DELETE FROM opcije_soba WHERE cenovnik_id = :c AND period_id = :p"),
+                {"c": item_id, "p": period_id})
+            return {"status": "obrisano", "broj": r.rowcount}
+
+    @api.get("/cenovnici/{item_id}/popust-soba-termin/{period_id}")
+    def popust_termin_get(item_id: int, period_id: int, _: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            ids = _sobe_ids_u_cenovniku(conn, item_id)
+            _proveri_period_u_cenovniku(conn, item_id, period_id)
+            redovi = conn.execute(text("""
+                SELECT soba_id, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja,
+                       vazi_od, vazi_do, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
+                FROM popust_soba WHERE cenovnik_id = :c AND period_id = :p
+            """), {"c": item_id, "p": period_id}).mappings().all()
+            po_sobi = {r["soba_id"]: _bez_meta(r) for r in redovi}
+            zapisi = [{"soba_id": s, **po_sobi[s]} for s in ids if s in po_sobi]
+            return {"sobe": ids, "period_id": period_id, "postoji": bool(zapisi), "zapisi": zapisi}
+
+    @api.put("/cenovnici/{item_id}/popust-soba-termin/{period_id}")
+    def popust_termin_put(item_id: int, period_id: int, body: PopustSobaIn,
+                          _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            ids = _sobe_ids_u_cenovniku(conn, item_id)
+            _proveri_period_u_cenovniku(conn, item_id, period_id)
+            conn.execute(text("DELETE FROM popust_soba WHERE cenovnik_id = :c AND period_id = :p"),
+                         {"c": item_id, "p": period_id})
+            for s in ids:
+                _upsert_popust(conn, item_id, s, body, period_id)
+            return {"status": "sacuvano", "broj_soba": len(ids), "period_id": period_id}
+
+    @api.delete("/cenovnici/{item_id}/popust-soba-termin/{period_id}")
+    def popust_termin_delete(item_id: int, period_id: int, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            _sobe_ids_u_cenovniku(conn, item_id)  # 404 za nepoznat cenovnik
+            _proveri_period_u_cenovniku(conn, item_id, period_id)
+            r = conn.execute(
+                text("DELETE FROM popust_soba WHERE cenovnik_id = :c AND period_id = :p"),
+                {"c": item_id, "p": period_id})
             return {"status": "obrisano", "broj": r.rowcount}
