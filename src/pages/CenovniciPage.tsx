@@ -161,9 +161,11 @@ interface MatricaCenaProps {
   onCenaChange: (sobaId: number, periodId: number, vrednost: string) => void;
   disabled?: boolean;
   onOpcijeTermina?: (periodId: number, label: string) => void;
+  onOpcijeCelije?: (sobaId: number, periodId: number, label: string) => void;
+  opcijeCelije?: Set<string>;
 }
 
-function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTermina }: MatricaCenaProps) {
+function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTermina, onOpcijeCelije, opcijeCelije }: MatricaCenaProps) {
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
       <table
@@ -252,8 +254,16 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTerm
                 </td>
                 {periodi.map((p) => {
                   const k = cellKey(soba.id, p.id);
+                  const imaOpcije = opcijeCelije?.has(k) ?? false;
+                  const poljeLabel = `soba ${soba.broj_sobe} · ${fmtIso(p.datum_od)} – ${fmtIso(p.datum_do)}`;
                   return (
-                    <td key={p.id} className="w-[76px] border-b px-1 py-1.5">
+                    <td
+                      key={p.id}
+                      className={cn(
+                        "relative w-[76px] border-b px-1 py-1.5",
+                        imaOpcije && "bg-sky-500/10",
+                      )}
+                    >
                       <Input
                         value={cene[k] ?? ""}
                         onChange={(e) => onCenaChange(soba.id, p.id, normalizeCena(e.target.value))}
@@ -261,8 +271,21 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTerm
                         inputMode="decimal"
                         autoComplete="off"
                         aria-label={`Cena — soba ${soba.broj_sobe}, period ${fmtIso(p.datum_od)}–${fmtIso(p.datum_do)}`}
-                        className="h-8 min-w-0 border-input/60 bg-background px-1.5 text-center text-xs tabular-nums"
+                        className={cn(
+                          "h-8 min-w-0 border-input/60 bg-background px-1.5 text-center text-xs tabular-nums",
+                          imaOpcije && "border-sky-400/70 bg-sky-500/10",
+                        )}
                       />
+                      {disabled && onOpcijeCelije ? (
+                        <span
+                          title={`Opcije · Popusti za polje — ${poljeLabel}`}
+                          onClick={() => onOpcijeCelije(soba.id, p.id, poljeLabel)}
+                          className={cn(
+                            "absolute inset-0 z-10 cursor-pointer",
+                            imaOpcije ? "bg-sky-500/15" : "bg-transparent",
+                          )}
+                        />
+                      ) : null}
                     </td>
                   );
                 })}
@@ -398,6 +421,8 @@ interface UrednikCenovnikaProps {
   onKopirajChange: (v: boolean) => void;
   onOtvoriOpcije?: () => void;
   onOpcijeTermina?: (periodId: number, label: string) => void;
+  onOpcijeCelije?: (sobaId: number, periodId: number, label: string) => void;
+  opcijeCelije?: Set<string>;
 }
 
 function UrednikCenovnika(p: UrednikCenovnikaProps) {
@@ -485,6 +510,8 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
               onCenaChange={p.onCenaChange}
               disabled={p.disabled}
               onOpcijeTermina={p.onOpcijeTermina}
+              onOpcijeCelije={p.onOpcijeCelije}
+              opcijeCelije={p.opcijeCelije}
             />
           </>
         )}
@@ -661,7 +688,7 @@ function Selekt({ id, value, onChange, opcije }: {
   );
 }
 
-function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabel, terminCid, onClose }: {
+function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabel, terminCid, celijaSobaId, celijaLabel, onClose }: {
   red: CenovnikRow | null;
   /** Masovni mod (iz editora): primena na SVE sobe cenovnika i SVE termine. */
   masovnoId?: number | null;
@@ -671,6 +698,9 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
   terminLabel?: string | null;
   /** id cenovnika u termin modu (terminId je id PERIODA, ne cenovnika) */
   terminCid?: number | null;
+  /** Mod po POLJU (klik na ćeliju cene kad je cenovnik zaključan): jedna soba × jedan termin. */
+  celijaSobaId?: number | null;
+  celijaLabel?: string | null;
   onClose: () => void;
 }) {
   const [sobe, setSobe] = useState<SablonSoba[]>([]);
@@ -686,9 +716,10 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
   const [brisePopust, setBrisePopust] = useState(false);
 
   const masovno = masovnoId != null;
-  const poTerminu = !masovno && terminId != null;
-  const grupno = masovno || poTerminu;
-  const cid = masovno ? masovnoId : (poTerminu ? terminCid ?? null : red?.id ?? null);
+  const poCeliji = !masovno && terminId != null && celijaSobaId != null;
+  const poTerminu = !masovno && !poCeliji && terminId != null;
+  const grupno = masovno || poTerminu || poCeliji;
+  const cid = masovno ? masovnoId : (poTerminu || poCeliji ? terminCid ?? null : red?.id ?? null);
 
   // Otvaranje: masovno — sobe iz editora + spojeni zapisi svih soba; po terminu — zapisi
   // tog termina (fallback za prefill: zajednički zapisi); inače sobe iz detail-a
@@ -711,6 +742,34 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
         })
         .catch(() => { if (!otkazano) toast.error("Učitavanje opcija nije uspelo"); })
         .finally(() => { if (!otkazano) setUcitava(false); });
+    } else if (poCeliji && terminId != null && celijaSobaId != null) {
+      setSobe([]); setSobaId(null);
+      void (async () => {
+        try {
+          const [oC, pC] = await Promise.all([
+            apiFetch<SveOpcijeOdgovor>(`/cenovnici/${cid}/opcije-soba-termin/${terminId}?soba_id=${celijaSobaId}`),
+            apiFetch<SvePopustiOdgovor>(`/cenovnici/${cid}/popust-soba-termin/${terminId}?soba_id=${celijaSobaId}`),
+          ]);
+          if (otkazano) return;
+          let oZ = oC.zapisi;
+          let pZ = pC.zapisi;
+          // polje nema svoj zapis → kreni od zajedničkih (svi termini) vrednosti
+          if (!oC.postoji) {
+            oZ = (await apiFetch<SveOpcijeOdgovor>(`/cenovnici/${cid}/opcije-soba-sve`)).zapisi;
+          }
+          if (otkazano) return;
+          if (!pC.postoji) {
+            pZ = (await apiFetch<SvePopustiOdgovor>(`/cenovnici/${cid}/popust-soba-sve`)).zapisi;
+          }
+          if (otkazano) return;
+          setOpcije(spojiOpcije(oZ)); setOpcijePostoje(oC.postoji);
+          setPopust(spojiPopust(pZ)); setPopustPostoji(pC.postoji);
+        } catch {
+          if (!otkazano) toast.error("Učitavanje opcija nije uspelo");
+        } finally {
+          if (!otkazano) setUcitava(false);
+        }
+      })();
     } else if (poTerminu && terminId != null) {
       setSobe(masovnoSobe ?? []); setSobaId(null);
       void (async () => {
@@ -752,7 +811,7 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
     }
     return () => { otkazano = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cid, masovno, poTerminu, terminId]);
+  }, [cid, masovno, poTerminu, poCeliji, terminId, celijaSobaId]);
 
   // Promena sobe: opcije + popust te sobe
   useEffect(() => {
@@ -792,6 +851,12 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
           `/cenovnici/${cid}/opcije-soba-sve`, { method: "PUT", body: telo });
         setOpcijePostoje(true);
         toast.success(`Opcije su sačuvane za sve sobe (${o.broj_soba})`);
+      } else if (poCeliji) {
+        await apiFetch<{ status: string; broj_soba: number }>(
+          `/cenovnici/${cid}/opcije-soba-termin/${terminId}?soba_id=${celijaSobaId}`,
+          { method: "PUT", body: telo });
+        setOpcijePostoje(true);
+        toast.success(`Opcije su sačuvane za polje ${celijaLabel}`);
       } else if (poTerminu) {
         await apiFetch<{ status: string; broj_soba: number }>(
           `/cenovnici/${cid}/opcije-soba-termin/${terminId}`, { method: "PUT", body: telo });
@@ -821,6 +886,12 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
         setOpcije(OPCIJE_PRAZNE);
         setOpcijePostoje(false);
         toast.success("Opcije su obrisane za sve sobe");
+      } else if (poCeliji) {
+        await apiFetch(`/cenovnici/${cid}/opcije-soba-termin/${terminId}?soba_id=${celijaSobaId}`,
+          { method: "DELETE" });
+        setOpcije(OPCIJE_PRAZNE);
+        setOpcijePostoje(false);
+        toast.success(`Opcije su obrisane za polje ${celijaLabel}`);
       } else if (poTerminu) {
         await apiFetch(`/cenovnici/${cid}/opcije-soba-termin/${terminId}`, { method: "DELETE" });
         setOpcije(OPCIJE_PRAZNE);
@@ -878,6 +949,12 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
           `/cenovnici/${cid}/popust-soba-sve`, { method: "PUT", body: telo });
         setPopustPostoji(true);
         toast.success(`Popust je sačuvan za sve sobe (${p.broj_soba})`);
+      } else if (poCeliji) {
+        await apiFetch<{ status: string; broj_soba: number }>(
+          `/cenovnici/${cid}/popust-soba-termin/${terminId}?soba_id=${celijaSobaId}`,
+          { method: "PUT", body: telo });
+        setPopustPostoji(true);
+        toast.success(`Popust je sačuvan za polje ${celijaLabel}`);
       } else if (poTerminu) {
         await apiFetch<{ status: string; broj_soba: number }>(
           `/cenovnici/${cid}/popust-soba-termin/${terminId}`, { method: "PUT", body: telo });
@@ -907,6 +984,12 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
         setPopust(POPUST_PRAZAN);
         setPopustPostoji(false);
         toast.success("Popust je obrisan za sve sobe");
+      } else if (poCeliji) {
+        await apiFetch(`/cenovnici/${cid}/popust-soba-termin/${terminId}?soba_id=${celijaSobaId}`,
+          { method: "DELETE" });
+        setPopust(POPUST_PRAZAN);
+        setPopustPostoji(false);
+        toast.success(`Popust je obrisan za polje ${celijaLabel}`);
       } else if (poTerminu) {
         await apiFetch(`/cenovnici/${cid}/popust-soba-termin/${terminId}`, { method: "DELETE" });
         setPopust(POPUST_PRAZAN);
@@ -926,7 +1009,7 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
   }
 
   return (
-    <Dialog open={red !== null || masovno || poTerminu} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open={red !== null || masovno || poTerminu || poCeliji} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-h-[92vh] overflow-y-auto bg-card sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
@@ -936,9 +1019,11 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
           <DialogDescription className="truncate">
             {masovno
               ? `Cenovnik #${cid} — podešavanja važe za sve sobe i sve termine`
-              : poTerminu
-                ? `Cenovnik #${cid} — sve sobe · termin ${terminLabel}`
-                : `Cenovnik #${red?.id} — ${red?.naziv} · podešavanja važe za izabranu sobu`}
+              : poCeliji
+                ? `Cenovnik #${cid} — polje ${celijaLabel}`
+                : poTerminu
+                  ? `Cenovnik #${cid} — sve sobe · termin ${terminLabel}`
+                  : `Cenovnik #${red?.id} — ${red?.naziv} · podešavanja važe za izabranu sobu`}
           </DialogDescription>
         </DialogHeader>
 
@@ -951,6 +1036,12 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
                 ({sobe.length}) — realne i virtuelne — i na{" "}
                 <span className="font-medium text-foreground">sve termine</span>. Svaka soba u
                 svakom terminu dobija ista podešavanja.
+              </>
+            ) : poCeliji ? (
+              <>
+                Ovde definisane opcije i popusti primenjuju se samo na{" "}
+                <span className="font-medium text-foreground">polje {celijaLabel}</span>. Ostala
+                polja zadržavaju svoja podešavanja.
               </>
             ) : (
               <>
@@ -989,7 +1080,7 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
           <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Učitavanje…
           </div>
-        ) : (grupno ? sobe.length === 0 : sobaId === null) ? (
+        ) : (grupno ? (poCeliji ? false : sobe.length === 0) : sobaId === null) ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Cenovnik nema soba.</p>
         ) : (
           <Tabs defaultValue="opcije">
@@ -1209,10 +1300,27 @@ export default function CenovniciPage() {
   const [obrisiRed, setObrisiRed] = useState<CenovnikRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Dijalog Opcije · Popusti (tab Izmena) — po sobi iz liste, masovno iz editora, O·P po terminu
+  // Dijalog Opcije · Popusti (tab Izmena) — po sobi iz liste, masovno iz editora, O·P po terminu,
+  // klik na ćeliju cene (kad je zaključano) po POLJU (soba × termin)
   const [opcijeRed, setOpcijeRed] = useState<CenovnikRow | null>(null);
   const [opcijeMasovno, setOpcijeMasovno] = useState(false);
   const [opcijeTermin, setOpcijeTermin] = useState<{ id: number; label: string } | null>(null);
+  const [opcijeCelija, setOpcijeCelija] = useState<{ sobaId: number; periodId: number; label: string } | null>(null);
+  // ključevi "sobaId:periodId" polja koja imaju definisane opcije/popuste (svetloplavo obeležavanje)
+  const [opcijeCelije, setOpcijeCelije] = useState<Set<string>>(new Set());
+  const [celijeVerzija, setCelijeVerzija] = useState(0);
+
+  useEffect(() => {
+    const cid = editDetail?.id;
+    if (!cid) { setOpcijeCelije(new Set()); return; }
+    let otkazano = false;
+    apiFetch<{ celije: { soba_id: number; period_id: number }[] }>(`/cenovnici/${cid}/opcije-celije`)
+      .then((r) => {
+        if (!otkazano) setOpcijeCelije(new Set(r.celije.map((c) => `${c.soba_id}:${c.period_id}`)));
+      })
+      .catch(() => { if (!otkazano) setOpcijeCelije(new Set()); });
+    return () => { otkazano = true; };
+  }, [editDetail?.id, celijeVerzija]);
 
   // Referentni podaci: /mesto, /period-grupa, /smestaj
   useEffect(() => {
@@ -1921,21 +2029,35 @@ export default function CenovniciPage() {
                 onKopirajChange={setKopirajCene}
                 onOtvoriOpcije={() => setOpcijeMasovno(true)}
                 onOpcijeTermina={(periodId, label) => setOpcijeTermin({ id: periodId, label })}
+                onOpcijeCelije={(sobaId, periodId, label) => setOpcijeCelija({ sobaId, periodId, label })}
+                opcijeCelije={opcijeCelije}
               />
             ) : null}
           </div>
         </TabsContent>
       </Tabs>
 
-      {/* Dijalog Opcije · Popusti (tab Izmena) — po sobi iz liste, masovno iz editora, O·P po terminu */}
+      {/* Dijalog Opcije · Popusti (tab Izmena) — po sobi iz liste, masovno iz editora, O·P po terminu,
+          klik na ćeliju cene po polju (soba × termin) */}
       <OpcijePopustiDialog
         red={opcijeRed}
         masovnoId={opcijeMasovno && editDetail ? editDetail.id : null}
-        terminId={opcijeTermin && editDetail ? opcijeTermin.id : null}
+        terminId={
+          opcijeTermin && editDetail ? opcijeTermin.id
+          : opcijeCelija && editDetail ? opcijeCelija.periodId
+          : null}
         terminLabel={opcijeTermin?.label ?? null}
-        terminCid={opcijeTermin && editDetail ? editDetail.id : null}
+        terminCid={(opcijeTermin || opcijeCelija) && editDetail ? editDetail.id : null}
+        celijaSobaId={opcijeCelija && editDetail ? opcijeCelija.sobaId : null}
+        celijaLabel={opcijeCelija?.label ?? null}
         masovnoSobe={editDetail?.sobe ?? []}
-        onClose={() => { setOpcijeRed(null); setOpcijeMasovno(false); setOpcijeTermin(null); }}
+        onClose={() => {
+          setOpcijeRed(null); setOpcijeMasovno(false); setOpcijeTermin(null);
+          if (opcijeCelija) {
+            setOpcijeCelija(null);
+            setCelijeVerzija((v) => v + 1); // osveži svetloplavo obeležena polja
+          }
+        }}
       />
 
       {/* Potvrda brisanja kompletnog cenovnika */}

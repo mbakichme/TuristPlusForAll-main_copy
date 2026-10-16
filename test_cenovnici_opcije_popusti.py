@@ -161,9 +161,14 @@ with sync_playwright() as p:
     redovi = pg.get_by_role("row").filter(has=pg.get_by_role("cell", name=str(ui_cid), exact=True))
     expect(redovi).to_have_count(1, timeout=10000)
 
-    redovi.first.get_by_label(f"Opcije i popusti cenovnika #{ui_cid}").click()
+    # čekaj i inicijalni GET opcija te sobe (efekt učitavanja resetuje formu — klikovi pre
+    # njega bi bili pregazeni); klik na Opcije dugme pokreće lanac: detail → GET opcije
+    with pg.expect_response(lambda r: r.request.method == "GET"
+                            and r.url.endswith(f"/opcije-soba/{soba12_2['id']}"), timeout=10000):
+        redovi.first.get_by_label(f"Opcije i popusti cenovnika #{ui_cid}").click()
     pg.get_by_role("heading", name="Opcije · Popusti").wait_for(timeout=10000)
     expect(pg.get_by_role("tab", name="Opcije")).to_be_visible(timeout=10000)
+    pg.wait_for_timeout(300)  # .then obrade (forma iz odgovora)
     check("dijalog se otvara sa tabovima", pg.get_by_role("tab", name="Opcije").is_visible()
           and pg.get_by_role("tab", name="Popusti").is_visible())
     soba_sel = pg.locator("[role=dialog]").get_by_role("combobox").first
@@ -180,10 +185,11 @@ with sync_playwright() as p:
     with pg.expect_response(lambda r: r.request.method == "PUT"
                             and r.url.endswith(f"/opcije-soba/{soba12_2['id']}")) as ri:
         pg.get_by_role("button", name="Snimi", exact=True).click()
+    _odg = ri.value.json()
     check("UI: opcije PUT payload tačan",
-          ri.value.json()["blokirano"] is True and ri.value.json()["istaknuto"] is True
-          and ri.value.json()["prevoz"] == "obavezan" and ri.value.json()["tip_cene"] == "po_sobi"
-          and float(ri.value.json()["popust_sopstveni_prevoz"]) == 15.0)
+          _odg["blokirano"] is True and _odg["istaknuto"] is True
+          and _odg["prevoz"] == "obavezan" and _odg["tip_cene"] == "po_sobi"
+          and float(_odg["popust_sopstveni_prevoz"]) == 15.0)
     pg.get_by_text("Opcije su sačuvane").wait_for(timeout=8000)
     check("UI: toast 'Opcije su sačuvane' + dugme Obriši omogućeno",
           pg.locator("[role=dialog]").get_by_role("button", name="Obriši opcije").is_enabled())
