@@ -6,6 +6,7 @@ Endpointi: GET/PUT/DELETE /cenovnici/{id}/opcije-soba-termin/{period_id} i /popu
 Scope-clearing: single PUT (soba) briše override-e te sobe; masovno PUT (-sve) briše SVE override-e.
 """
 import json
+import re
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,6 +44,10 @@ def postavi_cenovnik():
         "datumod": "2026-05-25", "datumdo": "2026-10-02", "cene": []})
     assert r.status_code == 201, r.text
     return r.json()
+
+
+def dmy(iso):
+    return f"{iso[8:10]}.{iso[5:7]}.{iso[:4]}"
 
 
 # ── 1) API — opcije po terminu ──────────────────────────────────────────────
@@ -172,6 +177,8 @@ with sync_playwright() as p:
           pg.locator("#opc-blokirano").get_attribute("aria-checked") == "false"
           and "Opciono" in pg.locator("#opc-prevoz").inner_text())
 
+    c.delete(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H)  # skinuti globalne → obeležje samo od termin snimanja
+
     pg.locator("#opc-blokirano").click()
     pg.locator("#opc-istaknuto").click()
     with pg.expect_response(lambda r: r.request.method == "PUT"
@@ -182,15 +189,24 @@ with sync_playwright() as p:
           telo["blokirano"] is True and telo["istaknuto"] is True
           and ri.value.json()["status"] == "sacuvano")
     pg.get_by_text("Opcije su sačuvane za sve sobe i termin").wait_for(timeout=8000)
-    check("UI: override na SVE sobe za taj termin (prevoz=opciono iz defaulta), globalni netaknuti",
+    check("UI: override na SVE sobe za taj termin (prevoz=opciono iz defaulta), globalni ostaju prazni",
           len(db_rows("opcije_soba", ui_cid, ui_pid)) == ui_N
           and all(r["istaknuto"] is True and r["prevoz"] == "opciono"
                   for r in db_rows("opcije_soba", ui_cid, ui_pid))
-          and all(r["blokirano"] is True and r["istaknuto"] is False and r["prevoz"] == "obavezan"
-                  for r in db_rows("opcije_soba", ui_cid, 0)))
+          and db_rows("opcije_soba", ui_cid, 0) == [])
+
+    # obeležja polja se osvežavaj ODMAH posle Snimi (i dok je dijalog još otvoren)
+    ui_od = dmy(d2["periodi"][0]["datum_od"])
+    ui_do = dmy(d2["periodi"][0]["datum_do"])
+    celija0 = pg.get_by_label(
+        f"Cena — soba {d2['sobe'][0]['broj_sobe']}, period {ui_od}–{ui_do}")
+    expect(celija0).to_have_class(re.compile(r"bg-sky-500/15"), timeout=8000)
+    check("UI: polja termina SVETLO PLAVA odmah posle Snimi (dijalog još otvoren)",
+          "border-sky-400/70" in (celija0.get_attribute("class") or ""))
 
     dijalog.get_by_role("button", name="Obriši opcije").click()
     pg.get_by_text("Opcije su obrisane za sve sobe i termin").wait_for(timeout=8000)
+    expect(celija0).not_to_have_class(re.compile(r"bg-sky-500/15"), timeout=8000)
     check("UI: brisanje override-a termina", db_rows("opcije_soba", ui_cid, ui_pid) == [])
 
     pg.get_by_role("tab", name="Popusti").click()

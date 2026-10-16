@@ -823,16 +823,27 @@ def register_cenovnici(api, engine, get_current_user):
 
     @api.get("/cenovnici/{item_id}/opcije-celije")
     def opcije_celije_get(item_id: int, _: dict = Depends(get_current_user)):
-        """Polja (soba × termin) koja imaju definisane opcije ILI popuste za konkretan termin
-        (period_id <> 0 — za obeležavanje ćelija u matrici)."""
+        """Polja (soba × termin) koja imaju definisane opcije ILI popuste — za obeležavanje
+        ćelija u matrici. Globalni zapisi (period_id = 0, važe za sve termine) šire se na
+        SVE periode snimka; termin/polje zapisi idu direktno."""
         with engine.connect() as conn:
-            _sobe_ids_u_cenovniku(conn, item_id)  # 404 za nepoznat cenovnik
+            cen = conn.execute(text("SELECT sobe, periodi FROM cenovnici WHERE id = :i"),
+                               {"i": item_id}).first()
+            if not cen:
+                raise HTTPException(status_code=404, detail="Cenovnik nije pronađen")
+            soba_ids = {int(s["id"]) for s in (cen.sobe or []) if s.get("id") is not None}
+            period_ids = [int(p["id"]) for p in (cen.periodi or []) if p.get("id") is not None]
             redovi = conn.execute(text("""
-                SELECT soba_id, period_id FROM opcije_soba
-                    WHERE cenovnik_id = :c AND period_id <> 0
+                SELECT soba_id, period_id FROM opcije_soba WHERE cenovnik_id = :c
                 UNION
-                SELECT soba_id, period_id FROM popust_soba
-                    WHERE cenovnik_id = :c AND period_id <> 0
-            """), {"c": item_id}).mappings().all()
-            return {"celije": [{"soba_id": r["soba_id"], "period_id": r["period_id"]}
-                                for r in redovi]}
+                SELECT soba_id, period_id FROM popust_soba WHERE cenovnik_id = :c
+            """), {"c": item_id}).all()
+            parovi: set[tuple[int, int]] = set()
+            for soba_id, period_id in redovi:
+                if soba_id not in soba_ids:  # zapisi za sobe van snimka se ne obeležavaju
+                    continue
+                if period_id == 0:
+                    parovi.update((soba_id, p) for p in period_ids)
+                elif period_id in period_ids:
+                    parovi.add((soba_id, period_id))
+            return {"celije": [{"soba_id": s, "period_id": p} for s, p in sorted(parovi)]}

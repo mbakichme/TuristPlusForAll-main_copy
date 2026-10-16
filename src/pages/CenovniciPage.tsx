@@ -679,7 +679,7 @@ function Selekt({ id, value, onChange, opcije }: {
   );
 }
 
-function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabel, terminCid, celijaSobaId, celijaLabel, onClose }: {
+function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabel, terminCid, celijaSobaId, celijaLabel, onPromena, onClose }: {
   red: CenovnikRow | null;
   /** Masovni mod (iz editora): primena na SVE sobe cenovnika i SVE termine. */
   masovnoId?: number | null;
@@ -692,6 +692,8 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
   /** Mod po POLJU (klik na ćeliju cene kad je cenovnik zaključan): jedna soba × jedan termin. */
   celijaSobaId?: number | null;
   celijaLabel?: string | null;
+  /** Posle SVAKOG uspešnog Snimi/Obriši (svi modovi) — roditelj odmah osvežava obeležja polja. */
+  onPromena?: () => void;
   onClose: () => void;
 }) {
   const [sobe, setSobe] = useState<SablonSoba[]>([]);
@@ -845,6 +847,7 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
         setOpcijePostoje(true);
         toast.success("Opcije su sačuvane");
       }
+      onPromena?.(); // odmah osveži svetloplavo obeležena polja (i dok je dijalog otvoren)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Čuvanje opcija nije uspelo");
     } finally {
@@ -878,6 +881,7 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
         setOpcijePostoje(false);
         toast.success("Opcije su obrisane");
       }
+      onPromena?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Brisanje opcija nije uspelo");
     } finally {
@@ -943,6 +947,7 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
         setPopustPostoji(true);
         toast.success("Popust je sačuvan");
       }
+      onPromena?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Čuvanje popusta nije uspelo");
     } finally {
@@ -976,6 +981,7 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
         setPopustPostoji(false);
         toast.success("Popust je obrisan");
       }
+      onPromena?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Brisanje popusta nije uspelo");
     } finally {
@@ -2026,6 +2032,7 @@ export default function CenovniciPage() {
         celijaSobaId={opcijeCelija && editDetail ? opcijeCelija.sobaId : null}
         celijaLabel={opcijeCelija?.label ?? null}
         masovnoSobe={editDetail?.sobe ?? []}
+        onPromena={() => setCelijeVerzija((v) => v + 1)} // svaki Snimi/Obriši odmah osvežava obeležja
         onClose={() => {
           setOpcijeRed(null); setOpcijeMasovno(false); setOpcijeTermin(null);
           if (opcijeCelija) {

@@ -5,6 +5,7 @@ Novi GET /cenovnici/{id}/opcije-celije → polja (soba_id, period_id ≠ 0) sa d
 opcijama ILI popustima (union) → svetloplavo obeležavanje ćelija u matrici.
 """
 import json
+import re
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -57,9 +58,6 @@ pid2 = d["periodi"][1]["id"]
 soba12 = next(s for s in d["sobe"] if s["broj_sobe"] == "12" and not s.get("virtuelna"))
 soba18 = next(s for s in d["sobe"] if s["broj_sobe"] == "18" and not s.get("virtuelna"))
 
-c.put(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H,
-      json={"blokirano": True, "prevoz": "obavezan"})  # globalno (svi termini)
-
 r = c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}?soba_id={soba12['id']}", headers=H,
           json={"istaknuto": True, "prevoz": "nemoguc"})
 check("cell PUT → sacuvano broj_soba=1, soba_id=[soba]",
@@ -71,10 +69,6 @@ redovi = db_rows("opcije_soba", cid, pid)
 check("u bazi TAČNO jedan red (soba, pid), ostale sobe netaknute",
       len(redovi) == 1 and redovi[0]["soba_id"] == soba12["id"]
       and redovi[0]["istaknuto"] is True and redovi[0]["prevoz"] == "nemoguc")
-check("globalni zapisi (period_id=0) NETAKNUTI (N redova, blokirano)",
-      len(db_rows("opcije_soba", cid, 0)) == N
-      and all(r["blokirano"] is True and r["istaknuto"] is False
-              for r in db_rows("opcije_soba", cid, 0)))
 
 r = c.get(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}?soba_id={soba12['id']}", headers=H)
 check("cell GET → postoji True + jedan zapis te sobe",
@@ -120,6 +114,19 @@ r = c.delete(f"/api/cenovnici/{cid}/popust-soba-termin/{pid2}?soba_id={soba12['i
 check("popust cell DELETE → broj=1", r.json()["broj"] == 1
       and db_rows("popust_soba", cid, pid2) == [])
 
+# globalno (masovno / dijalog po sobi) — period_id = 0 važi za SVE termine → širi se na celu matricu
+c.put(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H,
+      json={"blokirano": True, "prevoz": "obavezan"})
+check("globalni zapisi (period_id=0) upisani za svaku sobu (N redova, blokirano)",
+      len(db_rows("opcije_soba", cid, 0)) == N
+      and all(r["blokirano"] is True and r["istaknuto"] is False
+              for r in db_rows("opcije_soba", cid, 0)))
+r = c.get(f"/api/cenovnici/{cid}/opcije-celije", headers=H)
+check("opcije-celije: globalni (0) prošireni na SVE periode → cela matrica (sobe × periodi)",
+      r.status_code == 200
+      and {(x["soba_id"], x["period_id"]) for x in r.json()["celije"]}
+      == {(s["id"], p["id"]) for s in d["sobe"] for p in d["periodi"]})
+
 # single PUT (dijalog po sobi) i dalje briše SVE periode te sobe (scope-clearing)
 c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid2}?soba_id={soba18['id']}", headers=H,
       json={"blokirano": True})
@@ -136,8 +143,8 @@ check("termin PUT (bez soba_id) briše cell-ove i piše N redova za ceo termin",
       len(db_rows("opcije_soba", cid, pid2)) == N
       and all(r["istaknuto"] is True for r in db_rows("opcije_soba", cid, pid2)))
 r = c.get(f"/api/cenovnici/{cid}/opcije-celije", headers=H)
-check("opcije-celije posle termin PUT → N parova (svaka soba tog termina)",
-      len(r.json()["celije"]) == N)
+check("opcije-celije posle termin PUT → cela matrica (globalno proširenje + termin redovi)",
+      len(r.json()["celije"]) == N * len(d["periodi"]))
 
 check("404 nepoznat cenovnik (cell GET/PUT/DELETE)",
       c.get(f"/api/cenovnici/99999904/opcije-soba-termin/{pid}?soba_id=1", headers=H).status_code == 404
@@ -222,15 +229,20 @@ with sync_playwright() as p:
           and db_rows("opcije_soba", ui_cid, ui_pid)[0]["istaknuto"] is True
           and all(r["istaknuto"] is False for r in db_rows("opcije_soba", ui_cid, 0)))
 
+    with engine.begin() as conn:  # skinuti SAMO globalne (pid 0) — cell-zapis ostaje
+        conn.execute(text("DELETE FROM opcije_soba WHERE cenovnik_id = :c AND period_id = 0"),
+                     {"c": ui_cid})
+
     pg.keyboard.press("Escape")
     expect(dijalog).to_have_count(0, timeout=5000)
 
     def input_klasa(soba_id, od, do):
         return pg.get_by_label(f"Cena — soba {soba_id}, period {od}–{do}").get_attribute("class") or ""
 
+    celija12 = pg.get_by_label(f"Cena — soba 12, period {ui_od}–{ui_do}")
+    expect(celija12).to_have_class(re.compile(r"bg-sky-500/15"), timeout=8000)  # refetch posle zatvaranja
     check("UI: kliknuto polje SVETLO PLAVO na INPUTU (td bez tinta), susedno bez obeležja",
-          "bg-sky-500/15" in input_klasa("12", ui_od, ui_do)
-          and "border-sky-400/70" in input_klasa("12", ui_od, ui_do)
+          "border-sky-400/70" in input_klasa("12", ui_od, ui_do)
           and "bg-sky-500/15" not in input_klasa("18", ui_od, ui_do))
 
     # ponovo otvori isto polje → prefill iz cell-zapisa, pa Obriši
@@ -241,6 +253,7 @@ with sync_playwright() as p:
     dijalog.get_by_role("button", name="Obriši opcije").click()
     pg.get_by_text("Opcije su obrisane za polje soba 12", exact=False).wait_for(timeout=8000)
     check("UI: brisanje cell-zapisa", db_rows("opcije_soba", ui_cid, ui_pid) == [])
+    expect(celija12).not_to_have_class(re.compile(r"bg-sky-500/15"), timeout=8000)  # odmah uklonjeno
 
     pg.keyboard.press("Escape")
     expect(dijalog).to_have_count(0, timeout=5000)
