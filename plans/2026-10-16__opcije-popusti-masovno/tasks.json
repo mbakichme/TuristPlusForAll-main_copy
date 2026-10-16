@@ -1,0 +1,32 @@
+[
+  {
+    "content": "[masovno-1] Backend: bulk endpointi opcije-soba-sve / popust-soba-sve (GET/PUT/DELETE) + upsert helperi",
+    "id": "masovno-1",
+    "status": "completed"
+  },
+  {
+    "content": "[masovno-2] Frontend: OpcijePopustiDialog masovni mod (bez selektora sobe, prefill spajanjem zapisa, Snimi/Obriši na -sve)",
+    "id": "masovno-2",
+    "status": "completed"
+  },
+  {
+    "content": "[masovno-3] Frontend: dugme Opcije · Popusti iznad matrice u edit editoru (disabled kad je zaključano)",
+    "id": "masovno-3",
+    "status": "completed"
+  },
+  {
+    "content": "[masovno-4] bun run build (tsc) — mora biti zeleno",
+    "id": "masovno-4",
+    "status": "completed"
+  },
+  {
+    "content": "[masovno-5] Test test_cenovnici_opcije_masovno.py (API + UI) + regresija postojećih opcije testova",
+    "id": "masovno-5",
+    "status": "completed"
+  },
+  {
+    "content": "[masovno-6] Commit + update .workshop/context.md",
+    "id": "masovno-6",
+    "status": "completed"
+  }
+]
