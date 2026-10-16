@@ -138,7 +138,7 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !agencijaOpen ? "max-h-0 opacity-0" : "max-h-[560px] opacity-100"
+              !collapsed && !agencijaOpen ? "max-h-0 opacity-0" : "max-h-[640px] opacity-100"
             )}
           >
             <NavItem to="/agencija/tip-ponude" icon={Tag} label="Tipovi ponude" collapsed={collapsed} onClick={onNavClick} />
@@ -221,7 +221,7 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[22rem] opacity-100"
+              !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[480px] opacity-100"
             )}
           >
             <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={collapsed} onClick={onNavClick} />
@@ -492,7 +492,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !agencijaOpen ? "max-h-0 opacity-0" : "max-h-[560px] opacity-100"
+                    !agencijaOpen ? "max-h-0 opacity-0" : "max-h-[640px] opacity-100"
                   )}
                 >
                   <NavItem to="/agencija/tip-ponude" icon={Tag} label="Tipovi ponude" collapsed={false} onClick={closeMobile} />
@@ -505,6 +505,8 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/koeficijenti" icon={Sigma} label="Koeficijenti prodaje" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={false} onClick={closeMobile} />
                 </div>
               </div>
@@ -565,7 +567,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[22rem] opacity-100"
+                    !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[480px] opacity-100"
                   )}
                 >
                   <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={false} onClick={closeMobile} />
