@@ -140,7 +140,7 @@ ui_N = len(d2["sobe"])
 ui_pid = d2["periodi"][0]["id"]
 
 c.put(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H,
-      json={"blokirano": True, "prevoz": "obavezan"})  # globalno → prefill fallback
+      json={"blokirano": True, "prevoz": "obavezan"})  # globalno — NE sme ući u prefill termina
 
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -168,10 +168,11 @@ with sync_playwright() as p:
     check("UI: dijalog po terminu — banner sa 'samo za termin', bez selektora sobe",
           dijalog.get_by_text("Soba", exact=True).count() == 0
           and dijalog.get_by_text("samo za").count() > 0)
-    check("UI: prefill fallback sa globalnih zapisa (blokirano, prevoz Obavezan)",
-          pg.locator("#opc-blokirano").get_attribute("aria-checked") == "true"
-          and "Obavezan" in pg.locator("#opc-prevoz").inner_text())
+    check("UI: bez zapisa za termin → DEFAULTI, globalni zapisi se NE prefiluju",
+          pg.locator("#opc-blokirano").get_attribute("aria-checked") == "false"
+          and "Opciono" in pg.locator("#opc-prevoz").inner_text())
 
+    pg.locator("#opc-blokirano").click()
     pg.locator("#opc-istaknuto").click()
     with pg.expect_response(lambda r: r.request.method == "PUT"
                             and r.url.endswith(f"/opcije-soba-termin/{ui_pid}")) as ri:
@@ -181,11 +182,12 @@ with sync_playwright() as p:
           telo["blokirano"] is True and telo["istaknuto"] is True
           and ri.value.json()["status"] == "sacuvano")
     pg.get_by_text("Opcije su sačuvane za sve sobe i termin").wait_for(timeout=8000)
-    check("UI: override na SVE sobe za taj termin, globalni netaknuti",
+    check("UI: override na SVE sobe za taj termin (prevoz=opciono iz defaulta), globalni netaknuti",
           len(db_rows("opcije_soba", ui_cid, ui_pid)) == ui_N
-          and all(r["istaknuto"] is True and r["prevoz"] == "obavezan"
+          and all(r["istaknuto"] is True and r["prevoz"] == "opciono"
                   for r in db_rows("opcije_soba", ui_cid, ui_pid))
-          and all(r["istaknuto"] is False for r in db_rows("opcije_soba", ui_cid, 0)))
+          and all(r["blokirano"] is True and r["istaknuto"] is False and r["prevoz"] == "obavezan"
+                  for r in db_rows("opcije_soba", ui_cid, 0)))
 
     dijalog.get_by_role("button", name="Obriši opcije").click()
     pg.get_by_text("Opcije su obrisane za sve sobe i termin").wait_for(timeout=8000)

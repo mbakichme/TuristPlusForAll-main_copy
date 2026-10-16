@@ -172,7 +172,7 @@ s18 = next(s for s in d2["sobe"] if s["broj_sobe"] == "18" and not s.get("virtue
 polje12 = f"Opcije · Popusti za polje — soba 12 · {ui_od} – {ui_do}"
 
 c.put(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H,
-      json={"blokirano": True, "prevoz": "obavezan"})  # globalno → prefill fallback
+      json={"blokirano": True, "prevoz": "obavezan"})  # globalno — NE sme ući u prefill polja
 
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -201,10 +201,11 @@ with sync_playwright() as p:
           dijalog.get_by_text("samo na polje soba 12", exact=False).count() > 0
           and dijalog.get_by_text("samo na polje soba 12", exact=False).count() > 0
           and dijalog.get_by_text("Soba", exact=True).count() == 0)
-    check("UI: prefill fallback sa globalnih zapisa (blokirano, prevoz Obavezan)",
-          pg.locator("#opc-blokirano").get_attribute("aria-checked") == "true"
-          and "Obavezan" in pg.locator("#opc-prevoz").inner_text())
+    check("UI: bez cell-zapisa → DEFAULTI, globalni zapisi se NE prefiluju",
+          pg.locator("#opc-blokirano").get_attribute("aria-checked") == "false"
+          and "Opciono" in pg.locator("#opc-prevoz").inner_text())
 
+    pg.locator("#opc-blokirano").click()
     pg.locator("#opc-istaknuto").click()
     with pg.expect_response(lambda r: r.request.method == "PUT"
                             and f"/opcije-soba-termin/{ui_pid}" in r.url

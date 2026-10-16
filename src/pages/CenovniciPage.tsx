@@ -712,8 +712,8 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
   const grupno = masovno || poTerminu || poCeliji;
   const cid = masovno ? masovnoId : (poTerminu || poCeliji ? terminCid ?? null : red?.id ?? null);
 
-  // Otvaranje: masovno — sobe iz editora + spojeni zapisi svih soba; po terminu — zapisi
-  // tog termina (fallback za prefill: zajednički zapisi); inače sobe iz detail-a
+  // Otvaranje: masovno — sobe iz editora + spojeni zapisi svih soba (bez zapisa → defaulti); po
+  // terminu/polju — zapisi tog opsega (bez zapisa → defaulti, NE vrednosti drugih opsega); inače sobe iz detail-a
   useEffect(() => {
     if (cid === null) { setSobe([]); setSobaId(null); return; }
     let otkazano = false;
@@ -742,19 +742,11 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
             apiFetch<SvePopustiOdgovor>(`/cenovnici/${cid}/popust-soba-termin/${terminId}?soba_id=${celijaSobaId}`),
           ]);
           if (otkazano) return;
-          let oZ = oC.zapisi;
-          let pZ = pC.zapisi;
-          // polje nema svoj zapis → kreni od zajedničkih (svi termini) vrednosti
-          if (!oC.postoji) {
-            oZ = (await apiFetch<SveOpcijeOdgovor>(`/cenovnici/${cid}/opcije-soba-sve`)).zapisi;
-          }
-          if (otkazano) return;
-          if (!pC.postoji) {
-            pZ = (await apiFetch<SvePopustiOdgovor>(`/cenovnici/${cid}/popust-soba-sve`)).zapisi;
-          }
-          if (otkazano) return;
-          setOpcije(spojiOpcije(oZ)); setOpcijePostoje(oC.postoji);
-          setPopust(spojiPopust(pZ)); setPopustPostoji(pC.postoji);
+          // polje ima svoj zapis → njegove vrednosti; nema ga → DEFAULTI (ne vrednosti drugih opsega)
+          setOpcije(oC.postoji ? spojiOpcije(oC.zapisi) : OPCIJE_PRAZNE);
+          setOpcijePostoje(oC.postoji);
+          setPopust(pC.postoji ? spojiPopust(pC.zapisi) : POPUST_PRAZAN);
+          setPopustPostoji(pC.postoji);
         } catch {
           if (!otkazano) toast.error("Učitavanje opcija nije uspelo");
         } finally {
@@ -770,19 +762,11 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, terminId, terminLabe
             apiFetch<SvePopustiOdgovor>(`/cenovnici/${cid}/popust-soba-termin/${terminId}`),
           ]);
           if (otkazano) return;
-          let oZ = oT.zapisi;
-          let pZ = pT.zapisi;
-          // nema override-a za ovaj termin → kreni od zajedničkih (svi termini) vrednosti
-          if (!oT.postoji) {
-            oZ = (await apiFetch<SveOpcijeOdgovor>(`/cenovnici/${cid}/opcije-soba-sve`)).zapisi;
-          }
-          if (otkazano) return;
-          if (!pT.postoji) {
-            pZ = (await apiFetch<SvePopustiOdgovor>(`/cenovnici/${cid}/popust-soba-sve`)).zapisi;
-          }
-          if (otkazano) return;
-          setOpcije(spojiOpcije(oZ)); setOpcijePostoje(oT.postoji);
-          setPopust(spojiPopust(pZ)); setPopustPostoji(pT.postoji);
+          // termin ima override → spojene vrednosti zapisa; nema ga → DEFAULTI (ne globalne vrednosti)
+          setOpcije(oT.postoji ? spojiOpcije(oT.zapisi) : OPCIJE_PRAZNE);
+          setOpcijePostoje(oT.postoji);
+          setPopust(pT.postoji ? spojiPopust(pT.zapisi) : POPUST_PRAZAN);
+          setPopustPostoji(pT.postoji);
         } catch {
           if (!otkazano) toast.error("Učitavanje opcija nije uspelo");
         } finally {
