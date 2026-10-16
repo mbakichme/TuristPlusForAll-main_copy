@@ -192,10 +192,9 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTerm
                     type="button"
                     title="Opcije · Popusti za termin"
                     aria-label={`Opcije i popusti termin ${fmtIso(p.datum_od)}–${fmtIso(p.datum_do)}`}
-                    disabled={disabled}
                     onClick={() => onOpcijeTermina(
                       p.id, `${fmtIso(p.datum_od)} – ${fmtIso(p.datum_do)}`)}
-                    className="mt-1 inline-flex h-5 items-center rounded border border-border bg-card px-1.5 text-[9px] font-semibold tracking-wide text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                    className="mt-1 inline-flex h-5 items-center rounded border border-border bg-card px-1.5 text-[9px] font-semibold tracking-wide text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
                   >
                     O·P
                   </button>
@@ -472,7 +471,6 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
                   variant="outline"
                   size="sm"
                   onClick={p.onOtvoriOpcije}
-                  disabled={p.disabled}
                   title="Opcije · Popusti"
                 >
                   <SlidersHorizontal className="mr-2 h-4 w-4" />

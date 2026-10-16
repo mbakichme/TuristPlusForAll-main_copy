@@ -154,7 +154,7 @@ with sync_playwright() as p:
     pg.wait_for_selector("#edit-kopiraj", timeout=15000)
     btn = pg.get_by_role("button", name="Opcije · Popusti", exact=True)
     expect(btn).to_be_attached(timeout=10000)
-    check("UI: dugme iznad matrice postoji i DISABLED dok je editor zaključan", btn.is_disabled())
+    check("UI: dugme iznad matrice AKTIVNO i dok je editor zaključan", btn.is_enabled())
 
     pg.get_by_role("button", name="Izmeni cenovnik", exact=True).click()
     expect(btn).to_be_enabled(timeout=5000)
