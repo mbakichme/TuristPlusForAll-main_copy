@@ -1,9 +1,10 @@
 """Cenovnici — opcije/popusti po TERMINU: O·P dugme u koloni matrice (sve sobe, jedan termin).
 
-period_id u opcije_soba/popust_soba: 0 = „svi termini" (dijalog iz liste i masovno iznad
-matrice), konkretan id perioda iz snimka = override za taj termin (O·P u koloni).
+Za SVAKU sobu × taj termin upisuje se po jedan eksplicitan zapis (bez zbirnih period_id=0
+redova — masovno snimanje iznad matrice takođe materijalizuje svako polje ponaosob).
 Endpointi: GET/PUT/DELETE /cenovnici/{id}/opcije-soba-termin/{period_id} i /popust-soba-termin/...
-Scope-clearing: single PUT (soba) briše override-e te sobe; masovno PUT (-sve) briše SVE override-e.
+Scope-clearing: termin PUT briše ceo taj period; masovno PUT (-sve) briše SVE redove cenovnika;
+single PUT (soba) briše sve redove te sobe pa upisuje soba × SVI termini.
 """
 import json
 import re
@@ -63,7 +64,9 @@ check("termin GET prazno → postoji False + sobe iz snimka",
       and sorted(r.json()["sobe"]) == sorted(s["id"] for s in d["sobe"]))
 
 c.put(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H,
-      json={"blokirano": True, "prevoz": "obavezan"})  # globalno (svi termini)
+      json={"blokirano": True, "prevoz": "obavezan"})  # masovno — materijalizuje SVAKO polje (N × P)
+P = len(d["periodi"])
+pid2 = d["periodi"][1]["id"]
 
 r = c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}", headers=H,
           json={"istaknuto": True, "prevoz": "nemoguc", "tip_cene": "po_sobi"})
@@ -71,40 +74,45 @@ check("termin PUT → sacuvano broj_soba = N",
       r.status_code == 200 and r.json()["status"] == "sacuvano"
       and r.json()["broj_soba"] == N and r.json()["period_id"] == pid)
 
-check("termin override u bazi (svi redovi period_id=pid, istaknuto)",
+check("termin override u bazi (N redova period_id=pid, istaknuto)",
       len(db_rows("opcije_soba", cid, pid)) == N
       and all(r["istaknuto"] is True and r["prevoz"] == "nemoguc" for r in db_rows("opcije_soba", cid, pid)))
-check("globalni zapisi (period_id=0) NETAKNUTI",
-      len(db_rows("opcije_soba", cid, 0)) == N
-      and all(r["blokirano"] is True and r["istaknuto"] is False for r in db_rows("opcije_soba", cid, 0)))
+check("ostali termini zadržavaju masovne vrednosti (N redova po periodu, bez pid=0 redova)",
+      len(db_rows("opcije_soba", cid, pid2)) == N
+      and all(r["blokirano"] is True and r["istaknuto"] is False and r["prevoz"] == "obavezan"
+              for r in db_rows("opcije_soba", cid, pid2))
+      and db_rows("opcije_soba", cid, 0) == [])
 
 r = c.get(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H)
-check("single GET i dalje vraća GLOBALNE vrednosti (bez override-a)",
-      r.json()["postoji"] is True and r.json()["blokirano"] is True and r.json()["istaknuto"] is False)
+check("single GET spaja redove sobe preko SVIH perioda (mešovito → neutralno)",
+      r.json()["postoji"] is True and r.json()["blokirano"] is False
+      and r.json()["istaknuto"] is False and r.json()["prevoz"] is None)
 
 r = c.get(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}", headers=H)
 check("termin GET → zapisi N u redosledu snimka",
       r.json()["postoji"] is True and len(r.json()["zapisi"]) == N
       and [z["soba_id"] for z in r.json()["zapisi"]] == [s["id"] for s in d["sobe"]])
 
-# single PUT (dijalog po sobi) briše override-e TE SOBE
+# single PUT (soba × SVI termini) pregazuje i override termina te sobe
 c.put(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H, json={"blokirano": True})
-check("single PUT briše period override-e te sobe (ostaje samo period_id=0)",
-      db_rows("opcije_soba", cid, pid) == [r for r in db_rows("opcije_soba", cid, pid)
-                                           if r["soba_id"] != soba12["id"]]
-      and any(r["soba_id"] == soba12["id"] for r in db_rows("opcije_soba", cid, 0)))
+check("single PUT upisuje soba × SVE termine (P redova te sobe, ukupno N × P)",
+      len(db_rows("opcije_soba", cid)) == N * P
+      and len(db_rows("opcije_soba", cid, pid)) == N
+      and all(r["blokirano"] is True and r["istaknuto"] is False
+              for r in db_rows("opcije_soba", cid, pid) if r["soba_id"] == soba12["id"]))
 
-# masovno PUT (-sve) briše SVE override-e termina
+# masovno PUT (-sve) briše SVE redove cenovnika i upisuje svako polje ponaosob
 c.put(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H, json={"blokirano": False})
-check("masovno PUT briše SVE override-e (ostaje N redova period_id=0)",
-      len(db_rows("opcije_soba", cid)) == N and db_rows("opcije_soba", cid, pid) == [])
+check("masovno PUT briše SVE (override termina nestaje) i upisuje N × P eksplicitnih redova",
+      len(db_rows("opcije_soba", cid)) == N * P and db_rows("opcije_soba", cid, 0) == []
+      and all(r["blokirano"] is False for r in db_rows("opcije_soba", cid, pid)))
 
 c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}", headers=H,
       json={"istaknuto": True, "prevoz": "nemoguc"})
 r = c.delete(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}", headers=H)
-check("termin DELETE → broj = N, samo pid redovi obrisani, globalni ostaju",
+check("termin DELETE → broj = N, samo pid redovi obrisani, ostali periodi ostaju",
       r.status_code == 200 and r.json()["broj"] == N and db_rows("opcije_soba", cid, pid) == []
-      and len(db_rows("opcije_soba", cid, 0)) == N
+      and len(db_rows("opcije_soba", cid)) == N * (P - 1)
       and c.delete(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}", headers=H).json()["broj"] == 0)
 
 check("termin: nepoznat cenovnik → 404 (GET/PUT/DELETE)",
@@ -135,7 +143,7 @@ c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}", headers=H, json={"blokir
 c.put(f"/api/cenovnici/{cid}/popust-soba-termin/{pid}", headers=H,
       json={"umanjenje_vrsta": "iznos", "umanjenje": "10", "tip_popusta": "last_minute"})
 c.delete(f"/api/cenovnici/{cid}", headers=H)
-check("cascade: termin + globalni zapisi obrisani sa cenovnikom",
+check("cascade: termin + ostali redovi obrisani sa cenovnikom",
       db_rows("opcije_soba", cid) == [] and db_rows("popust_soba", cid) == [])
 
 # ── 3) UI — O·P dugme u koloni matrice ──────────────────────────────────────
@@ -145,7 +153,7 @@ ui_N = len(d2["sobe"])
 ui_pid = d2["periodi"][0]["id"]
 
 c.put(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H,
-      json={"blokirano": True, "prevoz": "obavezan"})  # globalno — NE sme ući u prefill termina
+      json={"blokirano": True, "prevoz": "obavezan"})  # masovno — eksplicitni redovi i za ovaj termin
 
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -173,25 +181,24 @@ with sync_playwright() as p:
     check("UI: dijalog po terminu — banner sa 'samo za termin', bez selektora sobe",
           dijalog.get_by_text("Soba", exact=True).count() == 0
           and dijalog.get_by_text("samo za").count() > 0)
-    check("UI: bez zapisa za termin → DEFAULTI, globalni zapisi se NE prefiluju",
-          pg.locator("#opc-blokirano").get_attribute("aria-checked") == "false"
-          and "Opciono" in pg.locator("#opc-prevoz").inner_text())
+    check("UI: prefill termina = sačuvane masovne vrednosti (eksplicitni redovi po polju)",
+          pg.locator("#opc-blokirano").get_attribute("aria-checked") == "true"
+          and "Obavezan" in pg.locator("#opc-prevoz").inner_text())
 
-    c.delete(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H)  # skinuti globalne → obeležje samo od termin snimanja
+    c.delete(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H)  # skinuti SVE → obeležje samo od termin snimanja
 
-    pg.locator("#opc-blokirano").click()
-    pg.locator("#opc-istaknuto").click()
+    pg.locator("#opc-istaknuto").click()  # blokirano ostaje čekirano iz prefilla
     with pg.expect_response(lambda r: r.request.method == "PUT"
                             and r.url.endswith(f"/opcije-soba-termin/{ui_pid}")) as ri:
         pg.get_by_role("button", name="Snimi", exact=True).click()
     telo = json.loads(ri.value.request.post_data)
-    check("UI: termin PUT payload (blokirano true, istaknuto true) → sacuvano",
+    check("UI: termin PUT payload (blokirano true zadržano iz prefilla, istaknuto true) → sacuvano",
           telo["blokirano"] is True and telo["istaknuto"] is True
-          and ri.value.json()["status"] == "sacuvano")
+          and telo["prevoz"] == "obavezan" and ri.value.json()["status"] == "sacuvano")
     pg.get_by_text("Opcije su sačuvane za sve sobe i termin").wait_for(timeout=8000)
-    check("UI: override na SVE sobe za taj termin (prevoz=opciono iz defaulta), globalni ostaju prazni",
+    check("UI: N eksplicitnih redova za taj termin (prevoz=obavezan iz prefilla), bez pid=0 redova",
           len(db_rows("opcije_soba", ui_cid, ui_pid)) == ui_N
-          and all(r["istaknuto"] is True and r["prevoz"] == "opciono"
+          and all(r["istaknuto"] is True and r["prevoz"] == "obavezan"
                   for r in db_rows("opcije_soba", ui_cid, ui_pid))
           and db_rows("opcije_soba", ui_cid, 0) == [])
 

@@ -1,9 +1,13 @@
-"""Cenovnici — Opcije · Popusti po sobi: tabele opcije_soba/popust_soba + API + UI dijalog.
+"""Cenovnici — Opcije · Popusti: tabele opcije_soba/popust_soba + API + UI dijalog.
 
-API: GET/PUT/DELETE /cenovnici/{id}/opcije-soba/{soba_id} i /popust-soba/{soba_id}
-(soba_id = id iz JSONB snimka, može biti negativan za virtuelne sobe).
-UI: dugme Opcije · Popusti u listi taba Izmena → dijalog sa tabovima Opcije/Popusti.
+API: GET/PUT/DELETE /cenovnici/{id}/opcije-soba/{soba_id} i /popust-soba/{soba_id} — opseg = soba
+za SVE termine: PUT upisuje EKSPLICITNO po polju (soba × svaki period snimka, bez period_id=0),
+GET spaja vrednosti (isto u svim redovima → vrednost, mešovito → neutralno). soba_id = id iz
+JSONB snimka, može biti negativan za virtuelne sobe.
+UI: dugme Opcije · Popusti u listi taba Izmena → dijalog u MASOVNOM modu (bez selektora sobe,
+banner „sve sobe i sve termine“) — Snimi/Obriši idu na -sve endpointe.
 """
+import json
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -39,9 +43,10 @@ def postavi_cenovnik():
     return r.json()
 
 
-# ── 1) API — Opcije ─────────────────────────────────────────────────────────
+# ── 1) API — Opcije po sobi (soba × SVI termini) ────────────────────────────
 d = postavi_cenovnik()
 cid = d["id"]
+P = len(d["periodi"])
 soba12 = next(s for s in d["sobe"] if s["broj_sobe"] == "12" and not s.get("virtuelna"))
 v12 = next(s for s in d["sobe"] if s.get("virtuelna") and s["izvor_soba_id"] == soba12["id"])
 
@@ -54,27 +59,32 @@ body = {"blokirano": True, "istaknuto": True, "blokirano_subagenci": True, "blok
         "prevoz": "obavezan", "tip_aranzmana": "sa_prevozom", "tip_cene": "po_sobi",
         "popust_sopstveni_prevoz": "15.5"}
 r = c.put(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H, json=body)
-check("opcije PUT → 200, vrednosti vraćene",
+check("opcije PUT → 200, vrednosti vraćene (spojene preko svih perioda)",
       r.status_code == 200 and r.json()["postoji"] is True and r.json()["blokirano"] is True
       and r.json()["prevoz"] == "obavezan" and float(r.json()["popust_sopstveni_prevoz"]) == 15.5)
 red = db_rows("opcije_soba", cid)
-check("opcije upisane u bazu (UNIQUE cenovnik+soba)",
-      len(red) == 1 and red[0]["blokirano"] is True and str(red[0]["popust_sopstveni_prevoz"]) == "15.50")
+check("opcije upisane EKSPLICITNO po polju — P redova (soba × svaki termin), bez period_id=0",
+      len(red) == P and all(r["period_id"] != 0 for r in red)
+      and {(r["soba_id"], r["period_id"]) for r in red}
+      == {(soba12["id"], p["id"]) for p in d["periodi"]}
+      and str(red[0]["popust_sopstveni_prevoz"]) == "15.50")
 
 r = c.put(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H,
           json={"blokirano": True})
-check("opcije PUT bez polja → full-replace (ostali resetovani)",
+check("opcije PUT bez polja → full-replace (ostali resetovani, i dalje P redova)",
       r.status_code == 200 and r.json()["blokirano"] is True and r.json()["istaknuto"] is False
-      and r.json()["prevoz"] is None and r.json()["popust_sopstveni_prevoz"] is None)
+      and r.json()["prevoz"] is None and r.json()["popust_sopstveni_prevoz"] is None
+      and len(db_rows("opcije_soba", cid)) == P)
 
 r = c.put(f"/api/cenovnici/{cid}/opcije-soba/{v12['id']}", headers=H,
           json={"istaknuto": True, "prevoz": "nemoguc"})
-check("opcije na virtuelnoj sobi (negativan id) → 200",
-      r.status_code == 200 and r.json()["prevoz"] == "nemoguc" and len(db_rows("opcije_soba", cid)) == 2)
+check("opcije na virtuelnoj sobi (negativan id) → 200 (2 sobe × P perioda)",
+      r.status_code == 200 and r.json()["prevoz"] == "nemoguc"
+      and len(db_rows("opcije_soba", cid)) == 2 * P)
 
 r = c.delete(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H)
-check("opcije DELETE → 200 i ponovo idempotentno",
-      r.status_code == 200
+check("opcije DELETE → 200 i ponovo idempotentno (briše SVih P redova te sobe)",
+      r.status_code == 200 and len(db_rows("opcije_soba", cid)) == P
       and c.delete(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H).status_code == 200)
 check("opcije posle DELETE: postoji False",
       c.get(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H).json()["postoji"] is False)
@@ -87,7 +97,7 @@ check("opcije: los enum prevoz → 422",
       c.put(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H,
             json={"prevoz": "nekad"}).status_code == 422)
 
-# ── 2) API — Popusti ────────────────────────────────────────────────────────
+# ── 2) API — Popusti po sobi (soba × SVI termini) ───────────────────────────
 r = c.get(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H)
 check("popust GET bez zapisa → postoji False", r.status_code == 200 and r.json()["postoji"] is False)
 
@@ -99,15 +109,16 @@ check("popust PUT → 200, vrednosti vraćene",
       r.status_code == 200 and r.json()["postoji"] is True
       and r.json()["umanjenje_vrsta"] == "procenat" and float(r.json()["umanjenje"]) == 10.0
       and r.json()["tip_popusta"] == "last_minute" and r.json()["vazi_od"] == "2026-06-01")
-check("popust u bazi", len(db_rows("popust_soba", cid)) == 1
-      and db_rows("popust_soba", cid)[0]["tip_placanja"] == "delimicno")
+check("popust u bazi — P redova po polju",
+      len(db_rows("popust_soba", cid)) == P
+      and all(r["tip_placanja"] == "delimicno" for r in db_rows("popust_soba", cid)))
 
 r = c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
           json={"umanjenje_vrsta": "iznos", "umanjenje": "50", "tip_popusta": "first_minute"})
-check("popust PUT menja zapis (jedan po sobi)",
+check("popust PUT menja zapise (full-replace, i dalje P redova)",
       r.status_code == 200 and r.json()["umanjenje_vrsta"] == "iznos"
       and float(r.json()["umanjenje"]) == 50.0 and r.json()["tip_placanja"] is None
-      and len(db_rows("popust_soba", cid)) == 1)
+      and len(db_rows("popust_soba", cid)) == P)
 
 check("popust procenat 150 → 422",
       c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
@@ -143,10 +154,12 @@ c.delete(f"/api/cenovnici/{cid}", headers=H)
 check("cascade: opcije_soba i popust_soba obrisani sa cenovnikom",
       db_rows("opcije_soba", cid) == [] and db_rows("popust_soba", cid) == [])
 
-# ── 3) UI ───────────────────────────────────────────────────────────────────
+# ── 3) UI — dijalog iz liste (masovni mod) ──────────────────────────────────
 d2 = postavi_cenovnik()
 ui_cid = d2["id"]
-soba12_2 = next(s for s in d2["sobe"] if s["broj_sobe"] == "12" and not s.get("virtuelna"))
+ui_N = len(d2["sobe"])
+ui_P = len(d2["periodi"])
+ui_NZ = ui_N * ui_P
 
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -161,20 +174,21 @@ with sync_playwright() as p:
     redovi = pg.get_by_role("row").filter(has=pg.get_by_role("cell", name=str(ui_cid), exact=True))
     expect(redovi).to_have_count(1, timeout=10000)
 
-    # čekaj i inicijalni GET opcija te sobe (efekt učitavanja resetuje formu — klikovi pre
-    # njega bi bili pregazeni); klik na Opcije dugme pokreće lanac: detail → GET opcije
+    # klik na Opcije dugme u redu liste otvara MASOVNI mod: detail (za sobe) + GET -sve
     with pg.expect_response(lambda r: r.request.method == "GET"
-                            and r.url.endswith(f"/opcije-soba/{soba12_2['id']}"), timeout=10000):
+                            and r.url.endswith("/opcije-soba-sve"), timeout=10000):
         redovi.first.get_by_label(f"Opcije i popusti cenovnika #{ui_cid}").click()
     pg.get_by_role("heading", name="Opcije · Popusti").wait_for(timeout=10000)
     expect(pg.get_by_role("tab", name="Opcije")).to_be_visible(timeout=10000)
-    pg.wait_for_timeout(300)  # .then obrade (forma iz odgovora)
+    pg.wait_for_timeout(300)
     check("dijalog se otvara sa tabovima", pg.get_by_role("tab", name="Opcije").is_visible()
           and pg.get_by_role("tab", name="Popusti").is_visible())
-    soba_sel = pg.locator("[role=dialog]").get_by_role("combobox").first
-    expect(soba_sel).to_contain_text("12 · 1/3 STD", timeout=10000)
+    dijalog = pg.locator("[role=dialog]")
+    check("UI: dijalog iz liste bez selektora sobe + banner 'sve termine'",
+          dijalog.get_by_text("Soba", exact=True).count() == 0
+          and dijalog.get_by_text("sve termine").count() > 0)
 
-    # tab Opcije: prekidači + selectovi + iznos → Snimi
+    # tab Opcije: prekidači + selectovi + iznos → Snimi (masovni -sve PUT)
     pg.locator("#opc-blokirano").click()
     pg.locator("#opc-istaknuto").click()
     pg.locator("#opc-prevoz").click()
@@ -183,24 +197,27 @@ with sync_playwright() as p:
     pg.get_by_role("option", name="Po sobi").click()
     pg.locator("#opc-psp").fill("15")
     with pg.expect_response(lambda r: r.request.method == "PUT"
-                            and r.url.endswith(f"/opcije-soba/{soba12_2['id']}")) as ri:
+                            and r.url.endswith("/opcije-soba-sve")) as ri:
         pg.get_by_role("button", name="Snimi", exact=True).click()
     _odg = ri.value.json()
-    check("UI: opcije PUT payload tačan",
-          _odg["blokirano"] is True and _odg["istaknuto"] is True
-          and _odg["prevoz"] == "obavezan" and _odg["tip_cene"] == "po_sobi"
-          and float(_odg["popust_sopstveni_prevoz"]) == 15.0)
-    pg.get_by_text("Opcije su sačuvane").wait_for(timeout=8000)
-    check("UI: toast 'Opcije su sačuvane' + dugme Obriši omogućeno",
-          pg.locator("[role=dialog]").get_by_role("button", name="Obriši opcije").is_enabled())
+    check("UI: masovni PUT payload tačan + broj_zapisa = sobe × termini",
+          _odg["status"] == "sacuvano" and _odg["broj_soba"] == ui_N
+          and _odg["broj_zapisa"] == ui_NZ
+          and json.loads(ri.value.request.post_data)["prevoz"] == "obavezan")
+    pg.get_by_text(f"Opcije su sačuvane za sve sobe i sve termine ({ui_NZ})").wait_for(timeout=8000)
+    red_db = db_rows("opcije_soba", ui_cid)
+    check("UI: opcije eksplicitno za svaku sobu × svaki termin (bez period_id=0)",
+          len(red_db) == ui_NZ and all(r["period_id"] != 0 for r in red_db)
+          and all(r["blokirano"] is True and r["prevoz"] == "obavezan" for r in red_db))
+    check("UI: dugme Obriši omogućeno posle Snimi",
+          dijalog.get_by_role("button", name="Obriši opcije").is_enabled())
 
-    # Obriši opcije
-    pg.locator("[role=dialog]").get_by_role("button", name="Obriši opcije").click()
-    pg.get_by_text("Opcije su obrisane").wait_for(timeout=8000)
-    check("UI: opcije obrisane kroz dijalog",
-          c.get(f"/api/cenovnici/{ui_cid}/opcije-soba/{soba12_2['id']}", headers=H).json()["postoji"] is False)
+    # Obriši opcije (masovno)
+    dijalog.get_by_role("button", name="Obriši opcije").click()
+    pg.get_by_text("Opcije su obrisane za sve sobe i sve termine").wait_for(timeout=8000)
+    check("UI: opcije obrisane kroz dijalog", db_rows("opcije_soba", ui_cid) == [])
 
-    # tab Popusti: procenat + sva polja → Snimi
+    # tab Popusti: procenat + sva polja → Snimi (masovni -sve PUT)
     pg.get_by_role("tab", name="Popusti").click()
     pg.get_by_role("button", name="Procenat").click()
     pg.locator("#pop-umanjenje").fill("12,5")
@@ -215,29 +232,28 @@ with sync_playwright() as p:
         pg.wait_for_timeout(200)
     pg.locator("#pop-psp").fill("5")
     with pg.expect_response(lambda r: r.request.method == "PUT"
-                            and r.url.endswith(f"/popust-soba/{soba12_2['id']}")) as ri2:
+                            and r.url.endswith("/popust-soba-sve")) as ri2:
         pg.get_by_role("button", name="Snimi", exact=True).click()
     pj = ri2.value.json()
-    check("UI: popust PUT payload tačan (procenat 12.5, last_minute, delimično, datumi, psp 5)",
-          pj["umanjenje_vrsta"] == "procenat" and float(pj["umanjenje"]) == 12.5
-          and pj["tip_popusta"] == "last_minute" and pj["tip_placanja"] == "delimicno"
-          and pj["vazi_od"] is not None and pj["vazi_do"] is not None
-          and float(pj["popust_sopstveni_prevoz"]) == 5.0)
-    pg.get_by_text("Popust je sačuvan").wait_for(timeout=8000)
+    check("UI: masovni popust PUT payload tačan (procenat 12.5, last_minute, delimično, datumi, psp 5)",
+          pj["status"] == "sacuvano" and pj["broj_soba"] == ui_N and pj["broj_zapisa"] == ui_NZ
+          and json.loads(ri2.value.request.post_data)["umanjenje_vrsta"] == "procenat"
+          and float(json.loads(ri2.value.request.post_data)["umanjenje"]) == 12.5
+          and json.loads(ri2.value.request.post_data)["tip_popusta"] == "last_minute")
+    pg.get_by_text(f"Popust je sačuvan za sve sobe i sve termine ({ui_NZ})").wait_for(timeout=8000)
 
     # validacija: procenat 150 → toast greške, bez PUT-a
     pg.locator("#pop-umanjenje").fill("150")
     pg.get_by_role("button", name="Snimi", exact=True).click()
     pg.get_by_text("Procenat može biti najviše 100").wait_for(timeout=8000)
+    zapisi = c.get(f"/api/cenovnici/{ui_cid}/popust-soba-sve", headers=H).json()["zapisi"]
     check("UI: procenat 150 odbijen na klijentu (API vrednost nepromenjena)",
-          float(c.get(f"/api/cenovnici/{ui_cid}/popust-soba/{soba12_2['id']}", headers=H)
-                .json()["umanjenje"]) == 12.5)
+          len(zapisi) == ui_NZ and all(float(x["umanjenje"]) == 12.5 for x in zapisi))
 
-    # Obriši popust
-    pg.locator("[role=dialog]").get_by_role("button", name="Obriši popust").click()
-    pg.get_by_text("Popust je obrisan").wait_for(timeout=8000)
-    check("UI: popust obrisan kroz dijalog",
-          c.get(f"/api/cenovnici/{ui_cid}/popust-soba/{soba12_2['id']}", headers=H).json()["postoji"] is False)
+    # Obriši popust (masovno)
+    dijalog.get_by_role("button", name="Obriši popust").click()
+    pg.get_by_text("Popust je obrisan za sve sobe i sve termine").wait_for(timeout=8000)
+    check("UI: popust obrisan kroz dijalog", db_rows("popust_soba", ui_cid) == [])
     b.close()
 
 check("cleanup UI cenovnik obrisan", c.delete(f"/api/cenovnici/{ui_cid}", headers=H).status_code == 200)

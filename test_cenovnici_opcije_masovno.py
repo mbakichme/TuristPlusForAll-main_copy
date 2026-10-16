@@ -1,9 +1,10 @@
 """Cenovnici — masovne opcije/popusti: dugme Opcije · Popusti iznad matrice u edit editoru.
 
-API: GET/PUT/DELETE /cenovnici/{id}/opcije-soba-sve i /popust-soba-sve — primena na SVE sobe
-snimka (realne + virtuelne negativni id-jevi). UI: dugme pored „Kopiraj cene“ checkboxa,
-disabled dok je editor zaključan; dijalog bez selektora sobe, prefill = vrednost koju dele
-SVE sobe (mešovito → neutralno); Snimi/Obriši idu na -sve endpointe.
+API: GET/PUT/DELETE /cenovnici/{id}/opcije-soba-sve i /popust-soba-sve — snimanje je EKSPLICITNO
+po polju: za SVAKU sobu snimka (realne + virtuelne negativni id-jevi) × SVAKI termin upisuje se
+po jedan zapis (bez zbirnih period_id=0 redova). UI: dugme pored „Kopiraj cene“ checkboxa,
+disabled dok je editor zaključan; dijalog bez selektora sobe, prefill = vrednost koju dele SVE
+zapisi (mešovito → neutralno); Snimi/Obriši idu na -sve endpointe.
 """
 import json
 import os, sys
@@ -45,6 +46,8 @@ def postavi_cenovnik():
 d = postavi_cenovnik()
 cid = d["id"]
 N = len(d["sobe"])
+P = len(d["periodi"])
+NZ = N * P  # svaka soba × svaki termin = po jedan eksplicitan zapis
 soba12 = next(s for s in d["sobe"] if s["broj_sobe"] == "12" and not s.get("virtuelna"))
 v12 = next(s for s in d["sobe"] if s.get("virtuelna") and s["izvor_soba_id"] == soba12["id"])
 
@@ -57,36 +60,41 @@ body = {"blokirano": True, "istaknuto": False, "blokirano_subagenci": False, "bl
         "prevoz": "obavezan", "tip_aranzmana": "sa_prevozom", "tip_cene": "po_sobi",
         "popust_sopstveni_prevoz": "15.5"}
 r = c.put(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H, json=body)
-check("opcije-sve PUT → sacuvano, broj_soba = N", r.status_code == 200
-      and r.json()["status"] == "sacuvano" and r.json()["broj_soba"] == N)
+check("opcije-sve PUT → sacuvano, broj_soba = N, broj_zapisa = N × P", r.status_code == 200
+      and r.json()["status"] == "sacuvano" and r.json()["broj_soba"] == N
+      and r.json()["broj_zapisa"] == NZ)
 redovi = db_rows("opcije_soba", cid)
-check("opcije-sve: red za SVAKU sobu uključujući virtuelnu (negativan id)",
-      len(redovi) == N and any(r["soba_id"] == v12["id"] for r in redovi)
-      and all(r["blokirano"] is True and r["blokirano_sajt"] is True for r in redovi)
-      and all(r["prevoz"] == "obavezan" for r in redovi))
+check("opcije-sve: EKSPLICITNO po polju — N × P redova (uklj. virtuelnu), bez period_id=0",
+      len(redovi) == NZ and all(r["period_id"] != 0 for r in redovi)
+      and {(r["soba_id"], r["period_id"]) for r in redovi}
+      == {(s["id"], p["id"]) for s in d["sobe"] for p in d["periodi"]}
+      and all(r["blokirano"] is True and r["blokirano_sajt"] is True and r["prevoz"] == "obavezan"
+              for r in redovi))
 
 r = c.get(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H)
 z = r.json()["zapisi"]
-check("opcije-sve GET → postoji True + zapisi u redosledu snimka",
-      r.json()["postoji"] is True and len(z) == N
-      and [x["soba_id"] for x in z] == [s["id"] for s in d["sobe"]])
+check("opcije-sve GET → postoji True + N × P zapisa u redosledu snimka (soba, pa period_id)",
+      r.json()["postoji"] is True and len(z) == NZ
+      and [x["soba_id"] for x in z] == [s["id"] for s in d["sobe"] for _ in d["periodi"]]
+      and [x["period_id"] for x in z[:P]] == sorted(p["id"] for p in d["periodi"]))
 
 r = c.put(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H,
           json={"blokirano": False, "prevoz": "nemoguc", "tip_cene": "po_osobi"})
 redovi = db_rows("opcije_soba", cid)
-check("opcije-sve ponovo → full-replace bez duplikata",
-      r.status_code == 200 and len(redovi) == N
+check("opcije-sve ponovo → full-replace bez duplikata (i dalje N × P)",
+      r.status_code == 200 and len(redovi) == NZ
       and all(r["blokirano"] is False and r["istaknuto"] is False and r["prevoz"] == "nemoguc"
               and r["tip_cene"] == "po_osobi" for r in redovi))
 
 c.put(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H, json={"istaknuto": True})
 redovi = db_rows("opcije_soba", cid)
-check("masovno + pojedinačno koegzistiraju (jedna soba prepravljena)",
-      len(redovi) == N and sum(1 for r in redovi if r["istaknuto"] is True) == 1)
+check("masovno + pojedinačno koegzistiraju (soba12 × svi termini prepravljeni, ukupno N × P)",
+      len(redovi) == NZ and sum(1 for r in redovi if r["istaknuto"] is True) == P
+      and all(r["soba_id"] == soba12["id"] for r in redovi if r["istaknuto"] is True))
 
 r = c.delete(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H)
-check("opcije-sve DELETE → broj = N, baza prazna, ponovo idempotentno",
-      r.status_code == 200 and r.json()["broj"] == N and db_rows("opcije_soba", cid) == []
+check("opcije-sve DELETE → broj = N × P, baza prazna, ponovo idempotentno",
+      r.status_code == 200 and r.json()["broj"] == NZ and db_rows("opcije_soba", cid) == []
       and c.delete(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H).json()["broj"] == 0)
 
 check("opcije-sve: nepoznat cenovnik → 404 (GET/PUT/DELETE)",
@@ -101,20 +109,22 @@ check("popust-sve GET prazno → postoji False", r.status_code == 200 and r.json
 r = c.put(f"/api/cenovnici/{cid}/popust-soba-sve", headers=H,
           json={"umanjenje_vrsta": "procenat", "umanjenje": "10", "tip_popusta": "last_minute",
                 "tip_placanja": "delimicno", "vazi_od": "2026-06-01", "vazi_do": "2026-06-30"})
-check("popust-sve PUT → sacuvano za N soba", r.status_code == 200 and r.json()["broj_soba"] == N)
+check("popust-sve PUT → sacuvano za N soba (broj_zapisa = N × P)",
+      r.status_code == 200 and r.json()["broj_soba"] == N and r.json()["broj_zapisa"] == NZ)
 redovi = db_rows("popust_soba", cid)
-check("popust-sve: red za svaku sobu (uklj. virtuelnu), iste vrednosti",
-      len(redovi) == N and any(r["soba_id"] == v12["id"] for r in redovi)
+check("popust-sve: N × P redova po polju (uklj. virtuelnu), iste vrednosti",
+      len(redovi) == NZ and all(r["period_id"] != 0 for r in redovi)
+      and any(r["soba_id"] == v12["id"] for r in redovi)
       and all(r["tip_popusta"] == "last_minute" and r["tip_placanja"] == "delimicno" for r in redovi))
 
 r = c.get(f"/api/cenovnici/{cid}/popust-soba-sve", headers=H)
-check("popust-sve GET → zapisi N, datumi ISO",
-      len(r.json()["zapisi"]) == N
+check("popust-sve GET → zapisi N × P, datumi ISO",
+      len(r.json()["zapisi"]) == NZ
       and all(x["vazi_od"] == "2026-06-01" and x["vazi_do"] == "2026-06-30" for x in r.json()["zapisi"]))
 
 r = c.delete(f"/api/cenovnici/{cid}/popust-soba-sve", headers=H)
-check("popust-sve DELETE → broj = N, baza prazna",
-      r.status_code == 200 and r.json()["broj"] == N and db_rows("popust_soba", cid) == [])
+check("popust-sve DELETE → broj = N × P, baza prazna",
+      r.status_code == 200 and r.json()["broj"] == NZ and db_rows("popust_soba", cid) == [])
 
 # cascade sa cenovnikom i za masovne zapise
 c.put(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H, json={"blokirano": True})
@@ -128,6 +138,8 @@ check("cascade: masovni zapisi obrisani sa cenovnikom",
 d2 = postavi_cenovnik()
 ui_cid = d2["id"]
 ui_N = len(d2["sobe"])
+ui_P = len(d2["periodi"])
+ui_NZ = ui_N * ui_P
 soba12_2 = next(s for s in d2["sobe"] if s["broj_sobe"] == "12" and not s.get("virtuelna"))
 v12_2 = next(s for s in d2["sobe"] if s.get("virtuelna") and s["izvor_soba_id"] == soba12_2["id"])
 
@@ -178,16 +190,18 @@ with sync_playwright() as p:
     telo = json.loads(ri.value.request.post_data)
     check("UI: masovni PUT payload (blokirano true, istaknuto false, prevoz obavezan) → sacuvano",
           telo["blokirano"] is True and telo["istaknuto"] is False and telo["prevoz"] == "obavezan"
-          and ri.value.json()["status"] == "sacuvano")
-    pg.get_by_text("Opcije su sačuvane za sve sobe").wait_for(timeout=8000)
+          and ri.value.json()["status"] == "sacuvano"
+          and ri.value.json()["broj_zapisa"] == ui_NZ)
+    pg.get_by_text(f"Opcije su sačuvane za sve sobe i sve termine ({ui_NZ})").wait_for(timeout=8000)
     redovi_db = db_rows("opcije_soba", ui_cid)
-    check("UI: snimljeno na SVE sobe (uklj. virtuelne), prepravljeno i mešovito istaknuto",
-          len(redovi_db) == ui_N and all(r["blokirano"] is True for r in redovi_db)
+    check("UI: snimljeno EKSPLICITNO za svaku sobu × svaki termin (uklj. virtuelne)",
+          len(redovi_db) == ui_NZ and all(r["blokirano"] is True for r in redovi_db)
           and not any(r["istaknuto"] is True for r in redovi_db)
-          and any(r["soba_id"] == v12_2["id"] for r in redovi_db))
+          and any(r["soba_id"] == v12_2["id"] for r in redovi_db)
+          and all(r["period_id"] != 0 for r in redovi_db))
 
     dijalog.get_by_role("button", name="Obriši opcije").click()
-    pg.get_by_text("Opcije su obrisane za sve sobe").wait_for(timeout=8000)
+    pg.get_by_text("Opcije su obrisane za sve sobe i sve termine").wait_for(timeout=8000)
     check("UI: masovno brisanje opcija", db_rows("opcije_soba", ui_cid) == [])
 
     # Popusti tab: masovno snimanje popusta
@@ -201,11 +215,12 @@ with sync_playwright() as p:
     telo2 = json.loads(ri2.value.request.post_data)
     check("UI: masovni popust PUT (iznos 10, last_minute) → sacuvano",
           telo2["umanjenje_vrsta"] == "iznos" and float(telo2["umanjenje"]) == 10.0
-          and telo2["tip_popusta"] == "last_minute" and ri2.value.json()["broj_soba"] == ui_N)
-    pg.get_by_text("Popust je sačuvan za sve sobe").wait_for(timeout=8000)
+          and telo2["tip_popusta"] == "last_minute" and ri2.value.json()["broj_soba"] == ui_N
+          and ri2.value.json()["broj_zapisa"] == ui_NZ)
+    pg.get_by_text(f"Popust je sačuvan za sve sobe i sve termine ({ui_NZ})").wait_for(timeout=8000)
     redovi_db = db_rows("popust_soba", ui_cid)
-    check("UI: popust na sve sobe (uklj. virtuelne)",
-          len(redovi_db) == ui_N and any(r["soba_id"] == v12_2["id"] for r in redovi_db)
+    check("UI: popust eksplicitno za svaku sobu × svaki termin (uklj. virtuelne)",
+          len(redovi_db) == ui_NZ and any(r["soba_id"] == v12_2["id"] for r in redovi_db)
           and all(r["tip_popusta"] == "last_minute" for r in redovi_db))
     b.close()
 

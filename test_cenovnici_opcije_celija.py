@@ -1,8 +1,9 @@
 """Cenovnici — opcije/popusti po POLJU (soba × termin): klik na ćeliju cene kad je zaključano.
 
-Endpointi termin-dijela prošireni opcionim ?soba_id= — puni replace SAMO tog polja.
-Novi GET /cenovnici/{id}/opcije-celije → polja (soba_id, period_id ≠ 0) sa definisanim
-opcijama ILI popustima (union) → svetloplavo obeležavanje ćelija u matrici.
+Endpointi termin-dijela prošireni opcionim ?soba_id= — puni replace SAMO tog polja (jedan zapis).
+GET /cenovnici/{id}/opcije-celije → polja (soba_id, period_id) sa definisanim opcijama ILI
+popustima (union) → svetloplavo obeležavanje ćelija; legacy pid=0 redovi se i dalje šire na sve
+periode, a masovno snimanje piše svako polje eksplicitno.
 """
 import json
 import re
@@ -114,36 +115,44 @@ r = c.delete(f"/api/cenovnici/{cid}/popust-soba-termin/{pid2}?soba_id={soba12['i
 check("popust cell DELETE → broj=1", r.json()["broj"] == 1
       and db_rows("popust_soba", cid, pid2) == [])
 
-# globalno (masovno / dijalog po sobi) — period_id = 0 važi za SVE termine → širi se na celu matricu
+# LEGACY pid=0 red (od starih verzija) se i dalje ŠIRI na sve periode u obeležjima
+with engine.begin() as conn:
+    conn.execute(text("""INSERT INTO opcije_soba (cenovnik_id, soba_id, period_id, blokirano)
+        VALUES (:c, :s, 0, TRUE)"""), {"c": cid, "s": soba12["id"]})
+r = c.get(f"/api/cenovnici/{cid}/opcije-celije", headers=H)
+check("opcije-celije: legacy pid=0 red proširen na SVE periode + cell-zapis druge sobe",
+      r.status_code == 200
+      and {(x["soba_id"], x["period_id"]) for x in r.json()["celije"]}
+      == {(soba12["id"], p["id"]) for p in d["periodi"]} | {(soba18["id"], pid2)})
+
+# masovno snimanje — EKSPLICITNO po polju (N × P redova, bez pid=0); briše i legacy i cell-redove
 c.put(f"/api/cenovnici/{cid}/opcije-soba-sve", headers=H,
       json={"blokirano": True, "prevoz": "obavezan"})
-check("globalni zapisi (period_id=0) upisani za svaku sobu (N redova, blokirano)",
-      len(db_rows("opcije_soba", cid, 0)) == N
-      and all(r["blokirano"] is True and r["istaknuto"] is False
-              for r in db_rows("opcije_soba", cid, 0)))
+check("masovno snimanje upisuje N × P eksplicitnih redova (svaka soba × svaki termin)",
+      len(db_rows("opcije_soba", cid)) == N * len(d["periodi"])
+      and all(r["period_id"] != 0 and r["blokirano"] is True and r["prevoz"] == "obavezan"
+              for r in db_rows("opcije_soba", cid)))
 r = c.get(f"/api/cenovnici/{cid}/opcije-celije", headers=H)
-check("opcije-celije: globalni (0) prošireni na SVE periode → cela matrica (sobe × periodi)",
+check("opcije-celije posle masovnog snimanja → cela matrica (sobe × periodi)",
       r.status_code == 200
       and {(x["soba_id"], x["period_id"]) for x in r.json()["celije"]}
       == {(s["id"], p["id"]) for s in d["sobe"] for p in d["periodi"]})
 
-# single PUT (dijalog po sobi) i dalje briše SVE periode te sobe (scope-clearing)
-c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid2}?soba_id={soba18['id']}", headers=H,
-      json={"blokirano": True})
+# single PUT (soba × SVI termini) — scope-clearing: pregazuje i cell/masovne redove te sobe
 c.put(f"/api/cenovnici/{cid}/opcije-soba/{soba18['id']}", headers=H, json={"blokirano": False})
-check("single PUT sobe briše i njene cell-zapise (ostaje samo pid 0)",
-      db_rows("opcije_soba", cid, pid2) == []
-      and any(r["soba_id"] == soba18["id"] for r in db_rows("opcije_soba", cid, 0)))
+check("single PUT sobe upisuje soba × SVE termine (pregazio njene cell-zapise)",
+      len(db_rows("opcije_soba", cid)) == N * len(d["periodi"])
+      and all(r["blokirano"] is False
+              for r in db_rows("opcije_soba", cid) if r["soba_id"] == soba18["id"])
+      and len([r for r in db_rows("opcije_soba", cid, pid2) if r["soba_id"] == soba18["id"]]) == 1)
 
 # termin PUT (bez soba_id) i dalje puni replace CELOG termina (regresija)
-c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid2}?soba_id={soba12['id']}", headers=H,
-      json={"blokirano": True})
 c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid2}", headers=H, json={"istaknuto": True})
 check("termin PUT (bez soba_id) briše cell-ove i piše N redova za ceo termin",
       len(db_rows("opcije_soba", cid, pid2)) == N
       and all(r["istaknuto"] is True for r in db_rows("opcije_soba", cid, pid2)))
 r = c.get(f"/api/cenovnici/{cid}/opcije-celije", headers=H)
-check("opcije-celije posle termin PUT → cela matrica (globalno proširenje + termin redovi)",
+check("opcije-celije posle termin PUT → cela matrica",
       len(r.json()["celije"]) == N * len(d["periodi"]))
 
 check("404 nepoznat cenovnik (cell GET/PUT/DELETE)",
@@ -179,7 +188,7 @@ s18 = next(s for s in d2["sobe"] if s["broj_sobe"] == "18" and not s.get("virtue
 polje12 = f"Opcije · Popusti za polje — soba 12 · {ui_od} – {ui_do}"
 
 c.put(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H,
-      json={"blokirano": True, "prevoz": "obavezan"})  # globalno — NE sme ući u prefill polja
+      json={"blokirano": True, "prevoz": "obavezan"})  # masovno — eksplicitni redovi i za ovo polje
 
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -208,30 +217,28 @@ with sync_playwright() as p:
           dijalog.get_by_text("samo na polje soba 12", exact=False).count() > 0
           and dijalog.get_by_text("samo na polje soba 12", exact=False).count() > 0
           and dijalog.get_by_text("Soba", exact=True).count() == 0)
-    check("UI: bez cell-zapisa → DEFAULTI, globalni zapisi se NE prefiluju",
-          pg.locator("#opc-blokirano").get_attribute("aria-checked") == "false"
-          and "Opciono" in pg.locator("#opc-prevoz").inner_text())
+    check("UI: cell-zapis iz masovnog snimanja → prefill sa sačuvanim vrednostima",
+          pg.locator("#opc-blokirano").get_attribute("aria-checked") == "true"
+          and "Obavezan" in pg.locator("#opc-prevoz").inner_text())
 
-    pg.locator("#opc-blokirano").click()
-    pg.locator("#opc-istaknuto").click()
+    c.delete(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H)  # skinuti masovne redove → cell Snimi piše TAČNO jedan red
+
+    pg.locator("#opc-istaknuto").click()  # blokirano ostaje čekirano iz prefilla
     with pg.expect_response(lambda r: r.request.method == "PUT"
                             and f"/opcije-soba-termin/{ui_pid}" in r.url
                             and f"soba_id={s12['id']}" in r.url) as ri:
         pg.get_by_role("button", name="Snimi", exact=True).click()
     telo = json.loads(ri.value.request.post_data)
-    check("UI: cell PUT payload (blokirano true, istaknuto true) → sacuvano broj_soba=1",
+    check("UI: cell PUT payload (blokirano true iz prefilla, istaknuto true) → sacuvano broj_soba=1",
           telo["blokirano"] is True and telo["istaknuto"] is True
+          and telo["prevoz"] == "obavezan"
           and ri.value.json()["status"] == "sacuvano" and ri.value.json()["broj_soba"] == 1)
     pg.get_by_text("Opcije su sačuvane za polje soba 12", exact=False).wait_for(timeout=8000)
-    check("UI: u bazi TAČNO jedan cell-red (istaknuto), globalni netaknuti",
-          len(db_rows("opcije_soba", ui_cid, ui_pid)) == 1
+    check("UI: u bazi TAČNO jedan cell-red (soba 12 × taj termin), bez pid=0 redova",
+          len(db_rows("opcije_soba", ui_cid)) == 1
           and db_rows("opcije_soba", ui_cid, ui_pid)[0]["soba_id"] == s12["id"]
           and db_rows("opcije_soba", ui_cid, ui_pid)[0]["istaknuto"] is True
-          and all(r["istaknuto"] is False for r in db_rows("opcije_soba", ui_cid, 0)))
-
-    with engine.begin() as conn:  # skinuti SAMO globalne (pid 0) — cell-zapis ostaje
-        conn.execute(text("DELETE FROM opcije_soba WHERE cenovnik_id = :c AND period_id = 0"),
-                     {"c": ui_cid})
+          and db_rows("opcije_soba", ui_cid, 0) == [])
 
     pg.keyboard.press("Escape")
     expect(dijalog).to_have_count(0, timeout=5000)

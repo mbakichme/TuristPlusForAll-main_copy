@@ -1,22 +1,27 @@
 [
   {
-    "content": "[osvezavanje-1] Backend: _osvezi_sobe helper (čuvanje id-jeva virtuelnih po (izvor,struktura)), _sablon refactor, _detail refresh + nova tag, PUT upisuje osvežen snimak",
+    "content": "[backend] cenovnici_api.py: -sve PUT/GET piše (soba, period) za sve sobe × sve periode; per-room endpointi = soba × svi termini; helper _periodi_ids_u_cenovniku",
     "id": "1",
     "status": "completed"
   },
   {
-    "content": "[osvezavanje-2] Frontend: SablonSoba.nova + \"nova\" marker u matrici; provera da edit tok propušta virtuelna/nova polja",
+    "content": "[frontend] CenovniciPage.tsx: dijalog iz liste = masovni mod (bez selektora sobe), toastovi sa brojem zapisa, uklanjanje po-sobi grana",
     "id": "2",
     "status": "completed"
   },
   {
-    "content": "[osvezavanje-3] Test test_cenovnici_osvezavanje.py (API + UI) + regresije (virtuelne, opis, zakljucavanje, brisanje)",
+    "content": "[build] bun run build (tsc -b && vite build)",
     "id": "3",
     "status": "completed"
   },
   {
-    "content": "[osvezavanje-4] bun run build, commit, context update",
+    "content": "[tests] ažuriraj test_cenovnici_opcije_masovno/popusti/termin/celija + pokreni sve",
     "id": "4",
-    "status": "completed"
+    "status": "in_progress"
+  },
+  {
+    "content": "[context] .workshop/context.md + commit",
+    "id": "5",
+    "status": "pending"
   }
 ]
