@@ -516,7 +516,7 @@ interface OpcijeForma {
 }
 const OPCIJE_PRAZNE: OpcijeForma = {
   blokirano: false, istaknuto: false, blokirano_subagenci: false, blokirano_sajt: false,
-  prevoz: NEMA, tip_aranzmana: NEMA, tip_cene: NEMA, popust_sopstveni_prevoz: "",
+  prevoz: "opciono", tip_aranzmana: "sa_prevozom", tip_cene: "po_osobi", popust_sopstveni_prevoz: "",
 };
 
 interface PopustForma {
@@ -525,8 +525,8 @@ interface PopustForma {
   tip_cene: string; popust_sopstveni_prevoz: string;
 }
 const POPUST_PRAZAN: PopustForma = {
-  umanjenje_vrsta: "iznos", umanjenje: "", tip_popusta: NEMA, tip_placanja: NEMA,
-  vazi_od: "", vazi_do: "", tip_aranzmana: NEMA, tip_cene: NEMA, popust_sopstveni_prevoz: "",
+  umanjenje_vrsta: "iznos", umanjenje: "", tip_popusta: "last_minute", tip_placanja: "delimicno",
+  vazi_od: "", vazi_do: "", tip_aranzmana: "sa_prevozom", tip_cene: "po_osobi", popust_sopstveni_prevoz: "",
 };
 
 function formaIzOpcije(o: OpcijeSobaApi): OpcijeForma {
@@ -847,7 +847,7 @@ function OpcijePopustiDialog({ red, masovnoId, masovnoSobe, onClose }: {
 
   return (
     <Dialog open={red !== null || masovno} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[92vh] overflow-y-auto bg-card sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
