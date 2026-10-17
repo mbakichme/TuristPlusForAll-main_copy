@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import type { Mesto, PeriodGrupa, PeriodDatum } from "../types";
 import { apiFetch } from "../lib/api";
 import { cn } from "@/lib/utils";
@@ -268,6 +269,8 @@ export default function PretragaPage() {
   const [view, setView] = useState({ y: new Date().getFullYear(), m: new Date().getMonth() });
 
   const [results, setResults] = useState<SlobodniSmestaj[] | null>(null);
+  const [otvoreniObracuni, setOtvoreniObracuni] = useState<Set<string>>(new Set());
+  const navigate = useNavigate();
   const [info, setInfo] = useState<{ od: string; do: string; mesto: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -408,10 +411,42 @@ export default function PretragaPage() {
     apiFetch<SlobodniSmestaj[]>(`/slobodne-sobe?${params.toString()}`)
       .then((r) => {
         setResults(r);
+        setOtvoreniObracuni(new Set());
         setInfo({ od, do: doDatum, mesto: selMesto.naziv });
       })
       .catch(() => toast.error("Greška pri pretrazi"))
       .finally(() => setLoading(false));
+  }
+
+  function toggleObracun(key: string) {
+    setOtvoreniObracuni((prev) => {
+      const n = new Set(prev);
+      if (n.has(key)) n.delete(key); else n.add(key);
+      return n;
+    });
+  }
+
+  /** Rezerviši → forma rezervacije sa prebačenim podacima (mesto, smeštaj, soba, termin, struktura, cena, popust, putnici, prevoz). */
+  function rezervisi(g: SlobodniSmestaj, s: SlobodnaSoba) {
+    const params = new URLSearchParams({
+      novi: "1",
+      datumod: info?.od || od,
+      datumdo: info?.do || doDatum,
+      soba: String(s.id),
+      smestaj: String(g.smestaj_id),
+      mesto: mestoId,
+      struktura: s.struktura || s.tip || "",
+      odrasli: String(odrasli),
+      deca: godineDeca.join(","),
+      prevoz: prevoz === "Sopstveni prevoz" ? "sopstveni" : "autobuski",
+    });
+    if (s.cena_osnovna != null) {
+      params.set("cena", String(s.cena_osnovna));
+      if (s.cena_snizena != null && s.cena_snizena < s.cena_osnovna) {
+        params.set("popust", String(Math.round((s.cena_osnovna - s.cena_snizena) * 100) / 100));
+      }
+    }
+    navigate(`/prodaja/rezervacije?${params.toString()}`);
   }
 
   return (
@@ -603,27 +638,50 @@ export default function PretragaPage() {
                     )}
                   </h3>
                   <div className="grid gap-2 grid-cols-1 md:grid-cols-2">
-                    {g.sobe.map((s) => (
+                    {g.sobe.map((s) => {
+                      const key = `${g.smestaj_id}:${s.id}`;
+                      const otvoren = otvoreniObracuni.has(key);
+                      const imaPopust = s.cena_osnovna != null && s.cena_snizena != null && s.cena_snizena < s.cena_osnovna;
+                      return (
                       <div
                         key={s.id}
                         className="rounded-lg border bg-card p-3 hover:border-primary/40 hover:shadow-md transition-all space-y-2"
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">
-                              Soba: {s.broj_sobe}
-                              {s.tip ? ` (${s.tip})` : ""}
-                              {s.opis ? ` ${s.opis}` : ""}
-                            </div>
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              {s.opis_dodatno && (
-                                <span className="text-xs text-muted-foreground truncate">{s.opis_dodatno}</span>
-                              )}
-                              {s.struktura && s.struktura !== s.tip && (
-                                <span className="shrink-0 rounded-full bg-violet-100 text-violet-700 border border-violet-200 text-[10px] font-medium px-1.5 py-px">
-                                  struktura {s.struktura}
-                                </span>
-                              )}
+                          <div className="flex items-start gap-1.5 min-w-0">
+                            {!!s.obracun?.length && (
+                              <button
+                                type="button"
+                                aria-label={otvoren ? `Sakrij obračun — soba ${s.broj_sobe}` : `Prikaži obračun — soba ${s.broj_sobe}`}
+                                aria-expanded={otvoren}
+                                title={otvoren ? "Sakrij obračun cene" : "Prikaži obračun cene"}
+                                onClick={() => toggleObracun(key)}
+                                className={cn(
+                                  "mt-0.5 shrink-0 inline-flex items-center justify-center w-5 h-5 rounded border text-xs font-bold transition-colors",
+                                  otvoren
+                                    ? "bg-blue-600 border-blue-600 text-white"
+                                    : "bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100",
+                                )}
+                              >
+                                {otvoren ? <Minus className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                              </button>
+                            )}
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium truncate">
+                                Soba: {s.broj_sobe}
+                                {s.tip ? ` (${s.tip})` : ""}
+                                {s.opis ? ` ${s.opis}` : ""}
+                              </div>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {s.opis_dodatno && (
+                                  <span className="text-xs text-muted-foreground truncate">{s.opis_dodatno}</span>
+                                )}
+                                {s.struktura && s.struktura !== s.tip && (
+                                  <span className="shrink-0 rounded-full bg-violet-100 text-violet-700 border border-violet-200 text-[10px] font-medium px-1.5 py-px">
+                                    struktura {s.struktura}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-3 shrink-0">
@@ -631,31 +689,31 @@ export default function PretragaPage() {
                               <span className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                                 Nema cene
                               </span>
-                            ) : s.cena_snizena != null && s.cena_snizena < s.cena_osnovna ? (
-                              <div className="relative rounded-xl bg-gradient-to-br from-emerald-50 to-teal-100 border border-emerald-200 px-3 py-1.5 text-right leading-tight shadow-sm">
-                                <span className="absolute -top-2 -left-2 inline-flex items-center gap-1 rounded-full bg-rose-500 text-white text-[10px] font-semibold px-2 py-0.5 shadow">
+                            ) : imaPopust ? (
+                              <div className="relative rounded-lg bg-emerald-50 border border-emerald-300 px-3 py-1.5 text-right leading-tight">
+                                <span className="absolute -top-2 -left-2 inline-flex items-center gap-1 rounded-full bg-red-600 text-white text-[10px] font-semibold px-2 py-0.5">
                                   <Tag className="w-3 h-3" />
-                                  −{Math.round(100 - (s.cena_snizena / s.cena_osnovna) * 100)}%
+                                  −{Math.round(100 - (s.cena_snizena! / s.cena_osnovna) * 100)}%
                                 </span>
-                                <div className="font-mono text-xs text-slate-500 line-through whitespace-nowrap">
+                                <div className="font-mono text-sm text-slate-500 line-through whitespace-nowrap">
                                   {fmtEur(s.cena_osnovna)} €
                                 </div>
                                 <div className="font-mono font-bold text-2xl text-emerald-700 whitespace-nowrap tracking-tight">
-                                  {fmtEur(s.cena_snizena)} €
+                                  {fmtEur(s.cena_snizena!)} €
                                 </div>
                               </div>
                             ) : (
-                              <div className="rounded-xl bg-gradient-to-br from-sky-50 to-indigo-100 border border-sky-200 px-3 py-2 text-right leading-tight shadow-sm">
-                                <div className="text-[10px] uppercase tracking-wide text-sky-700/70 font-medium">Cena</div>
-                                <div className="font-mono font-bold text-2xl text-indigo-700 whitespace-nowrap tracking-tight">
+                              <div className="rounded-lg bg-blue-50 border border-blue-300 px-3 py-2 text-right leading-tight">
+                                <div className="text-[10px] uppercase tracking-wide text-blue-700 font-medium">Cena</div>
+                                <div className="font-mono font-bold text-2xl text-blue-800 whitespace-nowrap tracking-tight">
                                   {fmtEur(s.cena_osnovna)} €
                                 </div>
                               </div>
                             )}
                             <Button
                               size="sm"
-                              className="h-10 gap-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-rose-500 text-white font-semibold shadow-md shadow-orange-500/30 hover:from-orange-600 hover:to-rose-600 hover:shadow-lg hover:-translate-y-0.5 transition-all border-0"
-                              onClick={() => toast.info("Rezervacija je u pripremi")}
+                              className="h-10 gap-1.5 rounded-lg bg-orange-500 text-white font-semibold hover:bg-orange-600 border-0"
+                              onClick={() => rezervisi(g, s)}
                             >
                               <CalendarCheck className="w-4 h-4" />
                               Rezerviši
@@ -667,16 +725,17 @@ export default function PretragaPage() {
                             {s.napomene.map((n, i) => <div key={i}>⚠ {n}</div>)}
                           </div>
                         )}
-                        {!!s.obracun?.length && (
+                        {otvoren && !!s.obracun?.length && (
                           <div
-                            className="rounded bg-muted/50 px-2 py-1.5 text-[11px] leading-snug text-muted-foreground font-mono space-y-0.5"
+                            className="rounded border border-blue-200 bg-blue-50/60 px-2 py-1.5 text-[11px] leading-snug text-slate-700 font-mono space-y-0.5"
                             data-testid="obracun"
                           >
                             {s.obracun.map((l, i) => <div key={i}>· {l}</div>)}
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))

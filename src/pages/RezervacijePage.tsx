@@ -618,15 +618,17 @@ export default function RezervacijePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ugovorIzLinka, referenceSpremne]);
 
-  // Prefill iz Grafika: klik na slobodan termin → /prodaja/rezervacije?novi=1&datumod=…&datumdo=…&soba=…&smestaj=…&mesto=…
+  // Prefill iz Grafika/Pretrage: /prodaja/rezervacije?novi=1&datumod=…&datumdo=…&soba=…&smestaj=…&mesto=…
+  // Pretraga dodaje i: struktura, cena (EUR, cela soba), popust (EUR iznos), odrasli, deca (godine), prevoz (autobuski|sopstveni)
   const noviIzLinka = searchParams.get("novi") === "1";
   const noviPrimljen = useRef<string | null>(null);
   useEffect(() => {
     if (!noviIzLinka) { noviPrimljen.current = null; return; }
     if (!referenceSpremne || ugovorIzLinka) return; // ugovor iz linka ima prednost
-    const sig = `${searchParams.get("datumod")}|${searchParams.get("datumdo")}|${searchParams.get("soba")}|${searchParams.get("smestaj")}|${searchParams.get("mesto")}`;
+    const sig = searchParams.toString();
     if (noviPrimljen.current === sig) return;
     noviPrimljen.current = sig;
+    const struktura = searchParams.get("struktura");
     setBoravak((prev) => ({
       ...prev,
       datumOd: datumZaInput(searchParams.get("datumod")),
@@ -634,7 +636,29 @@ export default function RezervacijePage() {
       smestaj: searchParams.get("smestaj") || prev.smestaj,
       soba: searchParams.get("soba") || prev.soba,
       mesto: searchParams.get("mesto") || prev.mesto,
+      struktura: struktura || prev.struktura,
     }));
+    const cena = searchParams.get("cena");
+    if (cena && Number.isFinite(Number(cena))) {
+      const popust = searchParams.get("popust");
+      setCene((prev) => ({
+        ...prev,
+        cenaSmestaj: cena,
+        kolSmestaj: "1",
+        popustSmestajPct: "",
+        popustSmestaj: popust && Number(popust) > 0 ? popust : "",
+      }));
+    }
+    const odrasli = Number(searchParams.get("odrasli") ?? "");
+    const deca = (searchParams.get("deca") ?? "").split(",").filter((x) => x.trim() !== "").length;
+    const prevozParam = searchParams.get("prevoz");
+    if (Number.isFinite(odrasli) && odrasli >= 1) {
+      const rt = prevozParam === "autobuski";
+      const sp = prevozParam === "sopstveni";
+      setNosilac((prev) => ({ ...prev, rt, sp, ow: false }));
+      const brojSaputnika = Math.max(0, odrasli + deca - 1);
+      setSaputnici(Array.from({ length: brojSaputnika }, () => ({ ...prazanSaputnik(`s${++uidRef.current}`), rt, sp })));
+    }
     // Primena samo pri promeni parametara linka, tek nakon referentnih podataka.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noviIzLinka, referenceSpremne, ugovorIzLinka, searchParams]);

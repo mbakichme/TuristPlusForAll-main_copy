@@ -179,13 +179,53 @@ def main():
             page.get_by_role("button", name="Pretraži", exact=True).click()
         proveri("UI šalje odrasli/deca/prevoz parametre", True)
         page.get_by_text("Slobodni kapaciteti").first.wait_for(timeout=30000)
-        page.locator("[data-testid=obracun]").first.wait_for(timeout=30000)
-        proveri("tekst obračuna prikazan kod svake sobe",
-                page.locator("[data-testid=obracun]").count() == sum(len(g["sobe"]) for g in rez))
+        plusevi = page.get_by_role("button", name=re.compile(r"^Prikaži obračun"))
+        plusevi.first.wait_for(timeout=30000)
+        proveri("obračun je sakriven dok se ne klikne +", page.locator("[data-testid=obracun]").count() == 0)
+        proveri("dugme + kod svake sobe sa obračunom",
+                plusevi.count() == sum(len(g["sobe"]) for g in rez))
+        plusevi.first.click()
+        page.locator("[data-testid=obracun]").first.wait_for(timeout=5000)
+        proveri("klik na + otvara obračun samo te sobe", page.locator("[data-testid=obracun]").count() == 1)
+        page.get_by_role("button", name=re.compile(r"^Sakrij obračun")).first.click()
+        proveri("klik na − sakriva obračun", page.locator("[data-testid=obracun]").count() == 0)
         if prva:
             def eur(n): return (str(int(n)) if float(n).is_integer() else f"{n:.2f}") + " €"
             proveri("snižena cena prikazana", page.get_by_text(eur(prva["cena_snizena"]), exact=True).count() >= 1)
             proveri("osnovna cena precrtana", page.locator(".line-through", has_text=eur(prva["cena_osnovna"])).count() >= 1)
+        # Rezerviši → forma rezervacije sa prebačenim podacima
+        page.get_by_role("button", name="Rezerviši").first.click()
+        page.wait_for_url(re.compile(r"/prodaja/rezervacije\?"), timeout=10000)
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(page.url).query)
+        prva_soba = rez[0]["sobe"][0]
+        proveri("link rezervacije nosi novi=1, soba, smestaj, mesto, datume",
+                qs.get("novi") == ["1"] and qs.get("soba") == [str(prva_soba["id"])]
+                and qs.get("smestaj") == [str(rez[0]["smestaj_id"])] and qs.get("mesto") == ["1"]
+                and qs.get("datumod") == [OD] and qs.get("datumdo") == [DO])
+        proveri("link nosi strukturu, cenu, popust, putnike i prevoz",
+                qs.get("struktura") == [prva_soba["struktura"]]
+                and float(qs["cena"][0]) == float(prva_soba["cena_osnovna"])
+                and (prva_soba.get("cena_snizena") is None or
+                     abs(float(qs["popust"][0]) - (prva_soba["cena_osnovna"] - prva_soba["cena_snizena"])) < 0.01)
+                and qs.get("odrasli") == ["2"] and qs.get("prevoz") == ["autobuski"])
+        page.get_by_placeholder("npr. 1/2 + 1/2").wait_for(timeout=15000)
+        page.wait_for_timeout(1500)
+        proveri("forma: struktura popunjena",
+                page.get_by_placeholder("npr. 1/2 + 1/2").input_value() == prva_soba["struktura"])
+        proveri("forma: 1 saputnik (2 odrasla)",
+                page.get_by_text("Saputnik 1", exact=True).count() == 1 and page.get_by_text("Saputnik 2", exact=True).count() == 0)
+        page.get_by_role("tab", name="Obračun").click()
+        cena_inp = page.locator("input[aria-label='Cena smeštaja (EUR)']")
+        cena_inp.wait_for(timeout=5000)
+        proveri("forma: cena smeštaja popunjena",
+                float(cena_inp.input_value()) == float(prva_soba["cena_osnovna"]))
+        proveri("forma: količina = 1", page.locator("input[aria-label='Količina za cenu smeštaja (EUR)']").input_value() == "1")
+        # Popust card je prvi ProcenatRed sa naslovom Smeštaj (Provizija je drugi) → .first
+        pop_inp = page.locator("input[aria-label='Smeštaj — iznos (EUR)']").first
+        ocekivani_popust = prva_soba["cena_osnovna"] - prva_soba["cena_snizena"]
+        proveri("forma: popust smeštaja popunjen (iznos EUR)",
+                abs(float(pop_inp.input_value() or 0) - ocekivani_popust) < 0.01)
         ctx.close(); browser.close()
 
     print()
