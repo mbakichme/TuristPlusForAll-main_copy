@@ -106,9 +106,7 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
-        {!jeProdaja && (
-          <NavItem to="/" icon={LayoutDashboard} label="Naslovna" collapsed={collapsed} onClick={onNavClick} />
-        )}
+        <NavItem to="/" icon={LayoutDashboard} label="Naslovna" collapsed={collapsed} onClick={onNavClick} />
 
         {/* Agencija section */}
         {!jeProdaja && (
@@ -463,9 +461,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
             </div>
             {/* Nav content — always expanded on mobile */}
             <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
-              {!jeProdaja && (
-                <NavItem to="/" icon={LayoutDashboard} label="Naslovna" collapsed={false} onClick={closeMobile} />
-              )}
+              <NavItem to="/" icon={LayoutDashboard} label="Naslovna" collapsed={false} onClick={closeMobile} />
 
               {!jeProdaja && (
               <>
