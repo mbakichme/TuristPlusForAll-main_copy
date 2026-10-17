@@ -368,3 +368,8 @@ export interface NotifikacijeResponse {
   rows: Notifikacija[];
   ukupno: number;
 }
+
+export interface NotifikacijeNoviji {
+  max_id: number;
+  rows: Notifikacija[];
+}

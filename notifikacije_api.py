@@ -80,6 +80,25 @@ def register_notifikacije(api, engine, get_current_user):
         ukupno = rows[0].ukupno if rows else 0
         return {"najnovija": redovi[0] if redovi else None, "rows": redovi, "ukupno": ukupno}
 
+    @api.get("/notifikacije/novije")
+    def novije(posle: int | None = None, _: dict = Depends(get_current_user)):
+        """Polling za realno vreme: vraća poruke sa id > posle.
+
+        Bez `posle` vraća samo najveći postojeći id (početna tačka klijenta).
+        """
+        with engine.connect() as conn:
+            max_id = conn.execute(text("SELECT COALESCE(MAX(id), 0) FROM notifikacije")).scalar()
+            if posle is None:
+                return {"max_id": max_id, "rows": []}
+            rows = conn.execute(text("""
+                SELECT id, poruka, autor_id, autor_ime, autor_username, created_at
+                FROM notifikacije
+                WHERE id > :posle
+                ORDER BY id ASC
+                LIMIT 50
+            """), {"posle": posle}).fetchall()
+        return {"max_id": max_id, "rows": [_red(r) for r in rows]}
+
     @api.post("/notifikacije", status_code=201)
     def dodaj(body: PorukaNova, current_user: dict = Depends(get_current_user)):
         uid = int(current_user["sub"])

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
 import Sidebar from "./components/Sidebar";
+import NotifikacijeLive from "./components/NotifikacijeLive";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import UserTypesPage from "./pages/UserTypesPage";
@@ -76,6 +77,7 @@ function ProtectedLayout() {
         <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={() => setMobileOpen(false)} />
       )}
       <Sidebar mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+      <NotifikacijeLive />
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile header with hamburger */}
         <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-card border-b border-border">

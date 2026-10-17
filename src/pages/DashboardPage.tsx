@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import type { UgovorRow, UgovoriResponse, Notifikacija, NotifikacijeResponse } from "../types";
 import { apiFetch } from "../lib/api";
+import { NOTIFIKACIJE_NOVE_EVENT } from "../components/NotifikacijeLive";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,20 @@ export default function DashboardPage() {
     apiFetch<NotifikacijeResponse>("/notifikacije?limit=10")
       .then((d) => setPoruke(d.rows))
       .catch(() => setPoruke([]));
+  }, []);
+
+  // Živo ažuriranje: nove poruke iz NotifikacijeLive (polling) ulaze na vrh liste
+  useEffect(() => {
+    const onNove = (e: Event) => {
+      const nove = (e as CustomEvent<Notifikacija[]>).detail;
+      setPoruke((prev) => {
+        const postojeci = new Set(prev.map((p) => p.id));
+        const dodaj = nove.filter((p) => !postojeci.has(p.id)).reverse();
+        return [...dodaj, ...prev].slice(0, 10);
+      });
+    };
+    window.addEventListener(NOTIFIKACIJE_NOVE_EVENT, onNove);
+    return () => window.removeEventListener(NOTIFIKACIJE_NOVE_EVENT, onNove);
   }, []);
 
   // Debounce — pretraga se pokreće nakon 3 uneta karaktera
