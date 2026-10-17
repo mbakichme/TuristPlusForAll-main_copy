@@ -24,6 +24,7 @@ from kurs_service import ensure_kurs_table, get_eur_rate
 from grafik_boje import kategorija_grafika
 from cenovnici_api import init_cenovnici, register_cenovnici
 from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
+from notifikacije_api import init_notifikacije, register_notifikacije
 
 # ─── Auth config ────────────────────────────────────────────────────────────
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "turisticka-agencija-super-secret-2024")
@@ -1260,10 +1261,12 @@ def create_app(static_dir: str) -> FastAPI:
     init_db(engine)
     init_cenovnici(engine)
     init_koeficijenti(engine)
+    init_notifikacije(engine)
 
     api = APIRouter()
     register_cenovnici(api, engine, get_current_user)
     register_koeficijenti(api, engine, get_current_user)
+    register_notifikacije(api, engine, get_current_user)
 
     # ── Health ──────────────────────────────────────────────────────────────
     @api.get("/health")

@@ -353,3 +353,18 @@ export interface ProdajaAranzmanaResp {
     ukupno_din: number | null;
   };
 }
+
+export interface Notifikacija {
+  id: number;
+  poruka: string;
+  autor_id: number | null;
+  autor_ime: string;
+  autor_username: string;
+  created_at: string | null;
+}
+
+export interface NotifikacijeResponse {
+  najnovija: Notifikacija | null;
+  rows: Notifikacija[];
+  ukupno: number;
+}

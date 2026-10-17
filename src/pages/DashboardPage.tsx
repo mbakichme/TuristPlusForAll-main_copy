@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import type { UgovorRow, UgovoriResponse } from "../types";
+import type { UgovorRow, UgovoriResponse, Notifikacija, NotifikacijeResponse } from "../types";
 import { apiFetch } from "../lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Globe, Users, ShieldCheck, Search, Loader2, FileText, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Search, Loader2, FileText, User, CalendarDays, CalendarCheck, Bell } from "lucide-react";
 
 // Backend prima max 200 po stranici — prikaz svih rezultata u skrolu
 const FETCH_LIMIT = 200;
@@ -19,6 +20,13 @@ export default function DashboardPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const reqId = useRef(0);
+  const [poruke, setPoruke] = useState<Notifikacija[]>([]);
+
+  useEffect(() => {
+    apiFetch<NotifikacijeResponse>("/notifikacije?limit=10")
+      .then((d) => setPoruke(d.rows))
+      .catch(() => setPoruke([]));
+  }, []);
 
   // Debounce — pretraga se pokreće nakon 3 uneta karaktera
   useEffect(() => {
@@ -97,7 +105,7 @@ export default function DashboardPage() {
                   {rows.map((r) => (
                     <button
                       key={r.kljuc}
-                      onClick={() => navigate(`/knjigovodstvo/ugovor?u=${encodeURIComponent(r.kljuc)}`)}
+                      onClick={() => navigate(`/prodaja/rezervacije?u=${encodeURIComponent(r.kljuc)}`)}
                       className="w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors flex items-center justify-between gap-3"
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -135,47 +143,70 @@ export default function DashboardPage() {
       </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Globe className="w-4 h-4" /> Sistem
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">Aktivan</p>
-            <p className="text-xs text-muted-foreground mt-1">Sve usluge rade normalno</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Users className="w-4 h-4" /> Tipovi korisnika
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">7</p>
-            <p className="text-xs text-muted-foreground mt-1">Konfigurisani tipovi</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4" /> Pristup
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{user?.is_superadmin ? "Super Admin" : "Ograničen"}</p>
-            <p className="text-xs text-muted-foreground mt-1">Nivo pristupa</p>
-          </CardContent>
-        </Card>
+        <button
+          type="button"
+          onClick={() => navigate("/prodaja/pretraga")}
+          className="text-left rounded-xl border border-blue-200 bg-blue-50 p-5 hover:bg-blue-100 transition-colors"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-600 text-white">
+            <Search className="w-5 h-5" />
+          </span>
+          <p className="mt-3 text-lg font-semibold text-blue-800">Pretraga</p>
+          <p className="text-xs text-blue-700/80 mt-1">Slobodne sobe i cene po terminu</p>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/agencija/grafik")}
+          className="text-left rounded-xl border border-emerald-200 bg-emerald-50 p-5 hover:bg-emerald-100 transition-colors"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white">
+            <CalendarDays className="w-5 h-5" />
+          </span>
+          <p className="mt-3 text-lg font-semibold text-emerald-800">Grafik</p>
+          <p className="text-xs text-emerald-700/80 mt-1">Zauzeće smeštaja po danima</p>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/prodaja/rezervacije")}
+          className="text-left rounded-xl border border-orange-200 bg-orange-50 p-5 hover:bg-orange-100 transition-colors"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-500 text-white">
+            <CalendarCheck className="w-5 h-5" />
+          </span>
+          <p className="mt-3 text-lg font-semibold text-orange-800">Rezervacije</p>
+          <p className="text-xs text-orange-700/80 mt-1">Nova rezervacija ili izmena postojeće</p>
+        </button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Brzi pristup</CardTitle>
+      <Card className="border-violet-200 bg-violet-50/50">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base flex items-center gap-2 text-violet-800">
+            <Bell className="w-4 h-4" /> Notifikacije
+          </CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate("/prodaja/notifikacije")}
+            className="border-violet-300 text-violet-700 hover:bg-violet-100 hover:text-violet-800"
+          >
+            Pročitaj sve
+          </Button>
         </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          Koristite navigaciju sa leve strane za upravljanje tipovima korisnika i nalozima.
+        <CardContent>
+          {poruke.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nema novih poruka.</p>
+          ) : (
+            <ul className="divide-y divide-violet-200">
+              {poruke.map((p) => (
+                <li key={p.id} className="py-2 first:pt-0 last:pb-0">
+                  <p className="text-sm text-foreground whitespace-pre-wrap break-words">{p.poruka}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {p.autor_ime || p.autor_username} · {new Date(p.created_at ?? "").toLocaleString("sr-RS", { dateStyle: "short", timeStyle: "short" })}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
         </CardContent>
       </Card>
     </div>

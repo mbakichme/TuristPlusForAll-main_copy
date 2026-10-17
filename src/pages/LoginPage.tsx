@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Globe, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -34,9 +35,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo/Brand */}
         <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center">
-            <Globe className="w-7 h-7 text-primary-foreground" />
-          </div>
+          <BrandMark className="w-12 h-12 rounded-xl" />
           <div>
             <h1 className="text-2xl font-bold text-foreground">TuristPlus</h1>
             <p className="text-xs text-muted-foreground">Admin Panel</p>

@@ -2,13 +2,14 @@ import { useState, useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "@/components/BrandMark";
 import { useAuth } from "../context/AuthContext";
 import {
-  Globe, LayoutDashboard, Users, UserPlus,
+  LayoutDashboard, Users, UserPlus,
   ChevronLeft, ChevronRight, ChevronDown, LogOut, ShieldCheck, Settings,
   Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus,
   FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage,
-  Eye, ShoppingBag, Banknote, Palette, Sigma
+  Eye, ShoppingBag, Banknote, Palette, Sigma, Bell
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -83,9 +84,7 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
     <>
       {/* Header */}
       <div className={cn("flex items-center gap-3 px-4 py-5 border-b border-border", collapsed && "justify-center px-2")}>
-        <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-          <Globe className="w-5 h-5 text-primary-foreground" />
-        </div>
+        <BrandMark className="w-9 h-9" />
         {!collapsed && (
           <div className="overflow-hidden">
             <p className="text-sm font-bold text-foreground leading-tight truncate">TuristPlus</p>
@@ -184,13 +183,14 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !prodajaOpen ? "max-h-0 opacity-0" : "max-h-48 opacity-100"
+              !collapsed && !prodajaOpen ? "max-h-0 opacity-0" : "max-h-64 opacity-100"
             )}
           >
             <NavItem to="/prodaja/pretraga" icon={Search} label="Pretraga" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/prodaja/rezervacije" icon={CalendarPlus} label="Rezervacije" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/grafik" icon={ChartGantt} label="Grafik" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/prodaja/notifikacije" icon={Bell} label="Notifikacije" collapsed={collapsed} onClick={onNavClick} />
           </div>
         </div>
 
@@ -451,9 +451,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
             {/* Close button */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-                  <Globe className="w-5 h-5 text-primary-foreground" />
-                </div>
+                <BrandMark className="w-9 h-9" />
                 <div className="overflow-hidden">
                   <p className="text-sm font-bold text-foreground leading-tight truncate">TuristPlus</p>
                   <p className="text-xs text-muted-foreground truncate">Admin Panel</p>
@@ -534,13 +532,14 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !prodajaOpen ? "max-h-0 opacity-0" : "max-h-48 opacity-100"
+                    !prodajaOpen ? "max-h-0 opacity-0" : "max-h-64 opacity-100"
                   )}
                 >
                   <NavItem to="/prodaja/pretraga" icon={Search} label="Pretraga" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/prodaja/rezervacije" icon={CalendarPlus} label="Rezervacije" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/grafik" icon={ChartGantt} label="Grafik" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/prodaja/notifikacije" icon={Bell} label="Notifikacije" collapsed={false} onClick={closeMobile} />
                 </div>
               </div>
 
