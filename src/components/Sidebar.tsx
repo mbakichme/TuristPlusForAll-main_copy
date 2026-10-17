@@ -349,7 +349,12 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
       {/* Footer / user */}
       <div className={cn("border-t border-border p-2", collapsed ? "flex flex-col items-center gap-1" : "space-y-1")}>
         {user && (
-          <div className={cn("flex items-center gap-2 px-2 py-2 rounded-lg bg-muted/50", collapsed && "justify-center w-full")}>
+          <NavLink
+            to="/profil"
+            onClick={onNavClick}
+            title="Moj profil"
+            className={({ isActive }) => cn("flex items-center gap-2 px-2 py-2 rounded-lg bg-muted/50 hover:bg-muted transition-colors", collapsed && "justify-center w-full", isActive && "ring-1 ring-primary/40")}
+          >
             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
               {user.is_superadmin
                 ? <ShieldCheck className="w-4 h-4 text-primary" />
@@ -362,7 +367,7 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
                 <p className="text-xs text-muted-foreground truncate">{user.is_superadmin ? "Super Admin" : user.user_type_name}</p>
               </div>
             )}
-          </div>
+          </NavLink>
         )}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -678,7 +683,12 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
             {/* Footer */}
             <div className="border-t border-border p-2 space-y-1">
               {user && (
-                <div className="flex items-center gap-2 px-2 py-2 rounded-lg bg-muted/50">
+                <NavLink
+                  to="/profil"
+                  onClick={() => setMobileOpen(false)}
+                  title="Moj profil"
+                  className={({ isActive }) => cn("flex items-center gap-2 px-2 py-2 rounded-lg bg-muted/50 hover:bg-muted transition-colors", isActive && "ring-1 ring-primary/40")}
+                >
                   <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
                     {user.is_superadmin
                       ? <ShieldCheck className="w-4 h-4 text-primary" />
@@ -689,7 +699,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                     <p className="text-xs font-semibold text-foreground truncate">{user.first_name} {user.last_name}</p>
                     <p className="text-xs text-muted-foreground truncate">{user.is_superadmin ? "Super Admin" : user.user_type_name}</p>
                   </div>
-                </div>
+                </NavLink>
               )}
               <Button
                 variant="ghost"

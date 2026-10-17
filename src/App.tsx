@@ -36,6 +36,7 @@ import PredracunFormPage from "./pages/PredracunFormPage";
 import PreuzimanjePage from "./pages/PreuzimanjePage";
 import PregledProdajaAranzmanaPage from "./pages/PregledProdajaAranzmanaPage";
 import NotifikacijePage from "./pages/NotifikacijePage";
+import ProfilPage from "./pages/ProfilPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import { Loader2, Menu } from "lucide-react";
 
@@ -51,7 +52,8 @@ function ProdajaRouteGuard({ children }: { children: ReactNode }) {
     p === "/" ||
     p.startsWith("/prodaja") ||
     p.startsWith("/knjigovodstvo/ugovor") ||
-    p.startsWith("/agencija/grafik");
+    p.startsWith("/agencija/grafik") ||
+    p === "/profil";
   if (dozvoljeno) return <>{children}</>;
   return <Navigate to="/prodaja/pretraga" replace />;
 }
@@ -90,6 +92,7 @@ function ProtectedLayout() {
           <ProdajaRouteGuard>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/profil" element={<ProfilPage />} />
             <Route path="/prodaja/pretraga" element={<PretragaPage />} />
             <Route path="/prodaja/rezervacije" element={<RezervacijePage />} />
             <Route path="/prodaja/notifikacije" element={<NotifikacijePage />} />
