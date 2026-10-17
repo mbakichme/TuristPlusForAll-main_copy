@@ -2128,6 +2128,11 @@ def create_app(static_dir: str) -> FastAPI:
 
     # ── Grafik (gant po sobama: periodi grupe + ugovori smeštaja) ──────────
     # ── Pretraga slobodnih kapaciteta ──────────────────────────────────────
+    # Maksimalan broj noćenja koji se NUDI u listi trajanja (krajevi lanaca
+    # preko tog broja se ne prikazuju); pretraga konkretnog boravka (od+do)
+    # nije ograničena — granica važi samo za ponuđene opcije
+    MAX_NOCENJA_OPCIJE = 30
+
     @api.get("/slobodne-sobe")
     def slobodne_sobe(request: Request, _: dict = Depends(get_current_user)):
         q = dict(request.query_params)
@@ -2204,7 +2209,7 @@ def create_app(static_dir: str) -> FastAPI:
 
         with engine.connect() as conn:
             if do:
-                # ── STARI MOD: konkretan termin (od+do) ──
+                # ── STARI MOD: konkretan boravak (od+do) ──
                 try:
                     d_do = datetime.strptime(do, "%d.%m.%Y").date()
                 except ValueError:
@@ -2216,8 +2221,9 @@ def create_app(static_dir: str) -> FastAPI:
             # ── NOVI MOD: pretraga po SVIM lancima perioda koji počinju na datum_od ──
             # (grupa_id filter ili obavezno mesto_id — opcije su krajevi LANACA
             # uzastopnih perioda grupa mesta: osnovni termin + produženi boravci,
-            # npr. 25.05–04.06 + 04.06–14.06 = opcija 25.05–14.06); vraća samo
-            # opcije SA slobodnim smeštajem, hronološki po datumu povratka
+            # npr. 25.05–04.06 + 04.06–14.06 = opcija 25.05–14.06); ograničeno na
+            # najviše MAX_NOCENJA_OPCIJE noćenja (duži lanci se ne nude); vraća
+            # samo opcije SA slobodnim smeštajem, hronološki po datumu povratka
             if grupa_id is None and mesto_id is None:
                 raise HTTPException(status_code=400,
                                     detail="datum_do ili mesto_id su obavezni")
@@ -2236,8 +2242,10 @@ def create_app(static_dir: str) -> FastAPI:
                     JOIN period_datum pd2
                       ON pd2.grupa_id = k.grupa_id AND pd2.datum_od = k.kraj
                 )
-                SELECT DISTINCT kraj FROM krajevi ORDER BY kraj
-            """), _params).fetchall()
+                SELECT DISTINCT kraj FROM krajevi
+                WHERE kraj - :od <= :max_noci
+                ORDER BY kraj
+            """), {**_params, "max_noci": MAX_NOCENJA_OPCIJE}).fetchall()
             out = []
             for t in krajevi:
                 smestaji = _smestaji_za_termin(conn, d_od, t.kraj)

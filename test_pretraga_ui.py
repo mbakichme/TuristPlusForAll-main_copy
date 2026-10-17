@@ -55,12 +55,14 @@ def main() -> None:
             for ddo in poceci.get(cur, []):
                 do_opcije_set.add(ddo)
                 front.append(ddo)
-    do_opcije = sorted(do_opcije_set, key=lambda s: _p(s))
-    print(f"[api] mesto={mesto['naziv']}, opcije trajanja (krajevi lanaca): {do_opcije}")
+    do_opcije = sorted(
+        (s for s in do_opcije_set if _noc(s) <= 30), key=lambda s: _p(s))
+    print(f"[api] mesto={mesto['naziv']}, opcije trajanja (krajevi lanaca, ≤30 noćenja): {do_opcije}")
 
-    # Svih 7 opcionih trajanja iz zahteva mora biti među opcijama
+    # Svih 8 opcija iz zahteva mora biti među opcijama; preko 30 noćenja SE NE NUDI
     ZAHTEVANI = ["30.05.2026", "01.06.2026", "04.06.2026", "08.06.2026",
-                 "14.06.2026", "15.06.2026", "24.06.2026"]
+                 "14.06.2026", "15.06.2026", "22.06.2026", "24.06.2026"]
+    PREKO_30 = ["29.06.2026", "04.07.2026", "06.07.2026", "02.10.2026"]
 
     # Rezultat za izabrani boravak — produženi lanac od 20 noćenja (14.06.)
     izabrani_do = next(d for d in do_opcije if _noc(d) == 20)
@@ -74,9 +76,12 @@ def main() -> None:
         okovi.append(uslov)
         print(f"{'PASS' if uslov else 'FAIL'} {naziv}" + (f" — {detalj}" if detalj and not uslov else ""))
 
-    proveri("svih 7 opcionih trajanja iz zahteva je među krajevima lanaca",
+    proveri("svih 8 opcija iz zahteva je među krajevima lanaca",
             all(z in do_opcije_set for z in ZAHTEVANI),
             f"nedostaju={[z for z in ZAHTEVANI if z not in do_opcije_set]}")
+    proveri("opcije preko 30 noćenja ne postoje (29.06/04.07/06.07/02.10)",
+            all(z not in do_opcije for z in PREKO_30),
+            f"viškovi={[z for z in PREKO_30 if z in do_opcije]}")
     proveri("opcije hronološki po datumu povratka", do_opcije == sorted(do_opcije, key=_p))
 
     with sync_playwright() as p:
@@ -100,13 +105,17 @@ def main() -> None:
         kal.first.locator("button:not([disabled])", has_text=re.compile(r"^25$")).first.click()
         page.wait_for_timeout(400)
 
-        # ── 3. Trajanje opcije u popoveru (svi krajevi lanaca) ──
+        # ── 3. Trajanje opcije u popoveru (svi krajevi lanaca, ≤30 noćenja) ──
         for do_s in do_opcije:
             noc = _noc(do_s)
             txt = f"{nocenja_label(noc)} | Povratak: {do_s}."
             dugme = kal.first.get_by_text(txt, exact=True)
             dugme.wait_for(timeout=5000)
             proveri(f"opcija „{txt}“ ponuđena", dugme.is_visible())
+        proveri("opcija „35 noćenja | Povratak: 29.06.2026.“ NIJE ponuđena",
+                kal.first.get_by_text("35 noćenja | Povratak: 29.06.2026.", exact=True).count() == 0)
+        proveri("opcija „40 noćenja | Povratak: 04.07.2026.“ NIJE ponuđena",
+                kal.first.get_by_text("40 noćenja | Povratak: 04.07.2026.", exact=True).count() == 0)
 
         # ── 4. biramo produženi lanac 20 noćenja (14.06.2026) i Pretraži ──
         kal.first.get_by_text(f"20 noćenja | Povratak: {izabrani_do}.", exact=True).click(force=True)

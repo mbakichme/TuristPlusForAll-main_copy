@@ -159,13 +159,34 @@ with eng.connect() as c:
             JOIN period_datum pd2 ON pd2.grupa_id = k.grupa_id AND pd2.datum_od = k.kraj
         )
         SELECT to_char(kraj, 'DD.MM.YYYY'), to_char(kraj, 'DD.MM.YYYY')
-        FROM krajevi ORDER BY kraj
+        FROM krajevi
+        WHERE kraj - to_date(:od, 'DD.MM.YYYY') <= 30
+        ORDER BY kraj
     """), {"od": OD}).fetchall()]
     DB_TERMINI = [(OD, do) for _, do in DB_TERMINI]
 
 proveri("multi-mod: svi vraćeni termini postoje u grupama mesta",
         {(t["datum_od"], t["datum_do"]) for t in REZ} <= set(DB_TERMINI),
         f"API={[(t['datum_od'], t['datum_do']) for t in REZ]} DB={DB_TERMINI}")
+
+with eng.connect() as c:
+    SVE_35 = [r[0] for r in c.execute(text("""
+        WITH RECURSIVE krajevi(grupa_id, kraj) AS (
+            SELECT pd.grupa_id, pd.datum_do
+            FROM period_datum pd
+            WHERE pd.grupa_id IN (SELECT grupa_id FROM mesto_grupa WHERE mesto_id = 1)
+              AND pd.datum_od = to_date(:od, 'DD.MM.YYYY')
+            UNION
+            SELECT k.grupa_id, pd2.datum_do
+            FROM krajevi k
+            JOIN period_datum pd2 ON pd2.grupa_id = k.grupa_id AND pd2.datum_od = k.kraj
+        )
+        SELECT DISTINCT to_char(kraj, 'DD.MM.YYYY') FROM krajevi
+        WHERE kraj - to_date(:od, 'DD.MM.YYYY') > 30
+    """), {"od": OD}).fetchall()]
+proveri("multi-mod: bez opcija preko 30 noćenja (limit liste)",
+        not ({t["datum_do"] for t in REZ} & set(SVE_35)),
+        f"preko 30 u API: {sorted({t['datum_do'] for t in REZ} & set(SVE_35))} ( postoje u bazi: {SVE_35[:5]}…)")
 
 def gt_smestaji(od, do):
     """Ground-truth (id, naziv) smeštaja sa slobodnom sobom za boravak od→do."""

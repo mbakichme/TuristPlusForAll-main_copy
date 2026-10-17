@@ -31,7 +31,10 @@ function pDate(s: string): Date {
 /** Krajevi LANACA perioda koji počinju na `od` — hronološki, bez duplikata.
  *  Lanac: period koji počinje na `od`, pa svaki sledeći period ISTIH grupa
  *  koji počinje tačno na kraju dosadašnjeg lanca (25.05–04.06 + 04.06–14.06
- *  = opcija 25.05–14.06, 20 noćenja). Svaki kraj lanca je jedna opcija trajanja. */
+ *  = opcija 25.05–14.06, 20 noćenja). Svaki kraj lanca je jedna opcija trajanja.
+ *  Granica: najviše MAX_NOCENJA_OPCIJE noćenja — duži lanci se ne nude. */
+const MAX_NOCENJA_OPCIJE = 30;
+
 function krajeviLanaca(grupe: PeriodGrupa[], grupaIds: number[], od: string): string[] {
   if (!od) return [];
   const krajevi = new Set<string>();
@@ -55,7 +58,10 @@ function krajeviLanaca(grupe: PeriodGrupa[], grupaIds: number[], od: string): st
       }
     }
   }
-  return [...krajevi].sort((a, b) => pDate(a).getTime() - pDate(b).getTime());
+  const ms = pDate(od).getTime();
+  return [...krajevi]
+    .filter((s) => Math.round((pDate(s).getTime() - ms) / 86400000) <= MAX_NOCENJA_OPCIJE)
+    .sort((a, b) => pDate(a).getTime() - pDate(b).getTime());
 }
 
 /** Ikona unutar Select polja */
