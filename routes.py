@@ -25,6 +25,11 @@ from grafik_boje import kategorija_grafika
 from cenovnici_api import init_cenovnici, register_cenovnici
 from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
 from notifikacije_api import init_notifikacije, register_notifikacije
+from rezervacija_log import (
+    OBLAST_OBRACUN, OBLAST_SAPUTNICI, OBLAST_UPLATA, OBLAST_REZERVACIJA,
+    diff_saputnike, init_rezervacija_log, log_user, norm_vrednost,
+    podeli_po_oblastima, register_rezervacija_log, zabelezi,
+)
 
 # ─── Auth config ────────────────────────────────────────────────────────────
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "turisticka-agencija-super-secret-2024")
@@ -1032,6 +1037,7 @@ class RezBoravakIn(BaseModel):
 
 class RezervacijaIn(BaseModel):
     tiprezervacije: str = ""
+    subagent: Optional[str] = None  # naziv iz tabele subagenti (aranzman.subagent)
     timelimit: Optional[str] = None  # ISO "yyyy-mm-ddTHH:MM:00" ili null
     nosilac: RezPutnikIn
     saputnici: list[RezPutnikIn] = []
@@ -1262,11 +1268,13 @@ def create_app(static_dir: str) -> FastAPI:
     init_cenovnici(engine)
     init_koeficijenti(engine)
     init_notifikacije(engine)
+    init_rezervacija_log(engine)
 
     api = APIRouter()
     register_cenovnici(api, engine, get_current_user)
     register_koeficijenti(api, engine, get_current_user)
     register_notifikacije(api, engine, get_current_user)
+    register_rezervacija_log(api, engine, get_current_user)
 
     # ── Health ──────────────────────────────────────────────────────────────
     @api.get("/health")
@@ -3411,6 +3419,13 @@ def create_app(static_dir: str) -> FastAPI:
                 )
             conn.execute(text("UPDATE uplate SET broj = :b WHERE kljuc = :k"),
                          {"b": broj_dokumenta, "k": new_kljuc})
+            zabelezi(conn, arow.kljuc, OBLAST_UPLATA, "uplata_dodata", user_id, obradio, [
+                {"polje": "Uplata (broj)", "stara": None, "nova": broj_dokumenta},
+                {"polje": "Platilac", "stara": None, "nova": ime},
+                {"polje": "Iznos (DIN)", "stara": None, "nova": norm_vrednost(din)},
+                {"polje": "Način plaćanja", "stara": None, "nova": nacin},
+                {"polje": "Svrha", "stara": None, "nova": svrha},
+            ])
 
         return {"kljuc": int(new_kljuc), "message": "Uplata je uspešno uneta"}
 
@@ -3530,7 +3545,8 @@ def create_app(static_dir: str) -> FastAPI:
 
             # ugovor — zaključaj red do kraja transakcije
             arow = conn.execute(text(
-                "SELECT id FROM aranzman WHERE kljuc = :k FOR UPDATE"
+                "SELECT id, naziv, mesto, destinacija, soba, apartman, datumod, datumdo, datumoddo "
+                "FROM aranzman WHERE kljuc = :k FOR UPDATE"
             ), {"k": kljuc}).fetchone()
             if not arow:
                 raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
@@ -3558,6 +3574,16 @@ def create_app(static_dir: str) -> FastAPI:
                     detail=f"Soba je zauzeta u izabranom periodu (ugovor {conflict.kljuc})",
                 )
 
+            novi_smestaj = {
+                "naziv": brow.smestaj_naziv,
+                "mesto": brow.mesto_naziv,
+                "destinacija": brow.destinacija_naziv or "",
+                "soba": brow.broj_sobe,
+                "apartman": brow.tip or "",
+                "datumod": datum_od,
+                "datumdo": datum_do,
+                "datumoddo": datumoddo,
+            }
             conn.execute(text("""
                 UPDATE aranzman SET
                     naziv = :naziv,
@@ -3569,17 +3595,10 @@ def create_app(static_dir: str) -> FastAPI:
                     datumdo = :datumdo,
                     datumoddo = :datumoddo
                 WHERE id = :id
-            """), {
-                "id": arow.id,
-                "naziv": brow.smestaj_naziv,
-                "mesto": brow.mesto_naziv,
-                "destinacija": brow.destinacija_naziv or "",
-                "soba": brow.broj_sobe,
-                "apartman": brow.tip or "",
-                "datumod": datum_od,
-                "datumdo": datum_do,
-                "datumoddo": datumoddo,
-            })
+            """), {"id": arow.id, **novi_smestaj})
+            uid, uime = log_user(conn, current_user)
+            zabelezi(conn, kljuc, OBLAST_REZERVACIJA, "smestaj_promenjen", uid, uime,
+                     podeli_po_oblastima(dict(arow._mapping), novi_smestaj).get(OBLAST_REZERVACIJA, []))
 
         return {"message": "Smeštaj je uspešno promenjen"}
 
@@ -3611,6 +3630,26 @@ def create_app(static_dir: str) -> FastAPI:
               AND split_part(kljuc, '/', 2) = :suf
         """), {"suf": suf}).scalar_one()
         return f"{int(max_broj) + 1}/{suf}"
+
+    def rez_saputnici_snimak(saputnici: list[RezPutnikIn]) -> list[dict]:
+        """Saputnici iz forme u obliku aranzman_dopuna kolona — za diff u logu."""
+        out = []
+        for s in saputnici:
+            if not s.ime.strip():
+                continue
+            out.append({
+                "saputnik": s.ime.strip()[:200],
+                "rodjen": _rez_datum(s.datumRodjenja, "Datum rođenja saputnika"),
+                "pasos": _rez_str(s.pasos, 50),
+                "prevozow": 1 if s.ow else 0,
+                "prevozrt": 1 if s.rt else 0,
+                "smer": _rez_str(s.smer, 50) if s.ow else None,
+                "adresa": (s.adresa or "").strip()[:300],
+                "email": (s.email or "").strip()[:300],
+                "telefon": (s.telefon or "").strip()[:300],
+                "ulazak": _rez_str(s.ulazak, 200),
+            })
+        return out
 
     def rez_saputnici_upisi(conn, aranzman_id: int, saputnici: list[RezPutnikIn]):
         """Saputnici iz forme → aranzman_dopuna (red po redu). uzrast/viza se ne
@@ -3759,6 +3798,7 @@ def create_app(static_dir: str) -> FastAPI:
             "prevozrt": 1 if rt else 0,
             "smer": _rez_str(n.smer, 50) if ow else None,
             "tiprezervacije": _rez_str(body.tiprezervacije, 200),
+            "subagent": (body.subagent or "").strip()[:300],
             "timelimit": _rez_ts(body.timelimit),
             "mesto": mesto_naziv,
             "naziv": smestaj_naziv,
@@ -3818,6 +3858,11 @@ def create_app(static_dir: str) -> FastAPI:
                         f"INSERT INTO aranzman ({', '.join(cols)}) VALUES ({ph}) RETURNING id"
                     ), vals).scalar_one()
                     rez_saputnici_upisi(conn, aid, body.saputnici)
+                    uid, uime = log_user(conn, current_user)
+                    for oblast, promene in podeli_po_oblastima({}, vals).items():
+                        zabelezi(conn, kljuc, oblast, "kreirana", uid, uime, promene)
+                    zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "kreirana", uid, uime,
+                             diff_saputnike([], rez_saputnici_snimak(body.saputnici)))
                 return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
             except IntegrityError:
                 # UNIQUE(kljuc) — import je ubacio isti broj u međuvremenu;
@@ -3837,10 +3882,24 @@ def create_app(static_dir: str) -> FastAPI:
             if not arow:
                 raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
             vals = rezervacija_vrednosti(conn, body, urow, exclude_kljuc=kljuc)
+            # stare vrednosti za diff (samo kolone koje forma šalje)
+            cols_sql = ", ".join(vals.keys())
+            stari = dict(conn.execute(text(
+                f"SELECT {cols_sql} FROM aranzman WHERE id = :id"
+            ), {"id": arow.id}).mappings().one())
+            stari_sap = [dict(r) for r in conn.execute(text(
+                "SELECT saputnik, rodjen, pasos, prevozow, prevozrt, smer, adresa, "
+                "email, telefon, ulazak FROM aranzman_dopuna WHERE aranzman_id = :i"
+            ), {"i": arow.id}).mappings().all()]
             sets = ", ".join(f"{k} = :{k}" for k in vals)
             conn.execute(text(f"UPDATE aranzman SET {sets} WHERE kljuc = :wk"),
                          {**vals, "wk": kljuc})
             rez_saputnici_upisi(conn, arow.id, body.saputnici)
+            uid, uime = log_user(conn, current_user)
+            for oblast, promene in podeli_po_oblastima(stari, vals).items():
+                zabelezi(conn, kljuc, oblast, "izmena", uid, uime, promene)
+            zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "izmena", uid, uime,
+                     diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici)))
         return {"ok": True, "kljuc": kljuc, "message": "Izmene su sačuvane"}
 
     def dodatne_contract(conn, kljuc: str, current_user: dict) -> int:
@@ -3880,6 +3939,12 @@ def create_app(static_dir: str) -> FastAPI:
                 RETURNING stavka_id, usluga, eur, din
             """), {"id": broj, **values}).mappings().one()
             result = dict(row)
+            uid, uime = log_user(conn, current_user)
+            zabelezi(conn, kljuc, OBLAST_OBRACUN, "usluga_dodata", uid, uime, [
+                {"polje": "Usluga", "stara": None, "nova": norm_vrednost(values["usluga"])},
+                {"polje": "EUR", "stara": None, "nova": norm_vrednost(values["eur"])},
+                {"polje": "DIN", "stara": None, "nova": norm_vrednost(values["din"])},
+            ])
         return result
 
     @api.patch("/ugovori/{kljuc:path}/dodatne/{stavka_id}")
@@ -3912,6 +3977,13 @@ def create_app(static_dir: str) -> FastAPI:
                     raise HTTPException(status_code=409, detail="Stavka je u međuvremenu izmenjena")
                 raise HTTPException(status_code=404, detail="Stavka nije pronađena")
             result = dict(row)
+            uid, uime = log_user(conn, current_user)
+            zabelezi(conn, kljuc, OBLAST_OBRACUN, "usluga_izmenjena", uid, uime, [
+                {"polje": lbl, "stara": norm_vrednost(getattr(body.original, p)),
+                 "nova": norm_vrednost(values[p])}
+                for p, lbl in (("usluga", "Usluga"), ("eur", "EUR"), ("din", "DIN"))
+                if norm_vrednost(getattr(body.original, p)) != norm_vrednost(values[p])
+            ])
         return result
 
     @api.delete("/ugovori/{kljuc:path}/dodatne/{stavka_id}")
@@ -3937,6 +4009,12 @@ def create_app(static_dir: str) -> FastAPI:
                 ), {"s": stavka_id, "i": broj}).first()
                 raise HTTPException(status_code=409 if exists else 404,
                     detail="Stavka je u međuvremenu izmenjena" if exists else "Stavka nije pronađena")
+            uid, uime = log_user(conn, current_user)
+            zabelezi(conn, kljuc, OBLAST_OBRACUN, "usluga_obrisana", uid, uime, [
+                {"polje": "Usluga", "stara": norm_vrednost(body.usluga), "nova": None},
+                {"polje": "EUR", "stara": norm_vrednost(body.eur), "nova": None},
+                {"polje": "DIN", "stara": norm_vrednost(body.din), "nova": None},
+            ])
         return {"message": "Dodatna stavka je obrisana"}
 
     @api.get("/ugovori/{kljuc:path}/pdf")
@@ -4045,6 +4123,7 @@ def create_app(static_dir: str) -> FastAPI:
             "dodatne": [dict(stavka) for stavka in dodatne],
             "smer": d.get("smer"),
             "tiprezervacije": d.get("tiprezervacije"),
+            "subagent": d.get("subagent") or "",
             "timelimit": d["timelimit"].strftime("%d.%m.%Y %H:%M") if d.get("timelimit") else None,
             "adresa": d.get("adresa"),
             "telefon": d.get("telefon"),

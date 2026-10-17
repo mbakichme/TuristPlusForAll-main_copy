@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, CreditCard, Download, FilePenLine, Loader2,
-  FilePlus, FileText, Info, Plus, Receipt, Search, Send, Ticket, Trash2, X,
+  FilePlus, FileText, History, Info, Plus, Receipt, Search, Send, Ticket, Trash2, X,
   Users, Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -389,12 +390,64 @@ function ProcenatRed({
 }
 
 // ── stranica ───────────────────────────────────────────────────────────────
+type IstorijaPromena = { polje: string; stara: string | null; nova: string | null };
+type IstorijaRed = {
+  id: number;
+  oblast: string;
+  dogadjaj: string;
+  user_ime: string | null;
+  created_at: string | null;
+  promene: IstorijaPromena[];
+};
+
+const ISTORIJA_OBLAST: Record<string, string> = {
+  rezervacija: "Rezervacija",
+  prevoz: "Prevoz",
+  obracun: "Obračun",
+  uplata: "Uplata",
+  saputnici: "Saputnici",
+};
+
+const ISTORIJA_DOGADJAJ: Record<string, string> = {
+  kreirana: "Kreirana",
+  izmena: "Izmena",
+  usluga_dodata: "Dodata usluga",
+  usluga_izmenjena: "Izmenjena usluga",
+  usluga_obrisana: "Obrisana usluga",
+  uplata_dodata: "Nova uplata",
+  smestaj_promenjen: "Promena smeštaja",
+};
+
+function istorijaVreme(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("sr-RS", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 export default function RezervacijePage() {
   const [searchParams] = useSearchParams();
   const ugovorIzLinka = searchParams.get("u");
   const linkUcitavanja = useRef<string | null>(null);
   const [referenceSpremne, setReferenceSpremne] = useState(false);
   const [tipRezervacije, setTipRezervacije] = useState(TIP_REZERVACIJE[0]);
+  const [subagent, setSubagent] = useState("");
+  const [subagentOtvoren, setSubagentOtvoren] = useState(false);
+  const [subagentPretraga, setSubagentPretraga] = useState("");
+  const [subagentOpcije, setSubagentOpcije] = useState<string[]>([]);
+
+  // pretraga subagenata iz tabele subagenti (po nazivu, mestu, osobi, telefonu…)
+  useEffect(() => {
+    if (!subagentOtvoren) return;
+    let aktivan = true;
+    const t = setTimeout(() => {
+      const params = new URLSearchParams({ search: subagentPretraga.trim(), page_size: "50", sort: "naziv", dir: "asc" });
+      apiFetch<{ rows: { naziv: string }[] }>(`/subagenti?${params}`)
+        .then((d) => { if (aktivan) setSubagentOpcije(d.rows.map((r) => r.naziv).filter((n) => n && n.trim())); })
+        .catch(() => { if (aktivan) setSubagentOpcije([]); });
+    }, 250);
+    return () => { aktivan = false; clearTimeout(t); };
+  }, [subagentOtvoren, subagentPretraga]);
   const [timeLimitDatum, setTimeLimitDatum] = useState<Date>();
   const [timeLimitSat, setTimeLimitSat] = useState("12");
   const [timeLimitOtvoren, setTimeLimitOtvoren] = useState(false);
@@ -466,6 +519,9 @@ export default function RezervacijePage() {
   const [uplateOsvezi, setUplateOsvezi] = useState(0);
   const [uplatePdfUcitava, setUplatePdfUcitava] = useState(false);
   const [priznanicaKljuc, setPriznanicaKljuc] = useState<number | null>(null);
+  const [istorija, setIstorija] = useState<IstorijaRed[] | null>(null);
+  const [istorijaUcitava, setIstorijaUcitava] = useState(false);
+  const [istorijaOtvorena, setIstorijaOtvorena] = useState(false);
   const uplateRequest = useRef(0);
 
   // Sačuvaj / Izmeni — snimanje u bazu i zaključavanje forme
@@ -567,6 +623,7 @@ export default function RezervacijePage() {
       const tip = TIP_REZERVACIJE.find((t) => naziv(t) === naziv(ucitanTip) || naziv(t.split(" ")[0]) === naziv(ucitanTip));
       if (ucitanTip && !tip) setTipOpcije((prev) => (prev.includes(ucitanTip) ? prev : [...prev, ucitanTip]));
       setTipRezervacije(tip ?? ucitanTip ?? TIP_REZERVACIJE[0]);
+      setSubagent((d.subagent ?? "").trim());
       // sačuvani nazivi van referentnih lista → fallback opcija "(sačuvano)" umesto praznog izbora
       setSmestajSacuvan(smestajId ? null : (d.naziv ?? "").trim() || null);
       setSobaSacuvana(sobaId ? null : (d.soba ?? "").trim() || null);
@@ -771,6 +828,22 @@ export default function RezervacijePage() {
       .finally(() => { if (request === uplateRequest.current) setUplateUcitavaju(false); });
   }, [izabraniUgovor, uplateOsvezi]);
 
+  // Istorija promena (rezervacija_log) izabranog ugovora; osvežava se pri izboru, snimanju i uplati
+  useEffect(() => {
+    if (!izabraniUgovor) {
+      setIstorija(null);
+      setIstorijaUcitava(false);
+      return;
+    }
+    let aktivno = true;
+    setIstorijaUcitava(true);
+    apiFetch<{ rows: IstorijaRed[] }>(`/rezervacije-istorija?kljuc=${encodeURIComponent(izabraniUgovor)}&limit=200`)
+      .then((data) => { if (aktivno) setIstorija(data.rows); })
+      .catch(() => { if (aktivno) { setIstorija(null); toast.error("Istorija nije učitana"); } })
+      .finally(() => { if (aktivno) setIstorijaUcitava(false); });
+    return () => { aktivno = false; };
+  }, [izabraniUgovor, ucitanUgovor, uplateOsvezi, dodatneStavke]);
+
   async function potvrdiUplatu() {
     if (uplataZakljucana.current) return;
     if (!izabraniUgovor) { toast.error("Prvo izaberite ugovor"); return; }
@@ -959,6 +1032,7 @@ export default function RezervacijePage() {
     };
     const payload = {
       tiprezervacije: tipRezervacije,
+      subagent: subagent.trim(),
       timelimit: tipRezervacije === "Predrezervacija" && timeLimitDatum
         ? `${datumToIso(timeLimitDatum)}T${timeLimitSat}:00:00`
         : null,
@@ -1191,7 +1265,7 @@ export default function RezervacijePage() {
               </CardTitle>
             </CardHeader>
             <CardContent className={KOMPAKT_CONTENT}>
-              <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-3">
+              <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-[minmax(0,1.5fr)_minmax(0,0.9fr)_minmax(0,1.2fr)_minmax(0,0.9fr)]">
                 <Fld label="Pretraga ugovora">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
@@ -1233,6 +1307,35 @@ export default function RezervacijePage() {
                       {tipOpcije.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                </Fld>
+                <Fld label="Subagent">
+                  <Popover open={subagentOtvoren} onOpenChange={(o) => { setSubagentOtvoren(o); if (!o) setSubagentPretraga(""); }}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" disabled={zakljucano} className={cn("w-full justify-start font-normal truncate", !subagent && "text-muted-foreground")}>
+                        {subagent || "Izaberite subagenta"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+                      <Command shouldFilter={false}>
+                        <CommandInput placeholder="Naziv, mesto, osoba…" value={subagentPretraga} onValueChange={setSubagentPretraga} />
+                        <CommandList>
+                          <CommandEmpty>Nema subagenta.</CommandEmpty>
+                          <CommandGroup>
+                            {subagent && (
+                              <CommandItem value="__ukloni__" onSelect={() => { setSubagent(""); setSubagentOtvoren(false); }}>
+                                <span className="text-muted-foreground">Bez subagenta</span>
+                              </CommandItem>
+                            )}
+                            {subagentOpcije.map((n) => (
+                              <CommandItem key={n} value={n} onSelect={() => { setSubagent(n); setSubagentOtvoren(false); }}>
+                                <span className={cn("truncate", n === subagent && "font-semibold")}>{n}</span>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </Fld>
                 <Fld label="Time limit">
                   <Popover open={timeLimitOtvoren} onOpenChange={setTimeLimitOtvoren}>
@@ -2177,6 +2280,58 @@ export default function RezervacijePage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {izabraniUgovor && (
+        <Card className="mt-4">
+          <CardHeader className="px-4 pt-3 pb-2">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 text-left"
+              aria-expanded={istorijaOtvorena}
+              onClick={() => setIstorijaOtvorena((v) => !v)}
+            >
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <History className="w-4 h-4 text-primary" />Istorija
+              </CardTitle>
+              {istorija && <Badge variant="secondary" className="ml-1">{istorija.length}</Badge>}
+              {istorijaUcitava && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+              <span className="ml-auto text-xs text-muted-foreground">{istorijaOtvorena ? "Sakrij" : "Prikaži"}</span>
+            </button>
+          </CardHeader>
+          {istorijaOtvorena && (
+            <CardContent className="px-4 pb-3">
+              {istorija && istorija.length > 0 ? (
+                <ul className="divide-y text-sm">
+                  {istorija.map((r) => (
+                    <li key={r.id} className="py-2 space-y-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="whitespace-nowrap text-xs text-muted-foreground">{istorijaVreme(r.created_at)}</span>
+                        <Badge variant="outline">{ISTORIJA_OBLAST[r.oblast] ?? r.oblast}</Badge>
+                        <span className="font-medium">{ISTORIJA_DOGADJAJ[r.dogadjaj] ?? r.dogadjaj}</span>
+                        <span className="text-xs text-muted-foreground">· {r.user_ime || "nepoznat korisnik"}</span>
+                      </div>
+                      {r.promene.length > 0 && (
+                        <ul className="space-y-0.5 pl-1 text-xs">
+                          {r.promene.map((p, i) => (
+                            <li key={i} className="flex flex-wrap gap-x-1">
+                              <span className="text-muted-foreground">{p.polje}:</span>
+                              <span className="line-through text-muted-foreground">{p.stara ?? "—"}</span>
+                              <span>→</span>
+                              <span className="font-medium">{p.nova ?? "—"}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : istorija ? (
+                <div className="py-4 text-center text-sm text-muted-foreground">Nema zabeleženih promena.</div>
+              ) : null}
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {/* Zajedničke akcije ostaju dostupne na svim tabovima. */}
       <div className="sticky bottom-0 z-10 -mx-6 flex flex-wrap gap-2 border-t bg-background/95 px-6 py-3 backdrop-blur">
