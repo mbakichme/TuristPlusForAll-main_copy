@@ -34,10 +34,11 @@ import PredracuniPage from "./pages/PredracuniPage";
 import PredracunFormPage from "./pages/PredracunFormPage";
 import PreuzimanjePage from "./pages/PreuzimanjePage";
 import PregledProdajaAranzmanaPage from "./pages/PregledProdajaAranzmanaPage";
+import NotifikacijePage from "./pages/NotifikacijePage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import { Loader2, Menu } from "lucide-react";
 
-// Tip "prodaja": dozvoljene su samo stranice sekcije Prodaja
+// Tip "prodaja": dozvoljene su naslovna i stranice sekcije Prodaja
 // (Pretraga, Rezervacije, Ugovori + detalj ugovora, Grafik)
 function ProdajaRouteGuard({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -46,6 +47,7 @@ function ProdajaRouteGuard({ children }: { children: ReactNode }) {
   if (!jeProdaja) return <>{children}</>;
   const p = location.pathname;
   const dozvoljeno =
+    p === "/" ||
     p.startsWith("/prodaja") ||
     p.startsWith("/knjigovodstvo/ugovor") ||
     p.startsWith("/agencija/grafik");
@@ -88,6 +90,7 @@ function ProtectedLayout() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/prodaja/pretraga" element={<PretragaPage />} />
             <Route path="/prodaja/rezervacije" element={<RezervacijePage />} />
+            <Route path="/prodaja/notifikacije" element={<NotifikacijePage />} />
             <Route path="/agencija/tip-ponude" element={<TipPonudePage />} />
             <Route path="/agencija/drzava" element={<DrzavaPage />} />
             <Route path="/agencija/destinacija" element={<DestinacijaPage />} />
@@ -151,7 +154,7 @@ export default function App() {
           <Route path="/login" element={<LoginRoute />} />
           <Route path="/*" element={<ProtectedLayout />} />
         </Routes>
-        <Toaster richColors position="top-right" />
+        <Toaster richColors closeButton position="top-right" />
       </AuthProvider>
     </BrowserRouter>
   );
