@@ -39,9 +39,9 @@ def q2(x):
 def ground_truth(conn, smestaj_id, soba, d_od, d_do, adl, chd, inf, sopstveni):
     """Očekivana (osnovna, snižena) za sobu ili None ako pravilo 2 ne prolazi."""
     danas = date.today()
-    koef = {r.struktura.strip(): Decimal(str(r.koeficijent)) for r in reversed(conn.execute(text(
+    koef = {r.struktura.strip(): Decimal(str(r.koeficijent or 0)) for r in reversed(conn.execute(text(
         "SELECT struktura, koeficijent FROM koeficijenti_prodaje WHERE adl=:a AND chd=:c AND inf=:i "
-        "AND koeficijent > 0 ORDER BY rucno DESC, id DESC"), {"a": adl, "c": chd, "i": inf}).fetchall())}
+        "ORDER BY (koeficijent > 0) DESC, rucno DESC, id DESC"), {"a": adl, "c": chd, "i": inf}).fetchall())}
     strukture = [soba["tip"].strip()] + [r.struktura.strip() for r in conn.execute(text(
         "SELECT struktura FROM soba_koeficijenti WHERE soba_id=:s"), {"s": soba["id"]})]
     kand = [(s, koef[s]) for s in strukture if s in koef]
@@ -86,6 +86,8 @@ def ground_truth(conn, smestaj_id, soba, d_od, d_do, adl, chd, inf, sopstveni):
         if tip_cene == "po_sobi":
             cena = osnova + (Decimal(0) if sopstveni else KARTA_ADL * adl + KARTA_CHD * chd)
         else:
+            if k <= 0:
+                continue  # po osobi bez unetog koeficijenta → nema cene
             cena = osnova * k
             if sopstveni and opc and opc["popust_sopstveni_prevoz"]:
                 cena -= Decimal(str(opc["popust_sopstveni_prevoz"])) * (adl + chd)

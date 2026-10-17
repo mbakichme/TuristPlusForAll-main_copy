@@ -2168,12 +2168,15 @@ def create_app(static_dir: str) -> FastAPI:
         broj_osoba = adl + chd
         koef_rows = conn.execute(text("""
             SELECT struktura, koeficijent FROM koeficijenti_prodaje
-            WHERE adl = :adl AND chd = :chd AND inf = :inf AND koeficijent > 0
-            ORDER BY rucno, id
+            WHERE adl = :adl AND chd = :chd AND inf = :inf
+            ORDER BY (koeficijent > 0) DESC, rucno, id
         """), {"adl": adl, "chd": chd, "inf": inf}).fetchall()
+        # Pravilo 2: dovoljno je da POSTOJI red sa tačnom strukturom putnika;
+        # koeficijent sme biti 0 (koristi se samo kod cene PO OSOBI — tada je
+        # 0 signal „nije unet" i soba dobija nema_cene sa razlogom).
         koef_map: dict = {}
         for r in koef_rows:
-            koef_map.setdefault((r.struktura or "").strip(), Decimal(str(r.koeficijent)))
+            koef_map.setdefault((r.struktura or "").strip(), Decimal(str(r.koeficijent or 0)))
 
         soba_ids = [s["id"] for g in smestaji for s in g["sobe"]]
         dodatni: dict = {}
@@ -2281,6 +2284,10 @@ def create_app(static_dir: str) -> FastAPI:
                     obr.append(f"Autobuski prevoz: karte {_fmt(KARTA_ADL)}×{adl} ADL + "
                                f"{_fmt(KARTA_CHD)}×{chd} CHD = {_fmt(karte)} € → {_fmt(cena)} €")
             else:
+                if koef <= 0:
+                    return {"nema_cene": True, "obracun": obr + [
+                        f"Tip cene: PO OSOBI, ali koeficijent za {adl} ADL / {chd} CHD / {inf} INF "
+                        f"(struktura {struktura}) je 0 — unesite ga na Koeficijentima prodaje"]}
                 cena = osnova * koef
                 obr.append(f"Tip cene: PO OSOBI → {_fmt(osnova)} × {koef} = {_fmt(cena)} €")
                 if sopstveni:
