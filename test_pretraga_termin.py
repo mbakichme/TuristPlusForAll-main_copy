@@ -93,6 +93,85 @@ proveri("termin bez definisanog perioda i dalje 200 (može biti prazan)", r.stat
 r = requests.get(f"{BASE}/slobodne-sobe", params={"mesto_id": 1, "datum_od": "22.06.2026", "datum_do": "29.06.2026"}, timeout=10)
 proveri("bez tokena → 401", r.status_code == 401, f"status={r.status_code}")
 
+# ── 5) NOVI MOD: pretraga po SVIM terminima koji počinju na datum_od ────────
+# Bez datum_do → za SVAKI termin (period u grupama mesta) koji počinje na
+# datum_od proverava se raspoloživost; vraćaju se SAMO termini sa slobodnim
+# smeštajem, hronološki po datumu povratka.
+OD = "25.05.2026"
+r = requests.get(f"{BASE}/slobodne-sobe", params={"mesto_id": 1, "datum_od": OD}, headers=H, timeout=60)
+proveri("multi-mod: 200", r.status_code == 200, f"status={r.status_code} {r.text[:200]}")
+REZ = r.json()
+proveri("multi-mod: lista termina", isinstance(REZ, list) and all(
+    {"datum_od", "datum_do", "nocenja", "smestaji"} == set(t.keys()) for t in REZ),
+    f"oblik={REZ[:1]}")
+
+with eng.connect() as c:
+    DB_TERMINI = [(r[0], r[1]) for r in c.execute(text("""
+        SELECT DISTINCT to_char(pd.datum_od, 'DD.MM.YYYY'), to_char(pd.datum_do, 'DD.MM.YYYY')
+        FROM period_datum pd
+        WHERE pd.grupa_id IN (SELECT grupa_id FROM mesto_grupa WHERE mesto_id = 1)
+          AND pd.datum_od = to_date(:od, 'DD.MM.YYYY')
+        ORDER BY 2
+    """), {"od": OD}).fetchall()]
+
+proveri("multi-mod: svi vraćeni termini postoje u grupama mesta",
+        {(t["datum_od"], t["datum_do"]) for t in REZ} <= set(DB_TERMINI),
+        f"API={[(t['datum_od'], t['datum_do']) for t in REZ]} DB={DB_TERMINI}")
+
+def gt_smestaji(od, do):
+    """Ground-truth (id, naziv) smeštaja sa slobodnom sobom za termin."""
+    with eng.connect() as c:
+        return {(r[0], r[1]) for r in c.execute(text("""
+            SELECT DISTINCT s.id, s.naziv FROM sobe b
+            JOIN smestaj s ON s.id = b.veza_id_smestaj
+            WHERE s.mesto = 1
+              AND EXISTS (SELECT 1 FROM period_datum pd
+                          WHERE pd.grupa_id = s.grupa_datuma
+                            AND pd.datum_od = to_date(:od, 'DD.MM.YYYY')
+                            AND pd.datum_do = to_date(:do, 'DD.MM.YYYY'))
+              AND NOT EXISTS (
+                  SELECT 1 FROM aranzman a
+                  WHERE a.naziv = s.naziv
+                    AND TRIM(COALESCE(a.soba, '')) = TRIM(b.broj_sobe)
+                    AND a.datumod IS NOT NULL AND a.datumdo IS NOT NULL
+                    AND a.datumod < to_date(:do, 'DD.MM.YYYY')
+                    AND a.datumdo > to_date(:od, 'DD.MM.YYYY'))
+        """), {"od": od, "do": do}).fetchall()}
+
+from datetime import datetime as _dt
+svi_gt = []
+for t in REZ:
+    d_od = _dt.strptime(t["datum_od"], "%d.%m.%Y").date()
+    d_do = _dt.strptime(t["datum_do"], "%d.%m.%Y").date()
+    proveri(f"multi-mod {t['datum_od']}–{t['datum_do']}: nocenja = razlika datuma",
+            t["nocenja"] == (d_do - d_od).days, f"nocenja={t['nocenja']}")
+    GT_T = gt_smestaji(t["datum_od"], t["datum_do"])
+    svi_gt.append(GT_T)
+    API_T = {(g["smestaj_id"], g["smestaj_naziv"]) for g in t["smestaji"]}
+    proveri(f"multi-mod {t['datum_od']}–{t['datum_do']}: smestaji == SQL ground-truth",
+            API_T == GT_T, f"API={sorted(API_T)} GT={sorted(GT_T)}")
+    proveri(f"multi-mod {t['datum_od']}–{t['datum_do']}: svaki smeštaj ima ≥1 sobu",
+            all(g["sobe"] for g in t["smestaji"]))
+
+proveri("multi-mod: nema termina bez slobodnog smeštaja (svi GT neprazni)",
+        all(len(g) > 0 for g in svi_gt))
+povracaji = [_dt.strptime(t["datum_do"], "%d.%m.%Y").date() for t in REZ]
+proveri("multi-mod: hronološki po datumu povratka", povracaji == sorted(povracaji), f"povracaji={povracaji}")
+proveri("multi-mod: podaci termina identični modu od+do (uzorak)",
+        all(
+            {(g["smestaj_id"], g["smestaj_naziv"]) for g in t["smestaji"]}
+            == api(1, t["datum_od"], t["datum_do"])
+            for t in REZ
+        ))
+
+# validacija multi-moda
+r = requests.get(f"{BASE}/slobodne-sobe", params={"datum_od": OD}, headers=H, timeout=30)
+proveri("multi-mod bez mesta/grupe → 400", r.status_code == 400, f"status={r.status_code}")
+r = requests.get(f"{BASE}/slobodne-sobe", params={"mesto_id": 1, "datum_od": "xxx"}, headers=H, timeout=30)
+proveri("multi-mod loš format datuma → 400", r.status_code == 400, f"status={r.status_code}")
+r = requests.get(f"{BASE}/slobodne-sobe", params={"mesto_id": 1, "datum_od": OD}, timeout=10)
+proveri("multi-mod bez tokena → 401", r.status_code == 401, f"status={r.status_code}")
+
 print()
 print(f"[{'PASS' if all(okovi) else 'FAIL'}] slobodne-sobe grupa-termin vezivanje: {sum(okovi)}/{len(okovi)}")
 sys.exit(0 if all(okovi) else 1)

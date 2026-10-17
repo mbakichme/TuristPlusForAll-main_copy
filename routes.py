@@ -2135,18 +2135,22 @@ def create_app(static_dir: str) -> FastAPI:
         do = (q.get("datum_do") or "").strip()
         grupa_raw = (q.get("grupa_id") or "").strip()
         mesto_raw = (q.get("mesto_id") or "").strip()
-        if not od or not do:
-            raise HTTPException(status_code=400, detail="datum_od i datum_do su obavezni")
+        if not od:
+            raise HTTPException(status_code=400, detail="datum_od je obavezan")
         try:
             d_od = datetime.strptime(od, "%d.%m.%Y").date()
-            d_do = datetime.strptime(do, "%d.%m.%Y").date()
         except ValueError:
             raise HTTPException(status_code=400, detail="Datumi moraju biti u formatu DD.MM.YYYY")
-        if d_do <= d_od:
-            raise HTTPException(status_code=400, detail="Datum do mora biti posle datuma od")
         grupa_id = int(grupa_raw) if grupa_raw.isdigit() else None
         mesto_id = int(mesto_raw) if mesto_raw.isdigit() else None
-        with engine.connect() as conn:
+
+        def _smestaji_za_termin(conn, d_od, d_do):
+            """Slobodni smeštaji (sa sobama) za konkretan termin (od+do).
+
+            Smeštaj prolazi SAMO ako njegova grupa termina (smestaj.grupa_datuma)
+            definiše TAČAN termin — EXIST period_datum sa istim datum_od/datum_do;
+            soba prolazi ako nema aranzman koji preklapa termin (po nazivu vile).
+            """
             rows = conn.execute(text("""
                 SELECT s.id AS smestaj_id, s.naziv AS smestaj_naziv,
                        b.id, TRIM(b.broj_sobe) AS broj_sobe, b.tip, b.opis, b.opis_dodatno
@@ -2159,29 +2163,75 @@ def create_app(static_dir: str) -> FastAPI:
                   AND EXISTS (
                       SELECT 1 FROM period_datum pd
                       WHERE pd.grupa_id = s.grupa_datuma
-                        AND pd.datum_od = to_date(:od, 'DD.MM.YYYY')
-                        AND pd.datum_do = to_date(:do, 'DD.MM.YYYY')
+                        AND pd.datum_od = :dod
+                        AND pd.datum_do = :ddo
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM aranzman a
                       WHERE a.naziv = s.naziv
                         AND TRIM(COALESCE(a.soba, '')) = TRIM(b.broj_sobe)
                         AND a.datumod IS NOT NULL AND a.datumdo IS NOT NULL
-                        AND a.datumod < to_date(:do, 'DD.MM.YYYY')
-                        AND a.datumdo > to_date(:od, 'DD.MM.YYYY')
+                        AND a.datumod < :ddo
+                        AND a.datumdo > :dod
                   )
                 ORDER BY s.naziv, b.broj_sobe
-            """), {"g": grupa_id, "m": mesto_id, "od": od, "do": do}).fetchall()
-        grouped: dict = {}
-        for r in rows:
-            g = grouped.setdefault(r.smestaj_id, {
-                "smestaj_id": r.smestaj_id, "smestaj_naziv": r.smestaj_naziv, "sobe": [],
-            })
-            g["sobe"].append({
-                "id": r.id, "broj_sobe": r.broj_sobe, "tip": r.tip or "",
-                "opis": r.opis or "", "opis_dodatno": r.opis_dodatno or "",
-            })
-        return list(grouped.values())
+            """), {"g": grupa_id, "m": mesto_id, "dod": d_od, "ddo": d_do}).fetchall()
+            grouped: dict = {}
+            for r in rows:
+                g = grouped.setdefault(r.smestaj_id, {
+                    "smestaj_id": r.smestaj_id, "smestaj_naziv": r.smestaj_naziv, "sobe": [],
+                })
+                g["sobe"].append({
+                    "id": r.id, "broj_sobe": r.broj_sobe, "tip": r.tip or "",
+                    "opis": r.opis or "", "opis_dodatno": r.opis_dodatno or "",
+                })
+            return list(grouped.values())
+
+        with engine.connect() as conn:
+            if do:
+                # ── STARI MOD: konkretan termin (od+do) ──
+                try:
+                    d_do = datetime.strptime(do, "%d.%m.%Y").date()
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Datumi moraju biti u formatu DD.MM.YYYY")
+                if d_do <= d_od:
+                    raise HTTPException(status_code=400, detail="Datum do mora biti posle datuma od")
+                return _smestaji_za_termin(conn, d_od, d_do)
+
+            # ── NOVI MOD: pretraga po SVIM terminima koji počinju na datum_od ──
+            # (grupa_id filter ili obavezno mesto_id — termini se čitaju iz
+            # grupa perioda vezanih za mesto); vraća samo termine SA slobodnim
+            # smeštajem, hronološki po datumu povratka
+            if grupa_id is None and mesto_id is None:
+                raise HTTPException(status_code=400,
+                                    detail="datum_do ili mesto_id su obavezni")
+            if grupa_id is not None:
+                termini = conn.execute(text("""
+                    SELECT DISTINCT pd.datum_od, pd.datum_do
+                    FROM period_datum pd
+                    WHERE pd.grupa_id = :g AND pd.datum_od = :od
+                    ORDER BY pd.datum_do
+                """), {"g": grupa_id, "od": d_od}).fetchall()
+            else:
+                termini = conn.execute(text("""
+                    SELECT DISTINCT pd.datum_od, pd.datum_do
+                    FROM period_datum pd
+                    WHERE pd.grupa_id IN (SELECT grupa_id FROM mesto_grupa WHERE mesto_id = :m)
+                      AND pd.datum_od = :od
+                    ORDER BY pd.datum_do
+                """), {"m": mesto_id, "od": d_od}).fetchall()
+            out = []
+            for t in termini:
+                smestaji = _smestaji_za_termin(conn, t.datum_od, t.datum_do)
+                if not smestaji:
+                    continue  # ponudi samo termine sa raspoloživim smeštajem
+                out.append({
+                    "datum_od": t.datum_od.strftime("%d.%m.%Y"),
+                    "datum_do": t.datum_do.strftime("%d.%m.%Y"),
+                    "nocenja": (t.datum_do - t.datum_od).days,
+                    "smestaji": smestaji,
+                })
+            return out
 
     @api.get("/grafik")
     def grafik_data(request: Request, _: dict = Depends(get_current_user)):
