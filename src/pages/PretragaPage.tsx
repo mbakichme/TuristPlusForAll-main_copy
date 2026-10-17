@@ -21,10 +21,6 @@ interface SlobodnaSoba {
 interface SlobodniSmestaj {
   smestaj_id: number; smestaj_naziv: string; sobe: SlobodnaSoba[];
 }
-/** Jedan termin (od Grupe termina) sa raspoloživim smeštajem */
-interface SlobodanTermin {
-  datum_od: string; datum_do: string; nocenja: number; smestaji: SlobodniSmestaj[];
-}
 
 /** DD.MM.YYYY → Date */
 function pDate(s: string): Date {
@@ -173,6 +169,37 @@ function MiniKalendar({ view, onView, odSet, selectedKey, onPick }: {
   );
 }
 
+/** Opcije trajanja: periodi koji počinju na izabrani datum (broj noćenja + datum povratka) */
+function TrajanjeOpcije({ od, doDatum, doOpcije, onIzaberi }: {
+  od: string; doDatum: string;
+  doOpcije: Array<{ id: number; datum_do: string }>;
+  onIzaberi: (datumDo: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Trajanje putovanja
+      </div>
+      {doOpcije.map((p) => {
+        const noc = Math.round((pDate(p.datum_do).getTime() - pDate(od).getTime()) / 86400000);
+        return (
+          <button
+            key={p.id} type="button" onClick={() => onIzaberi(p.datum_do)}
+            className={cn(
+              "w-full text-left rounded-md px-3 py-2 text-sm font-semibold transition-colors",
+              doDatum === p.datum_do
+                ? "bg-primary text-primary-foreground"
+                : "bg-primary/10 text-primary hover:bg-primary/20"
+            )}
+          >
+            {nocenjaLabel(noc)} | Povratak: {p.datum_do}.
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function PretragaPage() {
   const [mesta, setMesta] = useState<Mesto[]>([]);
   const [grupe, setGrupe] = useState<PeriodGrupa[]>([]);
@@ -180,6 +207,7 @@ export default function PretragaPage() {
 
   const [mestoId, setMestoId] = useState("");
   const [od, setOd] = useState("");
+  const [doDatum, setDoDatum] = useState("");
   const [prevoz, setPrevoz] = useState("Autobuski prevoz");
   const [odrasli, setOdrasli] = useState(2);
   const [deca, setDeca] = useState(0);
@@ -189,8 +217,8 @@ export default function PretragaPage() {
   const [kalendarOpen, setKalendarOpen] = useState(false);
   const [view, setView] = useState({ y: new Date().getFullYear(), m: new Date().getMonth() });
 
-  const [results, setResults] = useState<SlobodanTermin[] | null>(null);
-  const [info, setInfo] = useState<{ od: string; mesto: string } | null>(null);
+  const [results, setResults] = useState<SlobodniSmestaj[] | null>(null);
+  const [info, setInfo] = useState<{ od: string; do: string; mesto: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -221,8 +249,15 @@ export default function PretragaPage() {
     return sve.sort((a, b) => pDate(a.datum_od).getTime() - pDate(b.datum_od).getTime());
   }, [selMesto, grupe]);
 
-  // Datum do: više se NE bira — pretraga ide na SVE termine koji počinju na
-  // izabrani "datum od" (grupe perioda mesta); rezultati su grupisani po terminu
+  // Datum do: SAMO periodi koji počinju na izabrani "datum od" — par od/do uvek
+  // dolazi iz ISTOG zapisa periode (nikad ukrštanje početaka i krajeva različitih
+  // grupa); hronološki po datumu povratka (kraće putovanje prvo)
+  const doOpcije = useMemo(() => {
+    if (!od) return [];
+    return periodi
+      .filter((p) => p.datum_od === od)
+      .sort((a, b) => pDate(a.datum_do).getTime() - pDate(b.datum_do).getTime());
+  }, [periodi, od]);
 
   // Počeci perioda koji su klikabilni u kalendaru
   const odSet = useMemo(
@@ -237,6 +272,9 @@ export default function PretragaPage() {
 
   function onOdChange(v: string) {
     setOd(v);
+    // resetuj "datum do" ako više nije među dozvoljenim opcijama
+    const opcije = periodi.filter((p) => p.datum_od === v);
+    if (!doDatum || !opcije.some((p) => p.datum_do === doDatum)) setDoDatum("");
     resetRezultate();
   }
 
@@ -251,15 +289,19 @@ export default function PretragaPage() {
   function izaberiDan(d: Date) {
     const key = `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
     const p = periodi.find((x) => x.datum_od === key);
-    if (p) {
-      onOdChange(p.datum_od);
-      setKalendarOpen(false); // nema više izbora trajanja — tražimo sve termine odmah
-    }
+    if (p) onOdChange(p.datum_od);
+  }
+
+  function izaberiTrajanje(datumDo: string) {
+    setDoDatum(datumDo);
+    resetRezultate();
+    setKalendarOpen(false);
   }
 
   function onMestoChange(v: string) {
     setMestoId(v);
     setOd("");
+    setDoDatum("");
     resetRezultate();
   }
 
@@ -296,20 +338,23 @@ export default function PretragaPage() {
     resetRezultate();
   }
 
-  const mozePretraga = !!(mestoId && od && prevoz && selMesto?.grupe?.length);
+  const mozePretraga = !!(mestoId && od && doDatum && prevoz && selMesto?.grupe?.length)
+    && pDate(doDatum) > pDate(od);
+
+  const nocDatuma = od && doDatum ? Math.round((pDate(doDatum).getTime() - pDate(od).getTime()) / 86400000) : 0;
 
   function pretrazi() {
     if (!mozePretraga || !selMesto?.grupe?.length) {
-      toast.error("Popunite mesto, tip prevoza i datum polaska");
+      toast.error("Popunite mesto, tip prevoza i period (datum do posle datuma od)");
       return;
     }
     setLoading(true);
-    apiFetch<SlobodanTermin[]>(
-      `/slobodne-sobe?mesto_id=${mestoId}&datum_od=${encodeURIComponent(od)}`
+    apiFetch<SlobodniSmestaj[]>(
+      `/slobodne-sobe?mesto_id=${mestoId}&datum_od=${encodeURIComponent(od)}&datum_do=${encodeURIComponent(doDatum)}`
     )
       .then((r) => {
         setResults(r);
-        setInfo({ od, mesto: selMesto.naziv });
+        setInfo({ od, do: doDatum, mesto: selMesto.naziv });
       })
       .catch(() => toast.error("Greška pri pretrazi"))
       .finally(() => setLoading(false));
@@ -331,7 +376,7 @@ export default function PretragaPage() {
             <BedDouble className="w-5 h-5 text-primary" />
             Pretraga slobodnih kapaciteta
           </CardTitle>
-          <CardDescription>Izaberite mesto, datum polaska i podatke o putnicima — pretražuju se svi termini koji počinju na izabrani datum</CardDescription>
+          <CardDescription>Izaberite mesto, period boravka i podatke o putnicima</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="grid gap-4 grid-cols-1 md:grid-cols-4">
@@ -378,7 +423,7 @@ export default function PretragaPage() {
                       disabled={!mestoId || periodi.length === 0}
                     >
                       {od
-                        ? <span>{od}</span>
+                        ? <span>{od}{doDatum ? <span className="text-primary font-medium"> ({nocenjaLabel(nocDatuma)})</span> : ""}</span>
                         : <span className="text-muted-foreground">Izaberite datum polaska</span>}
                     </Button>
                   </PopoverTrigger>
@@ -390,6 +435,16 @@ export default function PretragaPage() {
                       selectedKey={od ? keyOf(pDate(od)) : null}
                       onPick={izaberiDan}
                     />
+                    {od && doOpcije.length > 0 && (
+                      <div className="border-t pt-3">
+                        <TrajanjeOpcije
+                          od={od}
+                          doDatum={doDatum}
+                          doOpcije={doOpcije}
+                          onIzaberi={izaberiTrajanje}
+                        />
+                      </div>
+                    )}
                   </PopoverContent>
                 </Popover>
               </div>
@@ -462,7 +517,7 @@ export default function PretragaPage() {
         </CardContent>
       </Card>
 
-      {/* Rezultati pretrage — grupisani po terminu */}
+      {/* Rezultati pretrage */}
       {results && info && (
         <Card>
           <CardHeader>
@@ -471,68 +526,54 @@ export default function PretragaPage() {
               Slobodni kapaciteti
             </CardTitle>
             <CardDescription>
-              Polazak {info.od} · {info.mesto} · Odrasli: {odrasli}
+              Period {info.od} – {info.do} · {info.mesto} · Odrasli: {odrasli}
               {deca > 0 ? ` · Deca: ${deca}` : ""}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             {results.length === 0 ? (
               <div className="py-10 text-center text-sm text-muted-foreground">
-                Nema slobodnih kapaciteta ni za jedan termin sa izabranim polaskom.
+                Nema slobodnih kapaciteta za izabrani period.
               </div>
             ) : (
-              results.map((t) => (
-                <div key={`${t.datum_od}-${t.datum_do}`} className="space-y-2">
-                  {/* Naslov termina */}
-                  <div className="flex items-center gap-2 rounded-md bg-primary/10 px-3 py-2">
-                    <CalendarDays className="w-4 h-4 text-primary shrink-0" />
-                    <span className="text-sm font-bold text-primary">
-                      {t.datum_od} – {t.datum_do}
-                    </span>
-                    <span className="text-xs font-medium text-primary/80">
-                      ({nocenjaLabel(t.nocenja)})
-                    </span>
-                  </div>
-                  {t.smestaji.map((g) => (
-                    <div key={`${t.datum_od}-${t.datum_do}-${g.smestaj_id}`} className="space-y-2 pl-3">
-                      <h3 className="text-sm font-semibold flex items-center gap-2">
-                        <Hotel className="w-4 h-4 text-primary" />
-                        {g.smestaj_naziv}
-                        <span className="text-xs font-normal text-muted-foreground">({g.sobe.length} slobodno)</span>
-                      </h3>
-                      <div className="grid gap-2 grid-cols-1 md:grid-cols-3">
-                        {g.sobe.map((s) => (
-                          <div
-                            key={s.id}
-                            className="flex items-center justify-between gap-3 rounded-md border p-3 hover:bg-muted/40 transition-colors"
-                          >
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium truncate">
-                                Soba: {s.broj_sobe}
-                                {s.tip ? ` (${s.tip})` : ""}
-                                {s.opis ? ` ${s.opis}` : ""}
-                              </div>
-                              {s.opis_dodatno && (
-                                <div className="text-xs text-muted-foreground truncate">{s.opis_dodatno}</div>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-3 shrink-0">
-                              <span className="font-mono font-bold text-xl text-primary whitespace-nowrap">
-                                {CENA_PLACEHOLDER} €
-                              </span>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => toast.info("Rezervacija je u pripremi")}
-                              >
-                                Rezerviši
-                              </Button>
-                            </div>
+              results.map((g) => (
+                <div key={g.smestaj_id} className="space-y-2">
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Hotel className="w-4 h-4 text-primary" />
+                    {g.smestaj_naziv}
+                    <span className="text-xs font-normal text-muted-foreground">({g.sobe.length} slobodno)</span>
+                  </h3>
+                  <div className="grid gap-2 grid-cols-1 md:grid-cols-3">
+                    {g.sobe.map((s) => (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between gap-3 rounded-md border p-3 hover:bg-muted/40 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium truncate">
+                            Soba: {s.broj_sobe}
+                            {s.tip ? ` (${s.tip})` : ""}
+                            {s.opis ? ` ${s.opis}` : ""}
                           </div>
-                        ))}
+                          {s.opis_dodatno && (
+                            <div className="text-xs text-muted-foreground truncate">{s.opis_dodatno}</div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="font-mono font-bold text-xl text-primary whitespace-nowrap">
+                            {CENA_PLACEHOLDER} €
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => toast.info("Rezervacija je u pripremi")}
+                          >
+                            Rezerviši
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               ))
             )}
