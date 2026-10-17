@@ -1,27 +1,27 @@
 [
   {
-    "content": "[backend] cenovnici_api.py: -sve PUT/GET piše (soba, period) za sve sobe × sve periode; per-room endpointi = soba × svi termini; helper _periodi_ids_u_cenovniku",
+    "content": "[pretraga-termini] Backend: multi-termin mod u /slobodne-sobe (bez datum_do → svi termini od datum_od, raspoloživost po terminu)",
     "id": "1",
     "status": "completed"
   },
   {
-    "content": "[frontend] CenovniciPage.tsx: dijalog iz liste = masovni mod (bez selektora sobe), toastovi sa brojem zapisa, uklanjanje po-sobi grana",
+    "content": "[pretraga-termini] Frontend: PretragaPage — ukloniti izbor trajanja, rezultati grupisani po terminu",
     "id": "2",
     "status": "completed"
   },
   {
-    "content": "[build] bun run build (tsc -b && vite build)",
+    "content": "[pretraga-termini] bun run build",
     "id": "3",
     "status": "completed"
   },
   {
-    "content": "[tests] ažuriraj test_cenovnici_opcije_masovno/popusti/termin/celija + pokreni sve",
+    "content": "[pretraga-termini] Test: proširiti test_pretraga_termin.py (multi-mod vs ground truth) + UI smoke",
     "id": "4",
-    "status": "in_progress"
+    "status": "completed"
   },
   {
-    "content": "[context] .workshop/context.md + commit",
+    "content": "[pretraga-termini] Context update + commit",
     "id": "5",
-    "status": "pending"
+    "status": "completed"
   }
 ]
