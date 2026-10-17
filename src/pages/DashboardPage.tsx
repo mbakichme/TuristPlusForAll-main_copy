@@ -7,10 +7,34 @@ import { NOTIFIKACIJE_NOVE_EVENT } from "../components/NotifikacijeLive";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Search, Loader2, FileText, User, CalendarDays, CalendarCheck, Bell } from "lucide-react";
 
 // Backend prima max 200 po stranici — prikaz svih rezultata u skrolu
 const FETCH_LIMIT = 200;
+
+type UgovorDanas = {
+  kljuc: string;
+  nosioc: string | null;
+  mesto: string | null;
+  smestaj: string | null;
+  datumod: string | null;
+  datumdo: string | null;
+  soba: string | null;
+  obradio: string | null;
+};
+
+type UgovoriDanasResponse = { datum: string; ukupno: number; rows: UgovorDanas[] };
+
+// "25.05.2026" + "04.06.2026" → "25.05-04.06.2026"; različite godine → pun zapis
+function formatTermin(od: string | null, doD: string | null): string {
+  if (!od) return "—";
+  if (!doD) return od;
+  const [d1, m1, y1] = od.split(".");
+  const [d2, m2, y2] = doD.split(".");
+  if (y1 && y1 === y2) return `${d1}.${m1}-${d2}.${m2}.${y2}`;
+  return `${od}-${doD}`;
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -22,6 +46,14 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const reqId = useRef(0);
   const [poruke, setPoruke] = useState<Notifikacija[]>([]);
+  const [danas, setDanas] = useState<UgovorDanas[]>([]);
+  const [danasDatum, setDanasDatum] = useState("");
+
+  useEffect(() => {
+    apiFetch<UgovoriDanasResponse>("/ugovori-danas")
+      .then((d) => { setDanas(d.rows); setDanasDatum(d.datum); })
+      .catch(() => setDanas([]));
+  }, []);
 
   useEffect(() => {
     apiFetch<NotifikacijeResponse>("/notifikacije?limit=10")
@@ -199,6 +231,58 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      <div className="grid grid-cols-1 xl:grid-cols-[3fr_2fr] gap-4 items-start">
+      <Card className="border-sky-200 bg-sky-50/50">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base flex items-center gap-2 text-sky-800">
+            <FileText className="w-4 h-4" /> Ugovori kreirani danas
+          </CardTitle>
+          <span className="text-xs text-sky-800/80 font-medium">
+            {danasDatum} · {danas.length}
+          </span>
+        </CardHeader>
+        <CardContent>
+          {danas.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Danas još nema kreiranih ugovora.</p>
+          ) : (
+            <div className="rounded-md border border-sky-200 bg-card max-h-96 overflow-auto">
+              <Table className="text-xs">
+                <TableHeader className="sticky top-0 bg-card z-10">
+                  <TableRow className="h-7">
+                    <TableHead className="h-7 px-2 py-1 whitespace-nowrap">Broj ugovora</TableHead>
+                    <TableHead className="h-7 px-2 py-1 whitespace-nowrap">Nosioc</TableHead>
+                    <TableHead className="h-7 px-2 py-1 whitespace-nowrap">Mesto</TableHead>
+                    <TableHead className="h-7 px-2 py-1 whitespace-nowrap">Smeštaj</TableHead>
+                    <TableHead className="h-7 px-2 py-1 whitespace-nowrap">Termin</TableHead>
+                    <TableHead className="h-7 px-2 py-1 whitespace-nowrap">Soba</TableHead>
+                    <TableHead className="h-7 px-2 py-1 whitespace-nowrap">Obradio</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {danas.map((u) => (
+                    <TableRow
+                      key={u.kljuc}
+                      onClick={() => navigate(`/prodaja/rezervacije?u=${encodeURIComponent(u.kljuc)}`)}
+                      className="cursor-pointer h-7"
+                    >
+                      <TableCell className="px-2 py-1 font-mono font-medium whitespace-nowrap">{u.kljuc}</TableCell>
+                      <TableCell className="px-2 py-1 max-w-[7.5rem] truncate" title={u.nosioc ?? ""}>{u.nosioc || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 max-w-[6rem] truncate" title={u.mesto ?? ""}>{u.mesto || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 max-w-[7rem] truncate" title={u.smestaj ?? ""}>{u.smestaj || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 whitespace-nowrap">
+                        {formatTermin(u.datumod, u.datumdo)}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 whitespace-nowrap">{u.soba || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 max-w-[7.5rem] truncate" title={u.obradio ?? ""}>{u.obradio || "—"}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card className="border-violet-200 bg-violet-50/50">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base flex items-center gap-2 text-violet-800">
@@ -230,6 +314,7 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

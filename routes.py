@@ -26,6 +26,7 @@ from cenovnici_api import init_cenovnici, register_cenovnici
 from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
 from notifikacije_api import init_notifikacije, register_notifikacije
 from profil_api import init_profil, register_profil
+from dashboard_api import register_dashboard
 from rezervacija_log import (
     OBLAST_OBRACUN, OBLAST_SAPUTNICI, OBLAST_UPLATA, OBLAST_REZERVACIJA,
     diff_saputnike, init_rezervacija_log, log_user, norm_vrednost,
@@ -1278,6 +1279,7 @@ def create_app(static_dir: str) -> FastAPI:
     register_notifikacije(api, engine, get_current_user)
     register_rezervacija_log(api, engine, get_current_user)
     register_profil(api, engine, get_current_user, hash_password, verify_password)
+    register_dashboard(api, engine, get_current_user)
 
     # ── Health ──────────────────────────────────────────────────────────────
     @api.get("/health")
