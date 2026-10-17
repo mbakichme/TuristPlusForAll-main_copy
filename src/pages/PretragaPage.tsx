@@ -11,7 +11,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Loader2, Search, MapPin, Bus, Car, CalendarDays, Users, Plus, Minus,
-  ChevronLeft, ChevronRight, BedDouble, Hotel
+  ChevronLeft, ChevronRight, BedDouble, Hotel, CalendarCheck, Tag
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -606,7 +606,7 @@ export default function PretragaPage() {
                     {g.sobe.map((s) => (
                       <div
                         key={s.id}
-                        className="rounded-md border p-3 hover:bg-muted/40 transition-colors space-y-2"
+                        className="rounded-lg border bg-card p-3 hover:border-primary/40 hover:shadow-md transition-all space-y-2"
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
@@ -614,36 +614,50 @@ export default function PretragaPage() {
                               Soba: {s.broj_sobe}
                               {s.tip ? ` (${s.tip})` : ""}
                               {s.opis ? ` ${s.opis}` : ""}
+                            </div>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {s.opis_dodatno && (
+                                <span className="text-xs text-muted-foreground truncate">{s.opis_dodatno}</span>
+                              )}
                               {s.struktura && s.struktura !== s.tip && (
-                                <span className="ml-1 text-xs text-violet-600">· struktura {s.struktura}</span>
+                                <span className="shrink-0 rounded-full bg-violet-100 text-violet-700 border border-violet-200 text-[10px] font-medium px-1.5 py-px">
+                                  struktura {s.struktura}
+                                </span>
                               )}
                             </div>
-                            {s.opis_dodatno && (
-                              <div className="text-xs text-muted-foreground truncate">{s.opis_dodatno}</div>
-                            )}
                           </div>
                           <div className="flex items-center gap-3 shrink-0">
                             {s.cena_osnovna == null ? (
-                              <span className="text-xs text-muted-foreground whitespace-nowrap">Nema cene</span>
+                              <span className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                                Nema cene
+                              </span>
                             ) : s.cena_snizena != null && s.cena_snizena < s.cena_osnovna ? (
-                              <span className="flex flex-col items-end leading-tight">
-                                <span className="font-mono text-xs text-muted-foreground line-through whitespace-nowrap">
+                              <div className="relative rounded-xl bg-gradient-to-br from-emerald-50 to-teal-100 border border-emerald-200 px-3 py-1.5 text-right leading-tight shadow-sm">
+                                <span className="absolute -top-2 -left-2 inline-flex items-center gap-1 rounded-full bg-rose-500 text-white text-[10px] font-semibold px-2 py-0.5 shadow">
+                                  <Tag className="w-3 h-3" />
+                                  −{Math.round(100 - (s.cena_snizena / s.cena_osnovna) * 100)}%
+                                </span>
+                                <div className="font-mono text-xs text-slate-500 line-through whitespace-nowrap">
                                   {fmtEur(s.cena_osnovna)} €
-                                </span>
-                                <span className="font-mono font-bold text-xl text-primary whitespace-nowrap">
+                                </div>
+                                <div className="font-mono font-bold text-2xl text-emerald-700 whitespace-nowrap tracking-tight">
                                   {fmtEur(s.cena_snizena)} €
-                                </span>
-                              </span>
+                                </div>
+                              </div>
                             ) : (
-                              <span className="font-mono font-bold text-xl text-primary whitespace-nowrap">
-                                {fmtEur(s.cena_osnovna)} €
-                              </span>
+                              <div className="rounded-xl bg-gradient-to-br from-sky-50 to-indigo-100 border border-sky-200 px-3 py-2 text-right leading-tight shadow-sm">
+                                <div className="text-[10px] uppercase tracking-wide text-sky-700/70 font-medium">Cena</div>
+                                <div className="font-mono font-bold text-2xl text-indigo-700 whitespace-nowrap tracking-tight">
+                                  {fmtEur(s.cena_osnovna)} €
+                                </div>
+                              </div>
                             )}
                             <Button
                               size="sm"
-                              variant="outline"
+                              className="h-10 gap-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-rose-500 text-white font-semibold shadow-md shadow-orange-500/30 hover:from-orange-600 hover:to-rose-600 hover:shadow-lg hover:-translate-y-0.5 transition-all border-0"
                               onClick={() => toast.info("Rezervacija je u pripremi")}
                             >
+                              <CalendarCheck className="w-4 h-4" />
                               Rezerviši
                             </Button>
                           </div>
