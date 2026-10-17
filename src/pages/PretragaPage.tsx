@@ -28,6 +28,36 @@ function pDate(s: string): Date {
   return new Date(y, m - 1, d);
 }
 
+/** Krajevi LANACA perioda koji počinju na `od` — hronološki, bez duplikata.
+ *  Lanac: period koji počinje na `od`, pa svaki sledeći period ISTIH grupa
+ *  koji počinje tačno na kraju dosadašnjeg lanca (25.05–04.06 + 04.06–14.06
+ *  = opcija 25.05–14.06, 20 noćenja). Svaki kraj lanca je jedna opcija trajanja. */
+function krajeviLanaca(grupe: PeriodGrupa[], grupaIds: number[], od: string): string[] {
+  if (!od) return [];
+  const krajevi = new Set<string>();
+  for (const g of grupe) {
+    if (!grupaIds.includes(g.id)) continue;
+    const poceci = new Map<string, string[]>();
+    for (const d of g.datumi ?? []) {
+      const arr = poceci.get(d.datum_od);
+      if (arr) arr.push(d.datum_do);
+      else poceci.set(d.datum_od, [d.datum_do]);
+    }
+    const obradjeni = new Set<string>();
+    const front = [od];
+    while (front.length) {
+      const cur = front.pop() as string;
+      if (obradjeni.has(cur)) continue;
+      obradjeni.add(cur);
+      for (const ddo of poceci.get(cur) ?? []) {
+        krajevi.add(ddo);
+        front.push(ddo);
+      }
+    }
+  }
+  return [...krajevi].sort((a, b) => pDate(a).getTime() - pDate(b).getTime());
+}
+
 /** Ikona unutar Select polja */
 function SelIcon({ icon: Icon }: { icon: React.ElementType }) {
   return <Icon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />;
@@ -169,14 +199,14 @@ function MiniKalendar({ view, onView, odSet, selectedKey, onPick }: {
   );
 }
 
-/** Opcije trajanja: periodi koji počinju na izabrani datum (broj noćenja + datum povratka) */
+/** Opcije trajanja: krajevi lanaca perioda od izabranog polaska (broj noćenja + datum povratka) */
 function TrajanjeOpcije({ od, doDatum, doOpcije, onIzaberi }: {
   od: string; doDatum: string;
-  doOpcije: Array<{ id: number; datum_do: string }>;
+  doOpcije: Array<{ datum_do: string }>;
   onIzaberi: (datumDo: string) => void;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
       <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Trajanje putovanja
       </div>
@@ -184,7 +214,7 @@ function TrajanjeOpcije({ od, doDatum, doOpcije, onIzaberi }: {
         const noc = Math.round((pDate(p.datum_do).getTime() - pDate(od).getTime()) / 86400000);
         return (
           <button
-            key={p.id} type="button" onClick={() => onIzaberi(p.datum_do)}
+            key={p.datum_do} type="button" onClick={() => onIzaberi(p.datum_do)}
             className={cn(
               "w-full text-left rounded-md px-3 py-2 text-sm font-semibold transition-colors",
               doDatum === p.datum_do
@@ -249,15 +279,14 @@ export default function PretragaPage() {
     return sve.sort((a, b) => pDate(a.datum_od).getTime() - pDate(b.datum_od).getTime());
   }, [selMesto, grupe]);
 
-  // Datum do: SAMO periodi koji počinju na izabrani "datum od" — par od/do uvek
-  // dolazi iz ISTOG zapisa periode (nikad ukrštanje početaka i krajeva različitih
-  // grupa); hronološki po datumu povratka (kraće putovanje prvo)
+  // Datum do: SVI krajevi LANACA perioda koji počinju na izabrani "datum od" —
+  // osnovni termin (jedan period) + produženi boravci spajanjem uzastopnih
+  // perioda iste grupe (25.05–04.06 + 04.06–14.06 = 25.05–14.06, 20 noćenja);
+  // bez duplikata, hronološki po datumu povratka (kraće putovanje prvo)
   const doOpcije = useMemo(() => {
-    if (!od) return [];
-    return periodi
-      .filter((p) => p.datum_od === od)
-      .sort((a, b) => pDate(a.datum_do).getTime() - pDate(b.datum_do).getTime());
-  }, [periodi, od]);
+    if (!od || !selMesto?.grupe?.length) return [];
+    return krajeviLanaca(grupe, selMesto.grupe, od).map((datum_do) => ({ datum_do }));
+  }, [grupe, selMesto, od]);
 
   // Počeci perioda koji su klikabilni u kalendaru
   const odSet = useMemo(
@@ -272,9 +301,11 @@ export default function PretragaPage() {
 
   function onOdChange(v: string) {
     setOd(v);
-    // resetuj "datum do" ako više nije među dozvoljenim opcijama
-    const opcije = periodi.filter((p) => p.datum_od === v);
-    if (!doDatum || !opcije.some((p) => p.datum_do === doDatum)) setDoDatum("");
+    // resetuj "datum do" ako više nije među krajevima lanaca novog polaska
+    const opcije = v && selMesto?.grupe?.length
+      ? krajeviLanaca(grupe, selMesto.grupe, v)
+      : [];
+    if (!doDatum || !opcije.includes(doDatum)) setDoDatum("");
     resetRezultate();
   }
 

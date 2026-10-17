@@ -1,9 +1,11 @@
 """Pretraga UI — tok: polazak → Trajanje opcije → biranje JEDNOG termina.
 
 Flow: izbor mesta → kalendar (otvara se na prvi period mesta) → dan 25.05 →
-popover ostaje otvoren i nudi SVE termine koji počinju na 25.05
-(„N noćenja | Povratak: DD.MM.YYYY.“) → klik na jedan → Pretraži →
-rezultati za TAČNO izabrani termin.
+popover ostaje otvoren i nudi SVE krajeve LANACA perioda od 25.05 (osnovni
+termin + produženi boravci spajanjem uzastopnih perioda iste grupe, npr.
+25.05–04.06 + 04.06–14.06 = 25.05–14.06, 20 noćenja) kao
+„N noćenja | Povratak: DD.MM.YYYY.“ → klik na jedan → Pretraži →
+rezultati za TAČNO izabrani boravak.
 """
 import json
 import os
@@ -26,31 +28,56 @@ def nocenja_label(n: int) -> str:
 
 def main() -> None:
     token = create_access_token({"sub": "1"})  # never printed
-    api = httpx.Client(base_url=API, headers={"Authorization": "Bearer " + token}, timeout=60)
+    api = httpx.Client(base_url=API, headers={"Authorization": "Bearer " + token}, timeout=120)
     mesto = next(m for m in api.get("/mesto").json() if m["id"] == 1)
-    # Svi termini koji počinju na OD (grupe mesta) — kao doOpcije na klijentu
     grupe_ids = set(mesto["grupe"])
-    do_opcije = sorted(
-        ((d["datum_od"], d["datum_do"]) for g in api.get("/period-grupa").json()
-         if g["id"] in grupe_ids for d in (g.get("datumi") or []) if d["datum_od"] == OD),
-        key=lambda p: tuple(int(x) for x in reversed(p[1].split("."))),
-    )
-    print(f"[api] mesto={mesto['naziv']}, opcije trajanja: {do_opcije}")
 
-    # Rezultat za izabrani termin — onaj sa 10 noćenja
+    # Krajevi LANACA perioda od OD (ista logika kao doOpcije na klijentu)
     from datetime import datetime as _dt
+    def _p(s: str):
+        return _dt.strptime(s, "%d.%m.%Y")
     def _noc(d_s: str) -> int:
-        return (_dt.strptime(d_s, "%d.%m.%Y") - _dt.strptime(OD, "%d.%m.%Y")).days
-    izabrani_do = next(d for _, d in do_opcije if _noc(d) == 10)
+        return (_p(d_s) - _p(OD)).days
+
+    do_opcije_set: set[str] = set()
+    for g in api.get("/period-grupa").json():
+        if g["id"] not in grupe_ids:
+            continue
+        poceci: dict[str, list[str]] = {}
+        for d in (g.get("datumi") or []):
+            poceci.setdefault(d["datum_od"], []).append(d["datum_do"])
+        obradjeni, front = set(), [OD]
+        while front:
+            cur = front.pop()
+            if cur in obradjeni:
+                continue
+            obradjeni.add(cur)
+            for ddo in poceci.get(cur, []):
+                do_opcije_set.add(ddo)
+                front.append(ddo)
+    do_opcije = sorted(do_opcije_set, key=lambda s: _p(s))
+    print(f"[api] mesto={mesto['naziv']}, opcije trajanja (krajevi lanaca): {do_opcije}")
+
+    # Svih 7 opcionih trajanja iz zahteva mora biti među opcijama
+    ZAHTEVANI = ["30.05.2026", "01.06.2026", "04.06.2026", "08.06.2026",
+                 "14.06.2026", "15.06.2026", "24.06.2026"]
+
+    # Rezultat za izabrani boravak — produženi lanac od 20 noćenja (14.06.)
+    izabrani_do = next(d for d in do_opcije if _noc(d) == 20)
     ocekivani = api.get("/slobodne-sobe", params={
         "mesto_id": 1, "datum_od": OD, "datum_do": izabrani_do}).json()
-    print(f"[api] izabrani termin {OD} – {izabrani_do}, smeštaji: "
+    print(f"[api] izabrani boravak {OD} – {izabrani_do}, smeštaji: "
           f"{[g['smestaj_naziv'] for g in ocekivani]}")
 
     okovi = []
     def proveri(naziv, uslov, detalj=""):
         okovi.append(uslov)
         print(f"{'PASS' if uslov else 'FAIL'} {naziv}" + (f" — {detalj}" if detalj and not uslov else ""))
+
+    proveri("svih 7 opcionih trajanja iz zahteva je među krajevima lanaca",
+            all(z in do_opcije_set for z in ZAHTEVANI),
+            f"nedostaju={[z for z in ZAHTEVANI if z not in do_opcije_set]}")
+    proveri("opcije hronološki po datumu povratka", do_opcije == sorted(do_opcije, key=_p))
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -73,16 +100,16 @@ def main() -> None:
         kal.first.locator("button:not([disabled])", has_text=re.compile(r"^25$")).first.click()
         page.wait_for_timeout(400)
 
-        # ── 3. Trajanje opcije u popoveru ──
-        for od_s, do_s in do_opcije:
+        # ── 3. Trajanje opcije u popoveru (svi krajevi lanaca) ──
+        for do_s in do_opcije:
             noc = _noc(do_s)
             txt = f"{nocenja_label(noc)} | Povratak: {do_s}."
             dugme = kal.first.get_by_text(txt, exact=True)
             dugme.wait_for(timeout=5000)
             proveri(f"opcija „{txt}“ ponuđena", dugme.is_visible())
 
-        # ── 4. biramo 10 noćenja (04.06.2026) i Pretraži ──
-        kal.first.get_by_text(f"10 noćenja | Povratak: {izabrani_do}.", exact=True).click(force=True)
+        # ── 4. biramo produženi lanac 20 noćenja (14.06.2026) i Pretraži ──
+        kal.first.get_by_text(f"20 noćenja | Povratak: {izabrani_do}.", exact=True).click(force=True)
         page.wait_for_timeout(300)
         page.get_by_role("button", name="Pretraži", exact=True).click()
         rez = page.get_by_text("Slobodni kapaciteti").first
@@ -99,7 +126,7 @@ def main() -> None:
     print()
     if not all(okovi):
         sys.exit(1)
-    print("OK — pretraga: polazak → trajanje → rezultati")
+    print("OK — pretraga: polazak → trajanje (lanci) → rezultati")
 
 if __name__ == "__main__":
     main()

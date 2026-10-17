@@ -2145,26 +2145,41 @@ def create_app(static_dir: str) -> FastAPI:
         mesto_id = int(mesto_raw) if mesto_raw.isdigit() else None
 
         def _smestaji_za_termin(conn, d_od, d_do):
-            """Slobodni smeštaji (sa sobama) za konkretan termin (od+do).
+            """Slobodni smeštaji (sa sobama) za boravak od d_od do d_do.
 
             Smeštaj prolazi SAMO ako njegova grupa termina (smestaj.grupa_datuma)
-            definiše TAČAN termin — EXIST period_datum sa istim datum_od/datum_do;
-            soba prolazi ako nema aranzman koji preklapa termin (po nazivu vile).
+            pokriva boravak LANCOM uzastopnih perioda: prvi period počinje na
+            d_od, a svaki sledeći počinje tačno na kraju prethodnog — boravak
+            mora da se završi na kraju nekog perioda grupe (npr. 25.05→14.06 =
+            25.05–04.06 + 04.06–14.06 u grupi 6). Soba prolazi ako nema aranzman
+            koji preklapa ceo boravak (po nazivu vile).
             """
             rows = conn.execute(text("""
+                WITH RECURSIVE lanac_krajevi(grupa_id, kraj) AS (
+                    -- početak lanca: bilo koji period koji počinje na datum_od
+                    SELECT pd.grupa_id, pd.datum_do
+                    FROM period_datum pd
+                    WHERE pd.datum_od = :dod
+                    UNION
+                    -- produžetak: period koji počinje tačno na kraju lanca
+                    SELECT l.grupa_id, pd2.datum_do
+                    FROM lanac_krajevi l
+                    JOIN period_datum pd2
+                      ON pd2.grupa_id = l.grupa_id AND pd2.datum_od = l.kraj
+                    WHERE l.kraj < :ddo
+                )
                 SELECT s.id AS smestaj_id, s.naziv AS smestaj_naziv,
                        b.id, TRIM(b.broj_sobe) AS broj_sobe, b.tip, b.opis, b.opis_dodatno
                 FROM sobe b
                 JOIN smestaj s ON s.id = b.veza_id_smestaj
                 WHERE (CAST(:g AS INTEGER) IS NULL OR s.grupa_datuma = CAST(:g AS INTEGER))
                   AND (CAST(:m AS INTEGER) IS NULL OR s.mesto = CAST(:m AS INTEGER))
-                  -- vezuje Grupu termina za vilu: traženi termin (od+do) mora
-                  -- biti DEFINISAN periodom u grupi termina tog smeštaja
+                  -- vezuje Grupu termina za vilu: traženi boravak (od→do) mora
+                  -- biti pokriven lancom perioda u grupi termina tog smeštaja
                   AND EXISTS (
-                      SELECT 1 FROM period_datum pd
-                      WHERE pd.grupa_id = s.grupa_datuma
-                        AND pd.datum_od = :dod
-                        AND pd.datum_do = :ddo
+                      SELECT 1 FROM lanac_krajevi lk
+                      WHERE lk.grupa_id = s.grupa_datuma
+                        AND lk.kraj = :ddo
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM aranzman a
@@ -2198,37 +2213,40 @@ def create_app(static_dir: str) -> FastAPI:
                     raise HTTPException(status_code=400, detail="Datum do mora biti posle datuma od")
                 return _smestaji_za_termin(conn, d_od, d_do)
 
-            # ── NOVI MOD: pretraga po SVIM terminima koji počinju na datum_od ──
-            # (grupa_id filter ili obavezno mesto_id — termini se čitaju iz
-            # grupa perioda vezanih za mesto); vraća samo termine SA slobodnim
-            # smeštajem, hronološki po datumu povratka
+            # ── NOVI MOD: pretraga po SVIM lancima perioda koji počinju na datum_od ──
+            # (grupa_id filter ili obavezno mesto_id — opcije su krajevi LANACA
+            # uzastopnih perioda grupa mesta: osnovni termin + produženi boravci,
+            # npr. 25.05–04.06 + 04.06–14.06 = opcija 25.05–14.06); vraća samo
+            # opcije SA slobodnim smeštajem, hronološki po datumu povratka
             if grupa_id is None and mesto_id is None:
                 raise HTTPException(status_code=400,
                                     detail="datum_do ili mesto_id su obavezni")
-            if grupa_id is not None:
-                termini = conn.execute(text("""
-                    SELECT DISTINCT pd.datum_od, pd.datum_do
+            _grupa_filter = ("pd.grupa_id = :g" if grupa_id is not None else
+                             "pd.grupa_id IN (SELECT grupa_id FROM mesto_grupa WHERE mesto_id = :m)")
+            _params = ({"g": grupa_id, "od": d_od} if grupa_id is not None
+                       else {"m": mesto_id, "od": d_od})
+            krajevi = conn.execute(text(f"""
+                WITH RECURSIVE krajevi(grupa_id, kraj) AS (
+                    SELECT pd.grupa_id, pd.datum_do
                     FROM period_datum pd
-                    WHERE pd.grupa_id = :g AND pd.datum_od = :od
-                    ORDER BY pd.datum_do
-                """), {"g": grupa_id, "od": d_od}).fetchall()
-            else:
-                termini = conn.execute(text("""
-                    SELECT DISTINCT pd.datum_od, pd.datum_do
-                    FROM period_datum pd
-                    WHERE pd.grupa_id IN (SELECT grupa_id FROM mesto_grupa WHERE mesto_id = :m)
-                      AND pd.datum_od = :od
-                    ORDER BY pd.datum_do
-                """), {"m": mesto_id, "od": d_od}).fetchall()
+                    WHERE {_grupa_filter} AND pd.datum_od = :od
+                    UNION
+                    SELECT k.grupa_id, pd2.datum_do
+                    FROM krajevi k
+                    JOIN period_datum pd2
+                      ON pd2.grupa_id = k.grupa_id AND pd2.datum_od = k.kraj
+                )
+                SELECT DISTINCT kraj FROM krajevi ORDER BY kraj
+            """), _params).fetchall()
             out = []
-            for t in termini:
-                smestaji = _smestaji_za_termin(conn, t.datum_od, t.datum_do)
+            for t in krajevi:
+                smestaji = _smestaji_za_termin(conn, d_od, t.kraj)
                 if not smestaji:
-                    continue  # ponudi samo termine sa raspoloživim smeštajem
+                    continue  # ponudi samo opcije sa raspoloživim smeštajem
                 out.append({
-                    "datum_od": t.datum_od.strftime("%d.%m.%Y"),
-                    "datum_do": t.datum_do.strftime("%d.%m.%Y"),
-                    "nocenja": (t.datum_do - t.datum_od).days,
+                    "datum_od": d_od.strftime("%d.%m.%Y"),
+                    "datum_do": t.kraj.strftime("%d.%m.%Y"),
+                    "nocenja": (t.kraj - d_od).days,
                     "smestaji": smestaji,
                 })
             return out
