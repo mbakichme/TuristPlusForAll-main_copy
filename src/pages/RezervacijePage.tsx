@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -1231,19 +1232,38 @@ export default function RezervacijePage() {
               <span className="text-muted-foreground">Kurs trenutno nije dostupan.</span>
             )}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!grafikDostupan}
-            title={grafikDostupan
-              ? "Otvara grafik za mesto, grupu datuma i vilu ovog ugovora"
-              : "Izaberite ugovor ili sačuvajte rezervaciju da otvorite grafik"}
-            aria-label="Otvori grafik za izabrani ugovor"
-            onClick={otvoriGrafik}
-          >
-            <CalendarDays className="mr-1.5 size-4" />
-            Grafik
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              disabled={!izabraniUgovor}
+              title={izabraniUgovor ? "Istorija promena" : "Izaberite ugovor da vidite istoriju"}
+              aria-label="Otvori istoriju promena"
+              className="relative size-9"
+              onClick={() => setIstorijaOtvorena(true)}
+            >
+              <History className="size-4" />
+              {istorija && istorija.length > 0 && (
+                <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-blue-600 px-1 text-[10px] leading-4 text-white tabular-nums">
+                  {istorija.length}
+                </span>
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!grafikDostupan}
+              title={grafikDostupan
+                ? "Otvara grafik za mesto, grupu datuma i vilu ovog ugovora"
+                : "Izaberite ugovor ili sačuvajte rezervaciju da otvorite grafik"}
+              aria-label="Otvori grafik za izabrani ugovor"
+              onClick={otvoriGrafik}
+            >
+              <CalendarDays className="mr-1.5 size-4" />
+              Grafik
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -2281,57 +2301,50 @@ export default function RezervacijePage() {
         </TabsContent>
       </Tabs>
 
-      {izabraniUgovor && (
-        <Card className="mt-4">
-          <CardHeader className="px-4 pt-3 pb-2">
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 text-left"
-              aria-expanded={istorijaOtvorena}
-              onClick={() => setIstorijaOtvorena((v) => !v)}
-            >
-              <CardTitle className="flex items-center gap-2 text-sm">
-                <History className="w-4 h-4 text-primary" />Istorija
-              </CardTitle>
-              {istorija && <Badge variant="secondary" className="ml-1">{istorija.length}</Badge>}
-              {istorijaUcitava && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-              <span className="ml-auto text-xs text-muted-foreground">{istorijaOtvorena ? "Sakrij" : "Prikaži"}</span>
-            </button>
-          </CardHeader>
-          {istorijaOtvorena && (
-            <CardContent className="px-4 pb-3">
-              {istorija && istorija.length > 0 ? (
-                <ul className="divide-y text-sm">
-                  {istorija.map((r) => (
-                    <li key={r.id} className="py-2 space-y-1">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="whitespace-nowrap text-xs text-muted-foreground">{istorijaVreme(r.created_at)}</span>
-                        <Badge variant="outline">{ISTORIJA_OBLAST[r.oblast] ?? r.oblast}</Badge>
-                        <span className="font-medium">{ISTORIJA_DOGADJAJ[r.dogadjaj] ?? r.dogadjaj}</span>
-                        <span className="text-xs text-muted-foreground">· {r.user_ime || "nepoznat korisnik"}</span>
-                      </div>
-                      {r.promene.length > 0 && (
-                        <ul className="space-y-0.5 pl-1 text-xs">
-                          {r.promene.map((p, i) => (
-                            <li key={i} className="flex flex-wrap gap-x-1">
-                              <span className="text-muted-foreground">{p.polje}:</span>
-                              <span className="line-through text-muted-foreground">{p.stara ?? "—"}</span>
-                              <span>→</span>
-                              <span className="font-medium">{p.nova ?? "—"}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              ) : istorija ? (
-                <div className="py-4 text-center text-sm text-muted-foreground">Nema zabeleženih promena.</div>
-              ) : null}
-            </CardContent>
-          )}
-        </Card>
-      )}
+      <Dialog open={istorijaOtvorena} onOpenChange={setIstorijaOtvorena}>
+        <DialogContent className="max-w-2xl bg-card">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="size-4 text-primary" />Istorija promena
+              {izabraniUgovor && <span className="text-sm font-normal text-muted-foreground">· {izabraniUgovor}</span>}
+            </DialogTitle>
+            <DialogDescription className="sr-only">Zabeležene izmene rezervacije za izabrani ugovor</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] overflow-y-auto pr-1">
+            {istorijaUcitava && !istorija && (
+              <div className="flex justify-center py-6"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+            )}
+            {istorija && istorija.length > 0 ? (
+              <ul className="divide-y text-sm">
+                {istorija.map((r) => (
+                  <li key={r.id} className="py-2 space-y-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">{istorijaVreme(r.created_at)}</span>
+                      <Badge variant="outline">{ISTORIJA_OBLAST[r.oblast] ?? r.oblast}</Badge>
+                      <span className="font-medium">{ISTORIJA_DOGADJAJ[r.dogadjaj] ?? r.dogadjaj}</span>
+                      <span className="text-xs text-muted-foreground">· {r.user_ime || "nepoznat korisnik"}</span>
+                    </div>
+                    {r.promene.length > 0 && (
+                      <ul className="space-y-0.5 pl-1 text-xs">
+                        {r.promene.map((p, i) => (
+                          <li key={i} className="flex flex-wrap gap-x-1">
+                            <span className="text-muted-foreground">{p.polje}:</span>
+                            <span className="line-through text-muted-foreground">{p.stara ?? "—"}</span>
+                            <span>→</span>
+                            <span className="font-medium">{p.nova ?? "—"}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : istorija ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">Nema zabeleženih promena.</div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Zajedničke akcije ostaju dostupne na svim tabovima. */}
       <div className="sticky bottom-0 z-10 -mx-6 flex flex-wrap gap-2 border-t bg-background/95 px-6 py-3 backdrop-blur">
