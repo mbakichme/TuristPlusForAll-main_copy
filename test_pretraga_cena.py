@@ -185,7 +185,7 @@ def main():
         if prva:
             def eur(n): return (str(int(n)) if float(n).is_integer() else f"{n:.2f}") + " €"
             proveri("snižena cena prikazana", page.get_by_text(eur(prva["cena_snizena"]), exact=True).count() >= 1)
-            proveri("osnovna cena precrtana", page.locator("span.line-through", has_text=eur(prva["cena_osnovna"])).count() >= 1)
+            proveri("osnovna cena precrtana", page.locator(".line-through", has_text=eur(prva["cena_osnovna"])).count() >= 1)
         ctx.close(); browser.close()
 
     print()
