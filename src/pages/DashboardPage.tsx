@@ -163,33 +163,39 @@ export default function DashboardPage() {
           onClick={() => navigate("/prodaja/pretraga")}
           className="text-left rounded-xl border border-blue-200 bg-blue-50 p-5 hover:bg-blue-100 transition-colors"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-600 text-white">
-            <Search className="w-5 h-5" />
+          <span className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white">
+              <Search className="w-5 h-5" />
+            </span>
+            <span className="text-lg font-semibold text-blue-800">Pretraga</span>
           </span>
-          <p className="mt-3 text-lg font-semibold text-blue-800">Pretraga</p>
-          <p className="text-xs text-blue-700/80 mt-1">Slobodne sobe i cene po terminu</p>
+          <p className="text-xs text-blue-700/80 mt-2">Pregled raspoloživih aranžmana</p>
         </button>
         <button
           type="button"
           onClick={() => navigate("/agencija/grafik")}
           className="text-left rounded-xl border border-emerald-200 bg-emerald-50 p-5 hover:bg-emerald-100 transition-colors"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white">
-            <CalendarDays className="w-5 h-5" />
+          <span className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white">
+              <CalendarDays className="w-5 h-5" />
+            </span>
+            <span className="text-lg font-semibold text-emerald-800">Grafik</span>
           </span>
-          <p className="mt-3 text-lg font-semibold text-emerald-800">Grafik</p>
-          <p className="text-xs text-emerald-700/80 mt-1">Zauzeće smeštaja po danima</p>
+          <p className="text-xs text-emerald-700/80 mt-2">Grafički pregled raspoloživosti</p>
         </button>
         <button
           type="button"
           onClick={() => navigate("/prodaja/rezervacije")}
           className="text-left rounded-xl border border-orange-200 bg-orange-50 p-5 hover:bg-orange-100 transition-colors"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-500 text-white">
-            <CalendarCheck className="w-5 h-5" />
+          <span className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-orange-500 text-white">
+              <CalendarCheck className="w-5 h-5" />
+            </span>
+            <span className="text-lg font-semibold text-orange-800">Rezervacije</span>
           </span>
-          <p className="mt-3 text-lg font-semibold text-orange-800">Rezervacije</p>
-          <p className="text-xs text-orange-700/80 mt-1">Nova rezervacija ili izmena postojeće</p>
+          <p className="text-xs text-orange-700/80 mt-2">Nova rezervacija ili izmena postojeće</p>
         </button>
       </div>
 
