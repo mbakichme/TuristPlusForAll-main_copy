@@ -223,6 +223,11 @@ function EmailInput({ value, onChange, disabled }: { value: string; onChange: (v
     </div>
   );
 }
+/** Kompaktni raspored tabova Aranžman i Obračun — niži inputi/selecti/datumi, manji razmaci (više polja na ekranu). */
+const KOMPAKT_TAB = "mt-3 space-y-3 [&_input]:h-8 [&_button[role=combobox]]:h-8 [&_button[aria-haspopup=dialog]]:h-8 [&_textarea]:min-h-0 [&_label]:leading-none";
+const KOMPAKT_HEADER = "px-4 pt-3 pb-2";
+const KOMPAKT_CONTENT = "px-4 pb-3";
+
 function Fld({
   label, children, className, labelClassName,
 }: { label: string; children: ReactNode; className?: string; labelClassName?: string }) {
@@ -307,10 +312,10 @@ function UkupnoInput({ vrednost }: { vrednost: number | null }) {
 }
 
 /** Desna panela sažetka — zajednička za sve kartice: vertikalna linija na desktopu, bledo plava pozadina. */
-function PanelaSazetka({ children, className }: { children: ReactNode; className?: string }) {
+function PanelaSazetka({ children, className, kompaktno }: { children: ReactNode; className?: string; kompaktno?: boolean }) {
   return (
-    <div className={cn("lg:border-l lg:border-dashed lg:pl-4", className)}>
-      <div className="flex flex-col gap-3 rounded-lg border border-blue-200/70 bg-blue-50 p-3 dark:border-blue-500/20 dark:bg-blue-950/30">
+    <div className={cn("lg:border-l lg:border-dashed", kompaktno ? "lg:pl-3" : "lg:pl-4", className)}>
+      <div className={cn("flex flex-col rounded-lg border border-blue-200/70 bg-blue-50 dark:border-blue-500/20 dark:bg-blue-950/30", kompaktno ? "gap-2 p-2" : "gap-3 p-3")}>
         {children}
       </div>
     </div>
@@ -334,9 +339,9 @@ function ProcenatRed({
 }) {
   return (
     <div>
-      <p className="mb-3 text-sm font-medium">{naslov}</p>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <p className="mb-1 text-xs font-semibold text-blue-600">{naslov}</p>
+      <div className="grid gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
           <Fld label="Procenat (%)">
             <Input
               inputMode="decimal"
@@ -368,8 +373,8 @@ function ProcenatRed({
             />
           </Fld>
         </div>
-        <PanelaSazetka>
-          <div className="grid grid-cols-2 gap-3">
+        <PanelaSazetka kompaktno>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2">
             <Fld label="Ukupno (EUR)">
               <UkupnoInput vrednost={netoEUR} />
             </Fld>
@@ -1177,17 +1182,16 @@ export default function RezervacijePage() {
         </TabsList>
 
         {/* ════════════════ TAB: ARANŽMAN ════════════════ */}
-        <TabsContent value="aranzman" className="mt-4 space-y-4">
+        <TabsContent value="aranzman" className={KOMPAKT_TAB}>
           {/* Ugovor */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <FileText className="w-5 h-5 text-primary" />Ugovor
+            <CardHeader className={KOMPAKT_HEADER}>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" />Ugovor
               </CardTitle>
-              <CardDescription>Pretraga postojećeg ugovora i tip rezervacije</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
+            <CardContent className={KOMPAKT_CONTENT}>
+              <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-3">
                 <Fld label="Pretraga ugovora">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
@@ -1265,8 +1269,8 @@ export default function RezervacijePage() {
                 </Fld>
               </div>
               {ucitanUgovor && (
-                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-3 dark:border-blue-900 dark:bg-blue-950/30" aria-label="Pregled učitanog ugovora">
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 md:grid-cols-4 xl:grid-cols-8">
+                <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/30" aria-label="Pregled učitanog ugovora">
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1 md:grid-cols-4 xl:grid-cols-8">
                     {([
                       ["Broj ugovora", ucitanUgovor.kljuc],
                       ["Nosilac", ucitanUgovor.putnik],
@@ -1289,7 +1293,7 @@ export default function RezervacijePage() {
                       <dd className="text-xs tabular-nums text-muted-foreground">{!izborUcitava && saldo !== null ? `${nf2.format(saldo)} din` : ""}</dd>
                     </div>
                   </dl>
-                  <p className="mt-2 text-xs text-muted-foreground">Podaci učitanog ugovora · saldo prema trenutnom obračunu. Dodatne stavke i uplate se čuvaju direktno; ostala polja se čuvaju dugmetom „Sačuvaj“. {zakljucano && "Polja su zaključana — kliknite „Izmeni“ za izmenu."}{izmena && " Polja su otključana — kliknite „Sačuvaj“ za snimanje izmena."}</p>
+                  <p className="mt-1.5 text-xs text-muted-foreground">Podaci učitanog ugovora · saldo prema trenutnom obračunu. Dodatne stavke i uplate se čuvaju direktno; ostala polja se čuvaju dugmetom „Sačuvaj“. {zakljucano && "Polja su zaključana — kliknite „Izmeni“ za izmenu."}{izmena && " Polja su otključana — kliknite „Sačuvaj“ za snimanje izmena."}</p>
                 </div>
               )}
             </CardContent>
@@ -1297,19 +1301,18 @@ export default function RezervacijePage() {
 
           {/* Putnici */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Users className="w-5 h-5 text-primary" />Putnici
+            <CardHeader className={KOMPAKT_HEADER}>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Users className="w-4 h-4 text-primary" />Putnici
               </CardTitle>
-              <CardDescription>Nosilac aranžmana i saputnici — OW, RT, SP, osiguranje, smer i datumi po putniku</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
+            <CardContent className={cn(KOMPAKT_CONTENT, "space-y-3")}>
               {/* Nosilac */}
-              <div className="space-y-3">
-                <div className="grid gap-4 grid-cols-1 md:grid-cols-4">
-                  <Fld label="Nosilac aranžmana" labelClassName="text-base font-semibold text-blue-600">
+              <div className="space-y-2">
+                <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-4 xl:grid-cols-[1.4fr_0.8fr_0.9fr_0.7fr_1.3fr_0.9fr_1.2fr]">
+                  <Fld label="Nosilac aranžmana" labelClassName="text-sm font-semibold text-blue-600">
                     <Input
-                      className="text-base font-medium"
+                      className="font-medium"
                       value={nosilac.ime}
                       onChange={(e) => setNosilac({ ...nosilac, ime: e.target.value })}
                       placeholder="Ime i prezime"
@@ -1337,12 +1340,10 @@ export default function RezervacijePage() {
                     />
                   </Fld>
                   <Fld label="Osiguranje">
-                    <div className="flex min-h-9 items-center">
+                    <div className="flex min-h-8 items-center">
                       <Chk label="Osiguranje" checked={nosilac.osiguranje} onChange={(v) => setNosilac({ ...nosilac, osiguranje: v })} disabled={zakljucano} />
                     </div>
                   </Fld>
-                </div>
-                <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
                   <Fld label="Adresa">
                     <Input value={nosilac.adresa} onChange={(e) => setNosilac({ ...nosilac, adresa: e.target.value })} disabled={zakljucano} />
                   </Fld>
@@ -1358,31 +1359,36 @@ export default function RezervacijePage() {
               <Separator />
 
               {/* Saputnici */}
-              <div className="space-y-3">
-                <div className="text-sm font-semibold uppercase tracking-wide text-blue-600">
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">
                   Saputnici{saputnici.length > 0 ? ` (${saputnici.length})` : ""}
                 </div>
                 {saputnici.length === 0 && (
                   <p className="text-sm text-muted-foreground">Nema dodate saputnike.</p>
                 )}
                 {saputnici.map((s, i) => (
-                  <div key={s.uid} className="rounded-lg border p-3 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-base font-semibold text-blue-600">Saputnik {i + 1}</span>
-                      <Button
-                        variant="ghost" size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                        disabled={zakljucano}
-                        onClick={() => ukloniSaputnika(s.uid)}
-                        title="Ukloni saputnika"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                  <div key={s.uid} className="rounded-lg border px-3 py-2 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-blue-600">Saputnik {i + 1}</span>
+                      <div className="flex items-center gap-3">
+                        <Chk label="Kopiraj kontakt nosioca" labelClassName="text-xs" checked={s.kopiranKontakt} disabled={zakljucano}
+                          onChange={(checked) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid
+                            ? { ...p, kopiranKontakt: checked, ...(checked ? { adresa: nosilac.adresa, email: nosilac.email, telefon: nosilac.telefon } : {}) } : p))} />
+                        <Button
+                          variant="ghost" size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          disabled={zakljucano}
+                          onClick={() => ukloniSaputnika(s.uid)}
+                          title="Ukloni saputnika"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="grid gap-4 grid-cols-1 md:grid-cols-4">
+                    <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-4 xl:grid-cols-[1.4fr_0.8fr_0.9fr_0.7fr_1.3fr_0.9fr_1.2fr]">
                       <Fld label="Ime i prezime">
                         <Input
-                          className="text-base font-medium"
+                          className="font-medium"
                           value={s.ime}
                           onChange={(e) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, ime: e.target.value } : p))}
                           placeholder="Ime i prezime"
@@ -1409,15 +1415,10 @@ export default function RezervacijePage() {
                         />
                       </Fld>
                       <Fld label="Osiguranje">
-                        <div className="flex min-h-9 items-center">
+                        <div className="flex min-h-8 items-center">
                           <Chk label="Osiguranje" checked={s.osiguranje} onChange={(v) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, osiguranje: v } : p))} disabled={zakljucano} />
                         </div>
                       </Fld>
-                    </div>
-                    <Chk label="Kopiraj kontakt nosioca" checked={s.kopiranKontakt} disabled={zakljucano}
-                      onChange={(checked) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid
-                        ? { ...p, kopiranKontakt: checked, ...(checked ? { adresa: nosilac.adresa, email: nosilac.email, telefon: nosilac.telefon } : {}) } : p))} />
-                    <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
                       <Fld label="Adresa">
                         <Input value={s.adresa} onChange={(e) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, adresa: e.target.value, kopiranKontakt: false } : p))} disabled={zakljucano} />
                       </Fld>
@@ -1430,7 +1431,7 @@ export default function RezervacijePage() {
                     </div>
                   </div>
                 ))}
-                <Button variant="outline" className="w-full border-dashed" onClick={dodajSaputnika} disabled={zakljucano}>
+                <Button variant="outline" size="sm" className="w-full border-dashed" onClick={dodajSaputnika} disabled={zakljucano}>
                   <Plus className="w-4 h-4 mr-1.5" />Dodaj saputnika
                 </Button>
               </div>
@@ -1439,14 +1440,13 @@ export default function RezervacijePage() {
 
           {/* Boravak i smeštaj */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <BedDouble className="w-5 h-5 text-primary" />Boravak i smeštaj
+            <CardHeader className={KOMPAKT_HEADER}>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BedDouble className="w-4 h-4 text-primary" />Boravak i smeštaj
               </CardTitle>
-              <CardDescription>Period boravka, smeštaj i napomene</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
+            <CardContent className={KOMPAKT_CONTENT}>
+              <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-3 xl:grid-cols-6">
                 <DatumField
                   label="Datum od"
                   value={boravak.datumOd}
@@ -1512,7 +1512,7 @@ export default function RezervacijePage() {
                     disabled={zakljucano}
                   />
                 </Fld>
-                <Fld label="Promena strukture" className="md:col-span-3">
+                <Fld label="Promena strukture" className="md:col-span-3 xl:col-span-6">
                   <Input
                     value={boravak.promenaStrukture}
                     onChange={(e) => setBoravak({ ...boravak, promenaStrukture: e.target.value })}
@@ -1522,6 +1522,7 @@ export default function RezervacijePage() {
                 <Fld label="Napomena" className="md:col-span-3">
                   <Textarea
                     rows={2}
+                    className="min-h-0"
                     value={boravak.napomena}
                     onChange={(e) => setBoravak({ ...boravak, napomena: e.target.value })}
                     disabled={zakljucano}
@@ -1530,6 +1531,7 @@ export default function RezervacijePage() {
                 <Fld label="Napomena interna" className="md:col-span-3">
                   <Textarea
                     rows={2}
+                    className="min-h-0"
                     value={boravak.napomenaInterna}
                     onChange={(e) => setBoravak({ ...boravak, napomenaInterna: e.target.value })}
                     disabled={zakljucano}
@@ -1542,18 +1544,17 @@ export default function RezervacijePage() {
         </TabsContent>
 
         {/* ════════════════ TAB: OBRAČUN ════════════════ */}
-        <TabsContent value="obracun" className="mt-4 space-y-4">
-          {/* Smeštaj */}
+        <TabsContent value="obracun" className={KOMPAKT_TAB}>
+          {/* Smeštaj · Prevoz · Osiguranje — tri reda u jednoj kartici */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                <BedDouble className="w-5 h-5 text-current" />Smeštaj
+            <CardHeader className={KOMPAKT_HEADER}>
+              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                <BedDouble className="w-4 h-4 text-current" />Smeštaj · Prevoz · Osiguranje
               </CardTitle>
-              <CardDescription>Cena i količina po valuti (privremeni prikaz)</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)_minmax(0,0.6fr)]">
+            <CardContent className={cn(KOMPAKT_CONTENT, "space-y-2")}>
+              <div className="grid gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)_minmax(0,0.6fr)]">
                   <Fld label="Cena smeštaja (EUR)">
                     <Input inputMode="decimal" aria-label="Cena smeštaja (EUR)" value={cene.cenaSmestaj} onChange={(e) => updCene({ cenaSmestaj: e.target.value })} placeholder="0,00" disabled={zakljucano} />
                   </Fld>
@@ -1567,8 +1568,8 @@ export default function RezervacijePage() {
                     <Input inputMode="decimal" aria-label="Količina za cenu smeštaja (RSD)" value={cene.kolSmestajRSD} onChange={(e) => updCene({ kolSmestajRSD: e.target.value })} placeholder="1" disabled={zakljucano} />
                   </Fld>
                 </div>
-                <PanelaSazetka>
-                  <div className="grid grid-cols-2 gap-3">
+                <PanelaSazetka kompaktno>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     <Fld label="Ukupno (EUR)">
                       <UkupnoInput vrednost={brutoSmestajEUR} />
                     </Fld>
@@ -1578,20 +1579,8 @@ export default function RezervacijePage() {
                   </div>
                 </PanelaSazetka>
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Prevoz */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                <Bus className="w-5 h-5 text-current" />Prevoz
-              </CardTitle>
-              <CardDescription>Cena i količina po valuti (privremeni prikaz)</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)_minmax(0,0.6fr)]">
+              <div className="grid gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)_minmax(0,0.6fr)]">
                   <Fld label="Cena prevoza (EUR)">
                     <Input inputMode="decimal" aria-label="Cena prevoza (EUR)" value={cene.cenaPrevoz} onChange={(e) => updCene({ cenaPrevoz: e.target.value })} placeholder="0,00" disabled={zakljucano} />
                   </Fld>
@@ -1605,8 +1594,8 @@ export default function RezervacijePage() {
                     <Input inputMode="decimal" aria-label="Količina za cenu prevoza (RSD)" value={cene.kolPrevozRSD} onChange={(e) => updCene({ kolPrevozRSD: e.target.value })} placeholder="1" disabled={zakljucano} />
                   </Fld>
                 </div>
-                <PanelaSazetka>
-                  <div className="grid grid-cols-2 gap-3">
+                <PanelaSazetka kompaktno>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     <Fld label="Ukupno (EUR)">
                       <UkupnoInput vrednost={brutoPrevozEUR} />
                     </Fld>
@@ -1616,22 +1605,42 @@ export default function RezervacijePage() {
                   </div>
                 </PanelaSazetka>
               </div>
+              <div className="grid gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)_minmax(0,0.6fr)]">
+                  <Fld label="Osiguranje (EUR)">
+                    <Input inputMode="decimal" aria-label="Osiguranje — iznos (EUR)" value={cene.osiguranjeEUR} onChange={(e) => updCene({ osiguranjeEUR: e.target.value })} placeholder="0,00" disabled={zakljucano} />
+                  </Fld>
+                  <Fld label="Osiguranje (RSD)" className="lg:col-start-3">
+                    <Input inputMode="decimal" aria-label="Osiguranje — iznos (RSD)" value={cene.osiguranjeRSD} onChange={(e) => updCene({ osiguranjeRSD: e.target.value })} placeholder="0,00" disabled={zakljucano} />
+                  </Fld>
+                </div>
+                <PanelaSazetka kompaktno>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                    <Fld label="Ukupno (EUR)">
+                      <UkupnoInput vrednost={cene.osiguranjeEUR.trim() ? num(cene.osiguranjeEUR) : null} />
+                    </Fld>
+                    <Fld label="Ukupno (RSD)">
+                      <UkupnoInput vrednost={cene.osiguranjeRSD.trim() ? num(cene.osiguranjeRSD) : null} />
+                    </Fld>
+                  </div>
+                </PanelaSazetka>
+              </div>
             </CardContent>
           </Card>
 
           {/* Dodatne usluge */}
           <Card>
-            <CardHeader className="flex-row flex-wrap items-start justify-between gap-3 space-y-0">
-              <div className="space-y-1.5">
-                <CardTitle className="text-base flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                  <Receipt className="w-5 h-5 text-current" />Dodatne usluge
+            <CardHeader className={cn(KOMPAKT_HEADER, "flex-row flex-wrap items-center justify-between gap-3 space-y-0")}>
+              <div className="space-y-0.5">
+                <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                  <Receipt className="w-4 h-4 text-current" />Dodatne usluge
                 </CardTitle>
-                <CardDescription>{izabraniUgovor ? `Ugovor ${izabraniUgovor} — ` : ""}stavke se čuvaju direktno u ugovoru</CardDescription>
+                <CardDescription className="text-xs">{izabraniUgovor ? `Ugovor ${izabraniUgovor} — ` : ""}stavke se čuvaju direktno u ugovoru</CardDescription>
               </div>
               <Button type="button" size="sm" variant="outline" disabled={!izabraniUgovor || zakljucano || izborUcitava || dodatnaIzmena !== null || dodatnaBrisanje !== null} onClick={() => setDodatnaIzmena("nova")}><Plus className="size-4" />Dodaj</Button>
             </CardHeader>
-            <CardContent>
-              <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <CardContent className={KOMPAKT_CONTENT}>
+              <div className="grid items-start gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
                 <div className="min-w-0">
                   <div className="overflow-hidden rounded-lg border">
                     {izabraniUgovor && dodatnaIzmena !== null && (
@@ -1694,8 +1703,8 @@ export default function RezervacijePage() {
                     )}
                   </div>
                 </div>
-                <PanelaSazetka>
-                  <div className="grid grid-cols-2 gap-3">
+                <PanelaSazetka kompaktno>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     <Fld label="Ukupno (EUR)">
                       <UkupnoInput vrednost={dodatneStavke.length ? dodatneSume.eur : null} />
                     </Fld>
@@ -1737,13 +1746,13 @@ export default function RezervacijePage() {
 
           {/* Popust */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                <Info className="w-5 h-5 text-current" />Popust
+            <CardHeader className={KOMPAKT_HEADER}>
+              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                <Info className="w-4 h-4 text-current" />Popust
+                <span className="ml-1 text-xs font-normal normal-case tracking-normal text-muted-foreground">procenat ili iznos — izmena iznosa briše procenat</span>
               </CardTitle>
-              <CardDescription>Po redu: procenat ili iznos — direktna izmena iznosa briše procenat</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className={cn(KOMPAKT_CONTENT, "space-y-2")}>
               <ProcenatRed
                 naslov="Smeštaj"
                 pct={cene.popustSmestajPct}
@@ -1771,47 +1780,15 @@ export default function RezervacijePage() {
             </CardContent>
           </Card>
 
-          {/* Osiguranje */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                <BadgeCheck className="w-5 h-5 text-current" />Osiguranje
-              </CardTitle>
-              <CardDescription>Iznos osiguranja po valuti</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Fld label="Iznos (EUR)">
-                    <Input inputMode="decimal" aria-label="Osiguranje — iznos (EUR)" value={cene.osiguranjeEUR} onChange={(e) => updCene({ osiguranjeEUR: e.target.value })} placeholder="0,00" disabled={zakljucano} />
-                  </Fld>
-                  <Fld label="Iznos (RSD)">
-                    <Input inputMode="decimal" aria-label="Osiguranje — iznos (RSD)" value={cene.osiguranjeRSD} onChange={(e) => updCene({ osiguranjeRSD: e.target.value })} placeholder="0,00" disabled={zakljucano} />
-                  </Fld>
-                </div>
-                <PanelaSazetka>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Fld label="Ukupno (EUR)">
-                      <UkupnoInput vrednost={cene.osiguranjeEUR.trim() ? num(cene.osiguranjeEUR) : null} />
-                    </Fld>
-                    <Fld label="Ukupno (RSD)">
-                      <UkupnoInput vrednost={cene.osiguranjeRSD.trim() ? num(cene.osiguranjeRSD) : null} />
-                    </Fld>
-                  </div>
-                </PanelaSazetka>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Provizija */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                <Wallet className="w-5 h-5 text-current" />Provizija
+            <CardHeader className={KOMPAKT_HEADER}>
+              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                <Wallet className="w-4 h-4 text-current" />Provizija
+                <span className="ml-1 text-xs font-normal normal-case tracking-normal text-muted-foreground">procenat ili iznos; ispod ukupan obračun aranžmana</span>
               </CardTitle>
-              <CardDescription>Po redu: procenat ili iznos; ispod ukupan obračun aranžmana</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className={cn(KOMPAKT_CONTENT, "space-y-2")}>
               <ProcenatRed
                 naslov="Smeštaj"
                 pct={cene.provizijaSmestajPct}
@@ -1845,9 +1822,9 @@ export default function RezervacijePage() {
                 disabled={zakljucano}
               />
               <Separator />
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-                <PanelaSazetka className="lg:col-start-2">
-                  <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <PanelaSazetka kompaktno className="lg:col-start-2">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     <Fld label="Ukupno aranžman (EUR)">
                       <UkupnoInput vrednost={ukupnoAranzmanEUR} />
                     </Fld>

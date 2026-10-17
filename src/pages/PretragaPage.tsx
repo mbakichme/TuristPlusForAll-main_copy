@@ -690,7 +690,7 @@ export default function PretragaPage() {
                                 Nema cene
                               </span>
                             ) : imaPopust ? (
-                              <div className="relative rounded-lg bg-emerald-50 border border-emerald-300 px-3 py-1.5 text-right leading-tight">
+                              <div className="relative rounded-lg bg-emerald-50 px-3 py-1.5 text-right leading-tight">
                                 <span className="absolute -top-2 -left-2 inline-flex items-center gap-1 rounded-full bg-red-600 text-white text-[10px] font-semibold px-2 py-0.5">
                                   <Tag className="w-3 h-3" />
                                   −{Math.round(100 - (s.cena_snizena! / s.cena_osnovna) * 100)}%
