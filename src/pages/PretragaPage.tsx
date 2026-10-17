@@ -17,9 +17,24 @@ import { toast } from "sonner";
 
 interface SlobodnaSoba {
   id: number; broj_sobe: string; tip: string; opis: string; opis_dodatno: string;
+  // obračun (pravila 2 i 3)
+  nema_cene?: boolean;
+  cena_osnovna?: number | null;
+  cena_snizena?: number | null;
+  struktura?: string;
+  koeficijent?: number;
+  tip_cene?: string | null;
+  obracun?: string[];
+  napomene?: string[];
 }
 interface SlobodniSmestaj {
   smestaj_id: number; smestaj_naziv: string; sobe: SlobodnaSoba[];
+  iskljuceno_putnici?: number;
+  cenovnik_id?: number | null;
+}
+
+function fmtEur(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
 }
 
 /** DD.MM.YYYY → Date */
@@ -70,7 +85,6 @@ function SelIcon({ icon: Icon }: { icon: React.ElementType }) {
 }
 
 // Privremena fiksna cena sobe — računanje se definiše kasnije
-const CENA_PLACEHOLDER = 500;
 
 /** "1 odrasao / 2 odrasla / 5 odraslih" */
 function odrasliLabel(n: number): string {
@@ -386,9 +400,12 @@ export default function PretragaPage() {
       return;
     }
     setLoading(true);
-    apiFetch<SlobodniSmestaj[]>(
-      `/slobodne-sobe?mesto_id=${mestoId}&datum_od=${encodeURIComponent(od)}&datum_do=${encodeURIComponent(doDatum)}`
-    )
+    const params = new URLSearchParams({
+      mesto_id: mestoId, datum_od: od, datum_do: doDatum,
+      odrasli: String(odrasli), deca: godineDeca.join(","),
+      prevoz: prevoz === "Sopstveni prevoz" ? "sopstveni" : "autobuski",
+    });
+    apiFetch<SlobodniSmestaj[]>(`/slobodne-sobe?${params.toString()}`)
       .then((r) => {
         setResults(r);
         setInfo({ od, do: doDatum, mesto: selMesto.naziv });
@@ -579,35 +596,71 @@ export default function PretragaPage() {
                     <Hotel className="w-4 h-4 text-primary" />
                     {g.smestaj_naziv}
                     <span className="text-xs font-normal text-muted-foreground">({g.sobe.length} slobodno)</span>
+                    {!!g.iskljuceno_putnici && (
+                      <span className="text-xs font-normal text-muted-foreground">
+                        · {g.iskljuceno_putnici} soba ne odgovara broju putnika
+                      </span>
+                    )}
                   </h3>
-                  <div className="grid gap-2 grid-cols-1 md:grid-cols-3">
+                  <div className="grid gap-2 grid-cols-1 md:grid-cols-2">
                     {g.sobe.map((s) => (
                       <div
                         key={s.id}
-                        className="flex items-center justify-between gap-3 rounded-md border p-3 hover:bg-muted/40 transition-colors"
+                        className="rounded-md border p-3 hover:bg-muted/40 transition-colors space-y-2"
                       >
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium truncate">
-                            Soba: {s.broj_sobe}
-                            {s.tip ? ` (${s.tip})` : ""}
-                            {s.opis ? ` ${s.opis}` : ""}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate">
+                              Soba: {s.broj_sobe}
+                              {s.tip ? ` (${s.tip})` : ""}
+                              {s.opis ? ` ${s.opis}` : ""}
+                              {s.struktura && s.struktura !== s.tip && (
+                                <span className="ml-1 text-xs text-violet-600">· struktura {s.struktura}</span>
+                              )}
+                            </div>
+                            {s.opis_dodatno && (
+                              <div className="text-xs text-muted-foreground truncate">{s.opis_dodatno}</div>
+                            )}
                           </div>
-                          {s.opis_dodatno && (
-                            <div className="text-xs text-muted-foreground truncate">{s.opis_dodatno}</div>
-                          )}
+                          <div className="flex items-center gap-3 shrink-0">
+                            {s.cena_osnovna == null ? (
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">Nema cene</span>
+                            ) : s.cena_snizena != null && s.cena_snizena < s.cena_osnovna ? (
+                              <span className="flex flex-col items-end leading-tight">
+                                <span className="font-mono text-xs text-muted-foreground line-through whitespace-nowrap">
+                                  {fmtEur(s.cena_osnovna)} €
+                                </span>
+                                <span className="font-mono font-bold text-xl text-primary whitespace-nowrap">
+                                  {fmtEur(s.cena_snizena)} €
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="font-mono font-bold text-xl text-primary whitespace-nowrap">
+                                {fmtEur(s.cena_osnovna)} €
+                              </span>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => toast.info("Rezervacija je u pripremi")}
+                            >
+                              Rezerviši
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="font-mono font-bold text-xl text-primary whitespace-nowrap">
-                            {CENA_PLACEHOLDER} €
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => toast.info("Rezervacija je u pripremi")}
+                        {!!s.napomene?.length && (
+                          <div className="text-xs text-amber-700 space-y-0.5">
+                            {s.napomene.map((n, i) => <div key={i}>⚠ {n}</div>)}
+                          </div>
+                        )}
+                        {!!s.obracun?.length && (
+                          <div
+                            className="rounded bg-muted/50 px-2 py-1.5 text-[11px] leading-snug text-muted-foreground font-mono space-y-0.5"
+                            data-testid="obracun"
                           >
-                            Rezerviši
-                          </Button>
-                        </div>
+                            {s.obracun.map((l, i) => <div key={i}>· {l}</div>)}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

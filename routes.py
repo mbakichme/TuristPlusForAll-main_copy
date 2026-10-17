@@ -2133,6 +2133,233 @@ def create_app(static_dir: str) -> FastAPI:
     # nije ograničena — granica važi samo za ponuđene opcije
     MAX_NOCENJA_OPCIJE = 30
 
+    # Privremene fiksne cene karata (EUR) dok se tabela polazak ne doradi
+    KARTA_ADL = Decimal("80")
+    KARTA_CHD = Decimal("70")
+    # Dete mlađe od ove granice (godine) računa se kao INF, ostala deca kao CHD
+    INF_GRANICA = 2
+
+    def _q2(x) -> float:
+        return float(Decimal(x).quantize(Decimal("0.01")))
+
+    def _fmt(x) -> str:
+        d = Decimal(x).quantize(Decimal("0.01"))
+        s = f"{d:.2f}"
+        return s[:-3] if s.endswith(".00") else s
+
+    def _obracun_cena(conn, smestaji: list, d_od, d_do, adl: int, chd: int, inf: int, sopstveni: bool):
+        """Pravila 2 i 3 pretrage: koeficijenti po sobi + obračun cene iz cenovnika.
+
+        Pravilo 2: soba ostaje SAMO ako neka od njenih struktura (sobe.tip +
+        soba_koeficijenti) ima red u koeficijenti_prodaje sa TAČNO (adl, chd, inf)
+        i koeficijentom > 0. Sobe bez takvog reda se izbacuju (brojač
+        `iskljuceno_putnici` na smeštaju).
+
+        Pravilo 3: cena iz AKTIVNOG cenovnika smeštaja (cenovnik_opcije.datumod ≤
+        danas ≤ datumdo, najnoviji id) — red snimka = sama soba (struktura == tip)
+        ili virtuelna soba nastala iz nje (izvor_soba_id + tip == struktura);
+        boravak = lanac perioda snimka od d_od do d_do, osnova = ZBIR cena po
+        terminu. Po osobi: osnova × koeficijent, sopstveni prevoz → minus
+        umanjenje × (adl+chd) JEDNOM. Po sobi: osnova + karte (80·ADL + 70·CHD)
+        za autobuski, bez karata i bez umanjenja za sopstveni. Popust (opcije
+        prvog termina lanca, važi danas) se primenjuje na dobijenu cenu.
+        """
+        danas = _belgrade_now().date()
+        broj_osoba = adl + chd
+        koef_rows = conn.execute(text("""
+            SELECT struktura, koeficijent FROM koeficijenti_prodaje
+            WHERE adl = :adl AND chd = :chd AND inf = :inf AND koeficijent > 0
+            ORDER BY rucno, id
+        """), {"adl": adl, "chd": chd, "inf": inf}).fetchall()
+        koef_map: dict = {}
+        for r in koef_rows:
+            koef_map.setdefault((r.struktura or "").strip(), Decimal(str(r.koeficijent)))
+
+        soba_ids = [s["id"] for g in smestaji for s in g["sobe"]]
+        dodatni: dict = {}
+        if soba_ids:
+            for r in conn.execute(text(
+                "SELECT soba_id, struktura FROM soba_koeficijenti WHERE soba_id = ANY(:ids)"
+            ), {"ids": soba_ids}):
+                dodatni.setdefault(r.soba_id, []).append((r.struktura or "").strip())
+
+        def _cenovnik(sid):
+            c = conn.execute(text("""
+                SELECT c.id, c.sobe, c.periodi
+                FROM cenovnici c
+                JOIN cenovnik_opcije o ON o.cenovnik_id = c.id
+                WHERE c.smestaj_id = :sid AND o.datumod <= :d AND o.datumdo >= :d
+                ORDER BY c.id DESC LIMIT 1
+            """), {"sid": sid, "d": danas}).fetchone()
+            if not c:
+                return None
+            cene = {(r.soba_id, r.period_id): Decimal(str(r.cena)) for r in conn.execute(text(
+                "SELECT soba_id, period_id, cena FROM cenovnik_cene WHERE cenovnik_id = :c"
+            ), {"c": c.id})}
+            opcije = {(r.soba_id, r.period_id): r for r in conn.execute(text(
+                "SELECT * FROM opcije_soba WHERE cenovnik_id = :c"
+            ), {"c": c.id}).mappings()}
+            popusti = {(r.soba_id, r.period_id): r for r in conn.execute(text(
+                "SELECT * FROM popust_soba WHERE cenovnik_id = :c"
+            ), {"c": c.id}).mappings()}
+            # lanac perioda snimka od d_od do d_do (BFS — najmanje termina)
+            poceci: dict = {}
+            for p in c.periodi:
+                poceci.setdefault(str(p["datum_od"]), []).append(p)
+            cilj = d_do.isoformat()
+            front = [(d_od.isoformat(), [])]
+            videno = set()
+            lanac = None
+            while front and lanac is None:
+                sledeci = []
+                for cur, put in front:
+                    if cur in videno:
+                        continue
+                    videno.add(cur)
+                    for p in poceci.get(cur, []):
+                        np_ = put + [p]
+                        if str(p["datum_do"]) == cilj:
+                            lanac = np_
+                            break
+                        if str(p["datum_do"]) < cilj:
+                            sledeci.append((str(p["datum_do"]), np_))
+                    if lanac is not None:
+                        break
+                front = sledeci
+            return {"id": c.id, "sobe": c.sobe, "cene": cene, "opcije": opcije,
+                    "popusti": popusti, "lanac": lanac or []}
+
+        def _po_opsegu(mapa, soba_row_id, pid):
+            return mapa.get((soba_row_id, pid)) or mapa.get((soba_row_id, 0))
+
+        def _obracun_sobe(cen, soba, struktura, koef):
+            """Vrati dict obračuna ili None ako nema cene za tu strukturu."""
+            obr = []
+            if struktura == (soba["tip"] or "").strip():
+                red = next((r for r in cen["sobe"] if r["id"] == soba["id"] and not r.get("virtuelna")), None)
+            else:
+                red = next((r for r in cen["sobe"] if r.get("virtuelna") and r.get("izvor_soba_id") == soba["id"]
+                            and (r.get("tip") or "").strip() == struktura), None)
+            if not red:
+                return None
+            obr.append(f"Cenovnik #{cen['id']}, red {red['broj_sobe']} ({struktura}), koeficijent {koef} "
+                       f"za {adl} ADL / {chd} CHD / {inf} INF")
+            osnova = Decimal("0")
+            delovi = []
+            for p in cen["lanac"]:
+                cena_p = cen["cene"].get((red["id"], p["id"]))
+                if cena_p is None or cena_p <= 0:
+                    return {"nema_cene": True, "obracun": obr + [
+                        f"Nema unete cene za termin {p['datum_od']} – {p['datum_do']}"]}
+                osnova += cena_p
+                delovi.append(f"{_fmt(cena_p)}")
+            if len(delovi) > 1:
+                obr.append(f"Osnova iz cenovnika: {' + '.join(delovi)} = {_fmt(osnova)} € "
+                           f"(lanac od {len(delovi)} termina)")
+            else:
+                obr.append(f"Osnova iz cenovnika: {_fmt(osnova)} €")
+            prvi_pid = cen["lanac"][0]["id"]
+            opc = _po_opsegu(cen["opcije"], red["id"], prvi_pid)
+            tip_cene = (opc["tip_cene"] if opc and opc["tip_cene"] else "po_osobi")
+            umanj_sp = Decimal(str(opc["popust_sopstveni_prevoz"])) if opc and opc["popust_sopstveni_prevoz"] else Decimal("0")
+            napomene = []
+            if opc:
+                if opc["blokirano"]:
+                    napomene.append("Soba je BLOKIRANA u opcijama cenovnika")
+                if opc["prevoz"] == "obavezan" and sopstveni:
+                    napomene.append("Opcije: prevoz je OBAVEZAN (traženo: sopstveni)")
+                if opc["prevoz"] == "nemoguc" and not sopstveni:
+                    napomene.append("Opcije: prevoz NIJE MOGUĆ (traženo: autobuski)")
+            if tip_cene == "po_sobi":
+                cena = osnova
+                obr.append("Tip cene: PO SOBI")
+                if sopstveni:
+                    obr.append("Sopstveni prevoz: bez karata, bez umanjenja")
+                else:
+                    karte = KARTA_ADL * adl + KARTA_CHD * chd
+                    cena += karte
+                    obr.append(f"Autobuski prevoz: karte {_fmt(KARTA_ADL)}×{adl} ADL + "
+                               f"{_fmt(KARTA_CHD)}×{chd} CHD = {_fmt(karte)} € → {_fmt(cena)} €")
+            else:
+                cena = osnova * koef
+                obr.append(f"Tip cene: PO OSOBI → {_fmt(osnova)} × {koef} = {_fmt(cena)} €")
+                if sopstveni:
+                    if umanj_sp > 0:
+                        um = umanj_sp * broj_osoba
+                        cena -= um
+                        obr.append(f"Sopstveni prevoz: umanjenje {_fmt(umanj_sp)} × {broj_osoba} osoba = "
+                                   f"−{_fmt(um)} € → {_fmt(cena)} €")
+                    else:
+                        obr.append("Sopstveni prevoz: umanjenje nije definisano u opcijama (0 €)")
+                else:
+                    obr.append("Autobuski prevoz: konačna cena (prevoz uključen)")
+            if cena < 0:
+                cena = Decimal("0")
+            osnovna = cena.quantize(Decimal("0.01"))
+            snizena = None
+            pop = _po_opsegu(cen["popusti"], red["id"], prvi_pid)
+            if pop:
+                vazi = ((pop["vazi_od"] is None or pop["vazi_od"] <= danas)
+                        and (pop["vazi_do"] is None or pop["vazi_do"] >= danas))
+                um = Decimal(str(pop["umanjenje"]))
+                if vazi:
+                    if pop["umanjenje_vrsta"] == "procenat":
+                        snizena = (osnovna * (Decimal("100") - um) / Decimal("100")).quantize(Decimal("0.01"))
+                        obr.append(f"Popust ({pop['tip_popusta']}): −{_fmt(um)}% → {_fmt(snizena)} €")
+                    else:
+                        snizena = max(Decimal("0"), osnovna - um).quantize(Decimal("0.01"))
+                        obr.append(f"Popust ({pop['tip_popusta']}): −{_fmt(um)} € → {_fmt(snizena)} €")
+                else:
+                    obr.append(f"Popust ({pop['tip_popusta']}) postoji ali ne važi danas "
+                               f"({pop['vazi_od']} – {pop['vazi_do']})")
+            else:
+                obr.append("Popust: nema")
+            return {"nema_cene": False, "cena_osnovna": _q2(osnovna),
+                    "cena_snizena": _q2(snizena) if snizena is not None else None,
+                    "struktura": struktura, "koeficijent": float(koef),
+                    "tip_cene": tip_cene, "obracun": obr, "napomene": napomene}
+
+        out = []
+        for g in smestaji:
+            cen = _cenovnik(g["smestaj_id"])
+            sobe_out = []
+            iskljuceno = 0
+            for s in g["sobe"]:
+                tip = (s["tip"] or "").strip()
+                strukture = [tip] + [d for d in dodatni.get(s["id"], []) if d != tip]
+                kandidati = [(st, koef_map[st]) for st in strukture if st in koef_map]
+                if not kandidati:
+                    iskljuceno += 1
+                    continue
+                najbolji = None
+                if cen and cen["lanac"]:
+                    for st, koef in kandidati:
+                        r = _obracun_sobe(cen, s, st, koef)
+                        if r is None or r["nema_cene"]:
+                            if najbolji is None:
+                                najbolji = r
+                            continue
+                        if najbolji is None or najbolji.get("nema_cene") or \
+                           (r["cena_snizena"] or r["cena_osnovna"]) < (najbolji["cena_snizena"] or najbolji["cena_osnovna"]):
+                            najbolji = r
+                if najbolji is None:
+                    razlog = ("Nema aktivnog cenovnika za ovaj smeštaj" if not cen else
+                              "Cenovnik ne pokriva traženi boravak lancem termina" if not cen["lanac"] else
+                              "U cenovniku ne postoji red za strukturu " + ", ".join(st for st, _ in kandidati))
+                    najbolji = {"nema_cene": True, "obracun": [razlog]}
+                najbolji.setdefault("struktura", kandidati[0][0])
+                najbolji.setdefault("koeficijent", float(kandidati[0][1]))
+                najbolji.setdefault("cena_osnovna", None)
+                najbolji.setdefault("cena_snizena", None)
+                najbolji.setdefault("tip_cene", None)
+                najbolji.setdefault("napomene", [])
+                sobe_out.append({**s, **najbolji})
+            if not sobe_out:
+                continue
+            out.append({**g, "sobe": sobe_out, "iskljuceno_putnici": iskljuceno,
+                        "cenovnik_id": cen["id"] if cen else None})
+        return out
+
     @api.get("/slobodne-sobe")
     def slobodne_sobe(request: Request, _: dict = Depends(get_current_user)):
         q = dict(request.query_params)
@@ -2140,6 +2367,16 @@ def create_app(static_dir: str) -> FastAPI:
         do = (q.get("datum_do") or "").strip()
         grupa_raw = (q.get("grupa_id") or "").strip()
         mesto_raw = (q.get("mesto_id") or "").strip()
+        # putnici + prevoz (koriste se samo u modu konkretnog boravka od+do)
+        odrasli_raw = (q.get("odrasli") or "").strip()
+        deca_raw = (q.get("deca") or "").strip()  # godine dece, npr. "5,12"
+        prevoz_raw = (q.get("prevoz") or "").strip().lower()
+        obracun = odrasli_raw != ""
+        adl = int(odrasli_raw) if odrasli_raw.isdigit() else 2
+        godine = [int(x) for x in deca_raw.split(",") if x.strip().isdigit()] if deca_raw else []
+        chd = sum(1 for gd in godine if gd >= INF_GRANICA)
+        inf = sum(1 for gd in godine if gd < INF_GRANICA)
+        sopstveni = prevoz_raw.startswith("sopstveni")
         if not od:
             raise HTTPException(status_code=400, detail="datum_od je obavezan")
         try:
@@ -2216,7 +2453,10 @@ def create_app(static_dir: str) -> FastAPI:
                     raise HTTPException(status_code=400, detail="Datumi moraju biti u formatu DD.MM.YYYY")
                 if d_do <= d_od:
                     raise HTTPException(status_code=400, detail="Datum do mora biti posle datuma od")
-                return _smestaji_za_termin(conn, d_od, d_do)
+                smestaji = _smestaji_za_termin(conn, d_od, d_do)
+                if not obracun:
+                    return smestaji  # stari klijenti bez putnika: samo raspoloživost
+                return _obracun_cena(conn, smestaji, d_od, d_do, adl, chd, inf, sopstveni)
 
             # ── NOVI MOD: pretraga po SVIM lancima perioda koji počinju na datum_od ──
             # (grupa_id filter ili obavezno mesto_id — opcije su krajevi LANACA
