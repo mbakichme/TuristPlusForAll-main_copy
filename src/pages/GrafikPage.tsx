@@ -222,6 +222,31 @@ const formattersKalendara = {
   formatWeekdayName: (day: Date) => DANI[day.getDay()],
 };
 
+function DatumBoravka({ label, value, onChange }: {
+  label: string; value: string; onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const datum = value ? new Date(`${value}T12:00:00`) : undefined;
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button variant="outline" aria-label={label} className="w-full justify-start gap-2 rounded-lg bg-card px-3 font-normal tabular-nums">
+            <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+            {datum ? fmtDatum(datum) : "dd.mm.yyyy"}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-auto rounded-xl bg-card p-0 shadow-lg">
+          <Calendar mode="single" selected={datum} defaultMonth={datum} weekStartsOn={1}
+            formatters={formattersKalendara} initialFocus
+            onSelect={(d) => { if (d) { onChange(isoOdDatuma(d)); setOpen(false); } }} />
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
 /** Tabela grafika za JEDAN smeštaj — redovi su sobe, zeleni pojasevi su ugovori. */
 function GrafikTabela({ sec, onRez, onUgovor }: {
   sec: GrafikData;
@@ -528,8 +553,8 @@ export default function GrafikPage() {
   // Vraća opis ugovora ako je zauzet, inače null.
   function terminZauzet(): string | null {
     if (!slotSec || !slotSoba || !slotPeriod) return null;
-    const od = pDate(slotPeriod.datum_od).getTime();
-    const doo = pDate(slotPeriod.datum_do).getTime();
+    const od = new Date(`${brzaOd}T00:00:00`).getTime();
+    const doo = new Date(`${brzaDo}T00:00:00`).getTime();
     const z = slotSec.ugovori.find((u) =>
       (u.soba || "").trim() === (slotSoba.broj_sobe || "").trim()
       && pDate(u.datum_od).getTime() < doo && pDate(u.datum_do).getTime() > od
@@ -538,6 +563,10 @@ export default function GrafikPage() {
   }
 
   function obavestiZauzet() {
+    if (!brzaOd || !brzaDo || brzaDo <= brzaOd) {
+      toast.error("Datum do mora biti posle Datuma od");
+      return true;
+    }
     const zauzet = terminZauzet();
     if (zauzet) {
       toast.error(`Termin je zauzet — ugovor ${zauzet}. Izaberite slobodan termin.`, { duration: 12000 });
@@ -551,8 +580,8 @@ export default function GrafikPage() {
     if (obavestiZauzet()) return;
     const params = new URLSearchParams({
       novi: "1",
-      datumod: slotPeriod.datum_od,
-      datumdo: slotPeriod.datum_do,
+      datumod: fmtDatum(new Date(`${brzaOd}T12:00:00`)),
+      datumdo: fmtDatum(new Date(`${brzaDo}T12:00:00`)),
       soba: String(slotSoba.id),
       smestaj: String(slotSec.smestaj.id),
       mesto: mestoId,
@@ -884,11 +913,9 @@ export default function GrafikPage() {
                 Slobodno
               </span>
             </div>
-            <div className="flex items-center gap-2 border-t border-border/60 pt-3 text-sm">
-              <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span className="font-medium tabular-nums">
-                {slotPeriod ? `${slotPeriod.datum_od} – ${slotPeriod.datum_do}` : "—"}
-              </span>
+            <div className="grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+              <DatumBoravka label="Datum od" value={brzaOd} onChange={setBrzaOd} />
+              <DatumBoravka label="Datum do" value={brzaDo} onChange={setBrzaDo} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -977,14 +1004,8 @@ export default function GrafikPage() {
               )}
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Datum od</Label>
-                <Input type="date" value={brzaOd} onChange={(e) => setBrzaOd(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Datum do</Label>
-                <Input type="date" value={brzaDo} onChange={(e) => setBrzaDo(e.target.value)} />
-              </div>
+              <DatumBoravka label="Datum od" value={brzaOd} onChange={setBrzaOd} />
+              <DatumBoravka label="Datum do" value={brzaDo} onChange={setBrzaDo} />
             </div>
             {brzaTip === "Predrezervacija" && (
               <div className="grid grid-cols-2 gap-3">
