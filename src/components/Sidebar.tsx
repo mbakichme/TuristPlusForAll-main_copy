@@ -59,9 +59,8 @@ function NavItem({ to, icon: Icon, label, collapsed, onClick }: NavItemProps) {
   return item;
 }
 
-function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen, agencijaOpen, setAgencijaOpen, prodajaOpen, setProdajaOpen, knjigovodstvoOpen, setKnjigovodstvoOpen, preglediOpen, setPreglediOpen, dnevniOpen, setDnevniOpen, handleLogout, user, onNavClick }: {
+function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen, setAgencijaOpen, prodajaOpen, setProdajaOpen, knjigovodstvoOpen, setKnjigovodstvoOpen, preglediOpen, setPreglediOpen, dnevniOpen, setDnevniOpen, handleLogout, user, onNavClick }: {
   collapsed: boolean;
-  setCollapsed: Dispatch<SetStateAction<boolean>>;
   settingsOpen: boolean;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   agencijaOpen: boolean;
@@ -92,17 +91,6 @@ function SidebarContent({ collapsed, setCollapsed, settingsOpen, setSettingsOpen
           </div>
         )}
       </div>
-
-      {/* Toggle button — desktop only */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className={cn(
-          "absolute -right-3 top-16 z-10 w-6 h-6 rounded-full bg-background border border-border",
-          "hidden md:flex items-center justify-center shadow-sm hover:bg-accent transition-colors"
-        )}
-      >
-        {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
-      </button>
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
@@ -420,29 +408,44 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
       {/* Desktop sidebar */}
       <aside
         className={cn(
-          "hidden md:flex relative flex-col h-screen bg-card border-r border-border transition-all duration-300 ease-in-out flex-shrink-0",
-          collapsed ? "w-16" : "w-64"
+          "hidden md:flex relative flex-col h-screen bg-card transition-all duration-300 ease-in-out flex-shrink-0",
+          collapsed ? "w-0" : "w-64 border-r border-border"
         )}
       >
-        <SidebarContent
-          collapsed={collapsed}
-          setCollapsed={setCollapsed}
-          settingsOpen={settingsOpen}
-          setSettingsOpen={setSettingsOpen}
-          agencijaOpen={agencijaOpen}
-          setAgencijaOpen={setAgencijaOpen}
-          prodajaOpen={prodajaOpen}
-          setProdajaOpen={setProdajaOpen}
-          knjigovodstvoOpen={knjigovodstvoOpen}
-          setKnjigovodstvoOpen={setKnjigovodstvoOpen}
-          preglediOpen={preglediOpen}
-          setPreglediOpen={setPreglediOpen}
-          dnevniOpen={dnevniOpen}
-          setDnevniOpen={setDnevniOpen}
-          handleLogout={handleLogout}
-          user={user}
-        />
+        {!collapsed && (
+          <SidebarContent
+            collapsed={collapsed}
+            settingsOpen={settingsOpen}
+            setSettingsOpen={setSettingsOpen}
+            agencijaOpen={agencijaOpen}
+            setAgencijaOpen={setAgencijaOpen}
+            prodajaOpen={prodajaOpen}
+            setProdajaOpen={setProdajaOpen}
+            knjigovodstvoOpen={knjigovodstvoOpen}
+            setKnjigovodstvoOpen={setKnjigovodstvoOpen}
+            preglediOpen={preglediOpen}
+            setPreglediOpen={setPreglediOpen}
+            dnevniOpen={dnevniOpen}
+            setDnevniOpen={setDnevniOpen}
+            handleLogout={handleLogout}
+            user={user}
+          />
+        )}
+
+        {/* Toggle — ostaje vidljiv i kad je navigacija sklonjena */}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? "Prikaži navigaciju" : "Sakrij navigaciju"}
+          className={cn(
+            "absolute top-16 z-10 w-8 h-8 rounded-full bg-background border border-border",
+            "flex items-center justify-center shadow-sm hover:bg-accent transition-colors",
+            collapsed ? "left-2" : "-right-4"
+          )}
+        >
+          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+        </button>
       </aside>
+
 
       {/* Mobile sidebar overlay */}
       {mobileOpen && (

@@ -414,6 +414,16 @@ def init_db(engine):
             "CREATE INDEX IF NOT EXISTS idx_aranzman_dopuna_aranzman_id "
             "ON aranzman_dopuna(aranzman_id)"
         ))
+        # Knjiga evidencije prodatih aranžmana (KEPTP) — numeracija odvojena od aranzman.keptp;
+        # jedan broj po ugovoru, dodeljuje ga korisnik kroz UI (ne svaki ugovor)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS keptp (
+                id SERIAL PRIMARY KEY,
+                datum DATE NOT NULL,
+                broj_keptp INTEGER NOT NULL UNIQUE,
+                broj_ugovora VARCHAR(50) NOT NULL UNIQUE
+            )
+        """))
         # Starije baze: dodaj smer ako ne postoji
         conn.execute(text(
             "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS smer VARCHAR(50) DEFAULT NULL"
@@ -980,6 +990,11 @@ class UgovorSmestajUpdate(BaseModel):
 # ─── Rezervacije: unos/izmena aranžmana iz forme (Sačuvaj/Izmeni) ───────────
 # Advisory lock za dodelu novog broja ugovora (MAX+1 po godini iz Datuma od).
 REZ_ADVISORY_LOCK = 9_250_000_000_001
+KEPTP_ADVISORY_LOCK = 9_250_000_000_002
+
+
+class KeptpDodeliIn(BaseModel):
+    kljuc: str
 
 
 class RezPutnikIn(BaseModel):
@@ -1035,6 +1050,7 @@ class RezBoravakIn(BaseModel):
     struktura: str = ""
     napomena: str = ""
     napomenaInterna: str = ""
+    viza: bool = False
 
 
 class RezervacijaIn(BaseModel):
@@ -3771,6 +3787,12 @@ def create_app(static_dir: str) -> FastAPI:
                 soba_broj = (r.broj_sobe or "").strip() or None
         if soba_broj is None:
             soba_broj = _rez_str(b.sobaBroj, 200)
+        # struktura: ako klijent nije poslao, uzmi tip izabrane sobe
+        struktura_val = (b.struktura or "").strip()
+        if not struktura_val and b.sobaId is not None:
+            r = conn.execute(text("SELECT TRIM(tip) AS tip FROM sobe WHERE id = :i"), {"i": b.sobaId}).fetchone()
+            if r and r.tip:
+                struktura_val = r.tip
 
         # obavezna provera zauzeća pre upisa (POST i PUT; PUT izuzima sebe)
         _rez_proveri_konflikt(conn, smestaj_naziv, soba_broj, datum_od, datum_do, exclude_kljuc)
@@ -3810,13 +3832,14 @@ def create_app(static_dir: str) -> FastAPI:
             "smestaj_id": smestaj_id_val,
             "soba": soba_broj,
             "destinacija": destinacija_naziv,
-            "apartman": _rez_str(b.struktura, 10),
+            "apartman": _rez_str(struktura_val, 10),
             "datumod": datetime(datum_od.year, datum_od.month, datum_od.day),
             "datumdo": datetime(datum_do.year, datum_do.month, datum_do.day),
             "datumoddo": f"{datum_od:%d.%m.%Y}-{datum_do:%d.%m.%Y}",
             "napomena": (b.napomena or "")[:1024],
             "napomena1": _rez_str(b.napomenaInterna, 255),
             "ulazak": _rez_str(body.ulazak, 200),
+            "viza": 1 if b.viza else 0,
             "cenaaranz": round(c.cenaSmestajEUR, 2),
             "kolaranz": c.kolSmestajEUR,
             "cenaaranzd": round(c.cenaSmestajRSD, 2),
@@ -3906,6 +3929,39 @@ def create_app(static_dir: str) -> FastAPI:
             zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "izmena", uid, uime,
                      diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici)))
         return {"ok": True, "kljuc": kljuc, "message": "Izmene su sačuvane"}
+
+    @api.get("/keptp/ugovor/{kljuc:path}")
+    def keptp_za_ugovor(kljuc: str, _: dict = Depends(get_current_user)):
+        """KEPTP evidencija za ugovor — null ako broj nije dodeljen."""
+        kljuc = kljuc.strip().strip("/")
+        with engine.connect() as conn:
+            r = conn.execute(text(
+                "SELECT broj_keptp, datum FROM keptp WHERE broj_ugovora = :k"
+            ), {"k": kljuc}).fetchone()
+        if not r:
+            return None
+        return {"broj_keptp": r.broj_keptp, "datum": f"{r.datum:%d.%m.%Y}"}
+
+    @api.post("/keptp/dodeli")
+    def keptp_dodeli(body: KeptpDodeliIn, _: dict = Depends(get_current_user)):
+        """Dodeli sledeći broj KEPTP ugovoru (idempotentno). Numeracija kreće od 1,
+        pod advisory lock-om; datum = danas (Europe/Belgrade)."""
+        kljuc = body.kljuc.strip().strip("/")
+        with engine.begin() as conn:
+            if not conn.execute(text("SELECT 1 FROM aranzman WHERE kljuc = :k"), {"k": kljuc}).fetchone():
+                raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": KEPTP_ADVISORY_LOCK})
+            postojeci = conn.execute(text(
+                "SELECT broj_keptp, datum FROM keptp WHERE broj_ugovora = :k"
+            ), {"k": kljuc}).fetchone()
+            if postojeci:
+                return {"broj_keptp": postojeci.broj_keptp, "datum": f"{postojeci.datum:%d.%m.%Y}"}
+            sledeci = conn.execute(text("SELECT COALESCE(MAX(broj_keptp), 0) + 1 FROM keptp")).scalar_one()
+            danas = _belgrade_now().date()
+            conn.execute(text(
+                "INSERT INTO keptp (datum, broj_keptp, broj_ugovora) VALUES (:d, :b, :k)"
+            ), {"d": danas, "b": sledeci, "k": kljuc})
+        return {"broj_keptp": sledeci, "datum": f"{danas:%d.%m.%Y}"}
 
     @api.post("/rezervacije/{kljuc:path}/storno")
     def storniraj_rezervaciju(kljuc: str, current_user: dict = Depends(get_current_user)):
@@ -4160,6 +4216,7 @@ def create_app(static_dir: str) -> FastAPI:
             "dodatne": [dict(stavka) for stavka in dodatne],
             "smer": d.get("smer"),
             "tiprezervacije": d.get("tiprezervacije"),
+            "viza": d.get("viza"),
             "subagent": d.get("subagent") or "",
             "timelimit": d["timelimit"].strftime("%d.%m.%Y %H:%M") if d.get("timelimit") else None,
             "adresa": d.get("adresa"),
@@ -4244,6 +4301,10 @@ def create_app(static_dir: str) -> FastAPI:
                 SELECT kljuc,
                        to_char(danas, 'DD.MM.YYYY') AS danas_fmt,
                        putnik, mesto, naziv, subagent, apartman, soba,
+                       (SELECT b.tip FROM sobe b
+                         WHERE b.veza_id_smestaj = a.smestaj_id
+                           AND TRIM(b.broj_sobe) = TRIM(a.soba)
+                         LIMIT 1) AS tip_sobe,
                        (SELECT COALESCE(json_agg(saputnici.sk), '[]'::json) FROM (
                            SELECT saputnik AS sk FROM aranzman_dopuna ad
                            WHERE ad.aranzman_id = a.id
@@ -4255,6 +4316,7 @@ def create_app(static_dir: str) -> FastAPI:
                        {', '.join(UGOVORI_LIST_COLS)}
                 FROM aranzman a {where}
                 ORDER BY {sort} {direction} NULLS LAST, a.id {direction}
+                LIMIT :limit OFFSET :offset
             """), {**bind, "limit": page_size, "offset": (page - 1) * page_size}).fetchall()
 
         kurs = get_eur_middle()
@@ -4276,9 +4338,10 @@ def create_app(static_dir: str) -> FastAPI:
                 "putnici": row_putnici(r),
                 "mesto": r.mesto,
                 "naziv": r.naziv,
-                "struktura": r.apartman,
+                "struktura": (r.apartman or "").strip() or (r.tip_sobe or "").strip() or None,
                 "soba": r.soba,
                 "subagent": r.subagent,
+                "datumod": r.datumod_fmt,
                 "datumdo": r.datumdo_fmt,
                 "ukupna_vrednost": row_ukupna(r),
             } for r in rows],

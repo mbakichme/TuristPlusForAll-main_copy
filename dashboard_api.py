@@ -26,6 +26,12 @@ def register_dashboard(api, engine, get_current_user) -> None:
                        to_char(a.datumod, 'DD.MM.YYYY') AS datumod,
                        to_char(a.datumdo, 'DD.MM.YYYY') AS datumdo,
                        a.soba,
+                       COALESCE(NULLIF(TRIM(a.apartman), ''), (
+                           SELECT b.tip FROM sobe b
+                           WHERE b.veza_id_smestaj = a.smestaj_id
+                             AND TRIM(b.broj_sobe) = TRIM(a.soba)
+                           LIMIT 1
+                       )) AS struktura,
                        a.obradio,
                        a.danas
                 FROM aranzman a
@@ -35,5 +41,5 @@ def register_dashboard(api, engine, get_current_user) -> None:
             """), {"d": danas}).mappings().fetchall()
         rows = sorted(rows, key=lambda r: r["danas"] or datetime.min, reverse=True)
         out = [{k: r[k] for k in ("kljuc", "nosioc", "mesto", "smestaj",
-                                  "datumod", "datumdo", "soba", "obradio")} for r in rows]
+                                  "datumod", "datumdo", "soba", "struktura", "obradio")} for r in rows]
         return {"datum": danas.strftime("%d.%m.%Y"), "ukupno": len(out), "rows": out}

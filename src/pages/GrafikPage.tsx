@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { fmtPutnici } from "@/lib/putnici";
 import PromenaSmestajaDialog from "@/components/PromenaSmestajaDialog";
 import { Button } from "@/components/ui/button";
+import { PageLoader } from "@/components/PageLoader";
 import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
@@ -614,7 +615,7 @@ export default function GrafikPage() {
             smestajId: slotSec.smestaj.id, sobaId: slotSoba.id,
             mestoId: mestoId ? Number(mestoId) : null,
             smestajNaziv: null, sobaBroj: null, mestoNaziv: null,
-            struktura: "", napomena: brzaNapomena.trim(), napomenaInterna: "",
+            struktura: slotSoba.tip || "", napomena: brzaNapomena.trim(), napomenaInterna: "",
           },
           destinacijaId: null, destinacijaNaziv: null, ulazak: "",
           cene: {
@@ -773,7 +774,7 @@ export default function GrafikPage() {
           Izaberite mesto, grupu perioda i smeštaj za prikaz grafika
         </div>
       ) : loading && allSekcije.length === 0 ? (
-        <div className="py-16 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" /></div>
+        <div className="rounded-md border"><PageLoader className="min-h-[40vh] gap-6" /></div>
       ) : allSekcije.length > 0 && allSekcije.every((s) => s.periodi.length === 0) ? (
         <div className="rounded-md border py-16 text-center text-muted-foreground text-sm">
           Izabrana grupa perioda nema definisane periode

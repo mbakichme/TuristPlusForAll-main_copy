@@ -1,22 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import type { UgovorRow, UgovoriResponse, UgovorDetail, UplataRow } from "../types";
+import type { UgovorRow, UgovoriResponse } from "../types";
 import { apiFetch } from "../lib/api";
 import { Button } from "@/components/ui/button";
+import { PageLoader } from "@/components/PageLoader";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
-} from "@/components/ui/dialog";
-import {
-  Loader2, FileText, Search, ChevronUp, ChevronDown, RefreshCw, Receipt, Eye, FilePlus
+  Loader2, FileText, Search, ChevronUp, ChevronDown, RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { fmtPutnici } from "@/lib/putnici";
 
 const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: "kljuc", label: "Broj ugovora", sortable: true },
@@ -26,8 +23,7 @@ const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: "naziv", label: "Smeštaj", sortable: true },
   { key: "struktura", label: "Struktura / soba", sortable: false },
   { key: "subagent", label: "Subagent", sortable: true },
-  { key: "datumod", label: "Datum od", sortable: true },
-  { key: "datumdo", label: "Datum do", sortable: true },
+  { key: "datumod", label: "Termin", sortable: true },
   { key: "ukupna_vrednost", label: "Ukupna vrednost", sortable: false },
 ];
 
@@ -39,8 +35,15 @@ const BATCH_SIZE = 100;
 
 const fmtRSD = (v: number | null | undefined) =>
   v == null ? "—" : new Intl.NumberFormat("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) + " RSD";
-const fmtEUR = (v: number | null | undefined) =>
-  v == null ? "—" : new Intl.NumberFormat("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) + " €";
+
+/** "DD.MM.YYYY" + "DD.MM.YYYY" → "04.07-14.07.2026" (ista godina); različita godina → "28.12.2026-03.01.2027" */
+const fmtTermin = (od: string | null | undefined, doDatum: string | null | undefined) => {
+  const a = (od || "").split(".");
+  const b = (doDatum || "").split(".");
+  if (a.length !== 3 || b.length !== 3) return "—";
+  if (a[2] === b[2]) return `${a[0]}.${a[1]}-${b[0]}.${b[1]}.${b[2]}`;
+  return `${od}-${doDatum}`;
+};
 
 export default function UgovoriPage() {
   const navigate = useNavigate();
@@ -58,14 +61,6 @@ export default function UgovoriPage() {
   const requestId = useRef(0);
   const hasMoreRef = useRef(true);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-
-  // dialog
-  const [openKljuc, setOpenKljuc] = useState<string | null>(null);
-  const [detail, setDetail] = useState<UgovorDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [uplate, setUplate] = useState<UplataRow[] | null>(null);
-  const [uplateLoading, setUplateLoading] = useState(false);
-  const [showUplate, setShowUplate] = useState(false);
 
   // Debounce unosa pretrage
   useEffect(() => {
@@ -145,26 +140,6 @@ export default function UgovoriPage() {
     io.observe(el);
     return () => io.disconnect();
   }, [page, loading, more, search, sort, dir, filters, loadBatch]);
-
-  function openDetail(kljuc: string) {
-    setOpenKljuc(kljuc);
-    setDetail(null);
-    setUplate(null);
-    setShowUplate(false);
-    setDetailLoading(true);
-    apiFetch<UgovorDetail>(`/ugovori/${kljuc}`)
-      .then(setDetail)
-      .catch(() => toast.error("Greška pri učitavanju ugovora"))
-      .finally(() => setDetailLoading(false));
-  }
-
-  function loadUplate(kljuc: string) {
-    setUplateLoading(true);
-    apiFetch<{ rows: UplataRow[] }>(`/ugovori/${kljuc}/uplate`)
-      .then((d) => setUplate(d.rows))
-      .catch(() => toast.error("Greška pri učitavanju uplata"))
-      .finally(() => setUplateLoading(false));
-  }
 
   const shown = rows.length;
 
@@ -251,9 +226,9 @@ export default function UgovoriPage() {
               </TableHeader>
               <TableBody>
                 {loading && rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={COLUMNS.length} className="text-center py-10">
-                      <Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" />
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={COLUMNS.length} className="p-0">
+                      <PageLoader className="min-h-[40vh] gap-6" />
                     </TableCell>
                   </TableRow>
                 ) : rows.length === 0 ? (
@@ -273,7 +248,7 @@ export default function UgovoriPage() {
                           hasSubagent && "bg-indigo-50/70 hover:bg-indigo-100/80 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50"
                         )}
                         title={hasSubagent ? `Subagent: ${r.subagent}` : undefined}
-                        onClick={() => openDetail(r.kljuc)}
+                        onClick={() => navigate(`/prodaja/rezervacije?u=${encodeURIComponent(r.kljuc)}`)}
                       >
                         <TableCell className="px-2 py-1 font-mono font-medium">{r.kljuc}</TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap">{r.danas || "—"}</TableCell>
@@ -284,8 +259,7 @@ export default function UgovoriPage() {
                           {[r.struktura, r.soba].filter((x) => (x || "").trim()).join(" · ") || "—"}
                         </TableCell>
                         <TableCell className="px-2 py-1">{r.subagent || "—"}</TableCell>
-                        <TableCell className="px-2 py-1 whitespace-nowrap">{r.datumod || "—"}</TableCell>
-                        <TableCell className="px-2 py-1 whitespace-nowrap">{r.datumdo || "—"}</TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">{fmtTermin(r.datumod, r.datumdo)}</TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap font-medium">
                           {fmtRSD(r.ukupna_vrednost)}
                         </TableCell>
@@ -317,171 +291,6 @@ export default function UgovoriPage() {
         </CardContent>
       </Card>
 
-      {/* Detalj ugovora */}
-      <Dialog open={openKljuc != null} onOpenChange={(o) => { if (!o) setOpenKljuc(null); }}>
-        <DialogContent className="max-w-3xl text-xs max-h-[85vh] overflow-y-auto">
-          <DialogHeader className="space-y-1">
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <FileText className="w-4 h-4" />
-              Ugovor {openKljuc}
-            </DialogTitle>
-            <DialogDescription className="text-xs">Detalji ugovora i obračun vrednosti</DialogDescription>
-          </DialogHeader>
-
-          {detailLoading ? (
-            <div className="py-10 text-center">
-              <Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" />
-            </div>
-          ) : detail ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 text-xs">
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Broj ugovora</div>
-                  <div className="font-mono font-medium">{detail.kljuc}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Datum</div>
-                  <div>{detail.danas || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Destinacija</div>
-                  <div className="truncate" title={detail.destinacija || ""}>{detail.destinacija || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Nosilac</div>
-                  <div className="font-medium">{detail.putnik || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Mesto</div>
-                  <div className="truncate" title={detail.mesto || ""}>{detail.mesto || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Smeštaj</div>
-                  <div className="truncate" title={detail.naziv || ""}>{detail.naziv || "—"}</div>
-                </div>
-                <div className="col-span-3">
-                  <div className="text-muted-foreground text-[11px]">Putnici</div>
-                  <div>
-                    {(detail.putnici_detalji
-                      ? fmtPutnici(detail.putnici_detalji)
-                      : (detail.putnici || []).slice(1)
-                    ).join(", ") || "—"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Datum od</div>
-                  <div>{detail.datumod || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Datum do</div>
-                  <div>{detail.datumdo || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-[11px]">Smer</div>
-                  <div>{detail.smer || "—"}</div>
-                </div>
-                <div className="col-span-3">
-                  <div className="text-muted-foreground text-[11px]">Subagent</div>
-                  <div>
-                    {detail.subagent_info ? (
-                      <span>
-                        <span className="font-medium">{detail.subagent_info.naziv}</span>
-                        {detail.subagent_info.provizija != null && (
-                          <span className="text-muted-foreground"> · provizija {detail.subagent_info.provizija}%</span>
-                        )}
-                        {detail.subagent_info.kontakt && (
-                          <span className="text-muted-foreground"> · {detail.subagent_info.kontakt}</span>
-                        )}
-                      </span>
-                    ) : detail.subagent ? (
-                      <span>{detail.subagent} <span className="text-muted-foreground">(nije u spisku subagenata)</span></span>
-                    ) : (
-                      "—"
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-md border bg-muted/30 p-3 space-y-1 text-xs">
-                  <div className="font-semibold mb-1.5">Obračun (EUR)</div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Smeštaj</span><span>{fmtEUR(detail.smestaj)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Prevoz</span><span>{fmtEUR(detail.prevoz)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Viza</span><span>{fmtEUR(detail.viza)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Popust</span><span>{detail.popust ? "-" + fmtEUR(detail.popust) : fmtEUR(0)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Provizija</span><span>{fmtEUR(detail.provizija)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Naplata</span><span>{fmtEUR(detail.naplata)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Uplaćeno</span><span>{fmtEUR(detail.uplaceno)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Saldo</span><span className={cn(detail.saldo > 0.001 && "text-destructive")}>{fmtEUR(detail.saldo)}</span></div>
-                </div>
-                <div className="rounded-md border bg-muted/30 p-3 flex flex-col justify-between">
-                  <div className="space-y-1 text-xs">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Kurs (srednji NBS)</span><span>{detail.kurs ? new Intl.NumberFormat("sr-RS", { maximumFractionDigits: 4 }).format(detail.kurs) : "—"}</span></div>
-                  </div>
-                  <div className="border-t pt-2">
-                    <div className="text-muted-foreground text-[11px] mb-0.5">Ukupna vrednost</div>
-                    <div className="text-base font-bold">{fmtRSD(detail.ukupna_vrednost)}</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => {
-                  setOpenKljuc(null);
-                  navigate(`/knjigovodstvo/predracuni/novi/${openKljuc}`);
-                }}>
-                  <FilePlus className="w-3.5 h-3.5 mr-1.5" />Kreiraj predracun
-                </Button>
-                <Button
-                  size="sm" variant="outline"
-                  onClick={() => {
-                    const next = !showUplate;
-                    setShowUplate(next);
-                    if (next && uplate == null && openKljuc) loadUplate(openKljuc);
-                  }}
-                >
-                  <Eye className="w-3.5 h-3.5 mr-1.5" />Pregled uplata
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => toast.info("Izdati računi su u pripremi")}>
-                  <Receipt className="w-3.5 h-3.5 mr-1.5" />Izdati računi
-                </Button>
-              </div>
-
-              {showUplate && (
-                <div className="rounded-md border p-3">
-                  <div className="font-semibold text-xs mb-2">Uplate za ugovor {openKljuc}</div>
-                  {uplateLoading ? (
-                    <div className="py-6 text-center">
-                      <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
-                    </div>
-                  ) : uplate && uplate.length > 0 ? (
-                    <div className="space-y-1.5 text-xs">
-                      {uplate.map((u) => (
-                        <div key={u.id} className="flex flex-wrap justify-between gap-2 border-b pb-1.5 last:border-0 last:pb-0">
-                          <div>
-                            <div className="font-medium">{u.ime || "—"}</div>
-                            <div className="text-muted-foreground text-[11px]">
-                              {u.danas || "—"} · {u.vrsta || "—"} · {u.nacin || "—"}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-medium">{u.uevro != null ? fmtEUR(u.uevro) : "—"}</div>
-                            <div className="text-muted-foreground text-[11px]">{u.din != null ? fmtRSD(u.din) : ""}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-muted-foreground text-xs py-3 text-center">Nema uplata za ovaj ugovor</div>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="py-8 text-center text-muted-foreground text-xs">Ugovor nije pronađen</div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

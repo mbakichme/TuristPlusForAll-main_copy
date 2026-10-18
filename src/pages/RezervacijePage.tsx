@@ -33,6 +33,7 @@ import { apiFetch, getToken } from "../lib/api";
 import type { Destinacija, DodatnaStavka, Mesto, Smestaj, Soba, UgovorDetail, UgovorRow, UgovoriResponse, UplataRow } from "../types";
 import { cn } from "@/lib/utils";
 import { DodatnaStavkaForma } from "@/components/DodatnaStavkaForma";
+import { PageLoader } from "@/components/PageLoader";
 
 // ── konstante ──────────────────────────────────────────────────────────────
 const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minute", "First minute"];
@@ -142,6 +143,16 @@ interface Saputnik {
   destinacijaPolaska: string;
   destinacijaPovratka: string;
 }
+interface KeptpInfo {
+  broj_keptp: number;
+  datum: string;
+}
+
+// tipovi bez KEPTP evidencije; viza štiklirana → KEPTP se ne traži
+const KEPTP_BEZ_EVIDENCIJE = ["PREDREZERVACIJA", "BLOK"];
+const keptpNijePotreban = (tip: string, viza: boolean) =>
+  viza || KEPTP_BEZ_EVIDENCIJE.includes(tip.trim().toUpperCase());
+
 interface Boravak {
   datumOd: string;
   datumDo: string;
@@ -150,6 +161,7 @@ interface Boravak {
   mesto: string;
   struktura: string;
   promenaStrukture: string;
+  viza: boolean;
   napomena: string;
   napomenaInterna: string;
 }
@@ -476,7 +488,7 @@ export default function RezervacijePage() {
 
   const [boravak, setBoravak] = useState<Boravak>({
     datumOd: "", datumDo: "", smestaj: "", soba: "", mesto: "",
-    struktura: "", promenaStrukture: "", napomena: "", napomenaInterna: "",
+    struktura: "", promenaStrukture: "", viza: false, napomena: "", napomenaInterna: "",
   });
   const [cene, setCene] = useState<Cene>({
     cenaSmestaj: "", kolSmestaj: "", cenaSmestajRSD: "", kolSmestajRSD: "",
@@ -672,7 +684,7 @@ export default function RezervacijePage() {
       dodatneSesija.current += 1; // nova sesija liste dodatnih stavki
       const novoMesto = mestoId ? String(mestoId) : (d.mesto ?? "").trim() ? CUVAR : "";
       mestoUgovoraRef.current = novoMesto || null; // destinacija se ne veže ponovo dok se mesto ne promeni
-      setBoravak({ datumOd: datumZaInput(d.datumod), datumDo: datumZaInput(d.datumdo), smestaj: smestajId ? String(smestajId) : (d.naziv ?? "").trim() ? CUVAR : "", soba: sobaId ? String(sobaId) : (d.soba ?? "").trim() ? CUVAR : "", mesto: novoMesto, struktura: d.apartman ?? "", promenaStrukture: "", napomena: d.napomena ?? "", napomenaInterna: d.napomena1 ?? "" });
+      setBoravak({ datumOd: datumZaInput(d.datumod), datumDo: datumZaInput(d.datumdo), smestaj: smestajId ? String(smestajId) : (d.naziv ?? "").trim() ? CUVAR : "", soba: sobaId ? String(sobaId) : (d.soba ?? "").trim() ? CUVAR : "", mesto: novoMesto, struktura: d.apartman ?? "", promenaStrukture: "", viza: Number(d.viza) === 1, napomena: d.napomena ?? "", napomenaInterna: d.napomena1 ?? "" });
       // Cena smeštaja i uplaćeno dolaze iz ugovora; dodatne stavke (i njihove sume) iz d.dodatne —
       // cenadod se ne upisuje u formu da se sa dodatenSume ne bi sabiralo dvostruko.
       // Osiguranje se učitava iz aranzman.osiguranje (RSD) / osiguranje1 (EUR).
@@ -683,6 +695,7 @@ export default function RezervacijePage() {
       aktivniUgovor.current = d.kljuc;
       setIzabraniUgovor(d.kljuc);
       setUcitanUgovor(d);
+      void osveziKeptp(d.kljuc);
       setIzmena(false); // učitavam postojeći ugovor → polja zaključana do klika na „Izmeni“
       setPretraga(d.kljuc);
       setUplateOsvezi((n) => n + 1);
@@ -691,6 +704,35 @@ export default function RezervacijePage() {
       if (request === izborRequest.current) toast.error("Ugovor nije mogao da se učita");
     } finally {
       if (request === izborRequest.current) setIzborUcitava(false);
+    }
+  };
+
+  // KEPTP — evidencija prodatih aranžmana (tabela keptp, numeracija od 1; aranzman.keptp se ne dira)
+  const [keptp, setKeptp] = useState<KeptpInfo | null>(null);
+  const [keptpSeDodeljuje, setKeptpSeDodeljuje] = useState(false);
+  const [keptpUpit, setKeptpUpit] = useState<{ kljuc: string; izmena: boolean } | null>(null);
+
+  const osveziKeptp = async (kljuc: string): Promise<KeptpInfo | null> => {
+    try {
+      const r = await apiFetch<KeptpInfo | null>(`/keptp/ugovor/${encodeURIComponent(kljuc)}`);
+      if (aktivniUgovor.current === kljuc) setKeptp(r);
+      return r;
+    } catch {
+      return null;
+    }
+  };
+
+  const keptpDodeli = async (kljuc: string) => {
+    if (keptpSeDodeljuje) return;
+    setKeptpSeDodeljuje(true);
+    try {
+      const r = await apiFetch<KeptpInfo>("/keptp/dodeli", { method: "POST", body: JSON.stringify({ kljuc }) });
+      if (aktivniUgovor.current === kljuc) setKeptp(r);
+      toast.success(`Dodeljen KEPTP broj ${r.broj_keptp}`, { description: `Ugovor: ${kljuc}` });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "KEPTP broj nije dodeljen");
+    } finally {
+      setKeptpSeDodeljuje(false);
     }
   };
 
@@ -1094,6 +1136,8 @@ export default function RezervacijePage() {
       },
     };
     const cilj = izabraniUgovor;
+    const tipZaProveru = tipRezervacije;
+    const vizaZaProveru = boravak.viza;
     rezZakljucana.current = true;
     setRezSeCuva(true);
     try {
@@ -1111,7 +1155,14 @@ export default function RezervacijePage() {
         toast.success("Rezervacija je sačuvana", { description: `Broj rezervacije: ${r.kljuc}` });
       }
       // ponovno učitavanje iz baze — potvrda upisa, polja se zaključavaju, dugme → „Izmeni“
-      if (zaCitanje) await izaberiUgovor(zaCitanje);
+      if (zaCitanje) {
+        await izaberiUgovor(zaCitanje);
+        // KEPTP: opomena ako nema broja i nije viza / Predrezervacija / BLOK
+        if (!keptpNijePotreban(tipZaProveru, vizaZaProveru)) {
+          const kp = await osveziKeptp(zaCitanje);
+          if (!kp) setKeptpUpit({ kljuc: zaCitanje, izmena: cilj !== null });
+        }
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Čuvanje rezervacije nije uspelo";
       if (msg.includes("zauzet")) {
@@ -1236,6 +1287,11 @@ export default function RezervacijePage() {
     navigate(`/agencija/grafik${qs ? `?${qs}` : ""}`);
   };
 
+  // Sve dok referentni podaci ili ugovor iz linka nisu učitani — bez delimičnog prikaza forme
+  if (!referenceSpremne || izborUcitava) {
+    return <PageLoader />;
+  }
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1246,6 +1302,29 @@ export default function RezervacijePage() {
           <p className="text-muted-foreground text-sm">Unos / izmena rezervacije — aranžman, prevoz i uplate</p>
         </div>
         <div className="flex flex-col gap-2 sm:items-end">
+          {ucitanUgovor?.danas && (
+            <p className="text-xs text-muted-foreground">
+              Datum rezervacije: <span className="font-semibold text-foreground tabular-nums">{ucitanUgovor.danas}</span>
+            </p>
+          )}
+          {izabraniUgovor && ucitanUgovor && (keptp || !keptpNijePotreban(ucitanUgovor.tiprezervacije ?? "", Number(ucitanUgovor.viza) === 1)) && (
+            <p className="text-xs text-muted-foreground">
+              KEPTP:{" "}
+              {keptp ? (
+                <span className="font-semibold text-foreground tabular-nums" title={`Datum: ${keptp.datum}`}>{keptp.broj_keptp}</span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={keptpSeDodeljuje}
+                  onClick={() => void keptpDodeli(izabraniUgovor)}
+                  className="font-semibold text-orange-600 underline underline-offset-2 hover:text-orange-700 disabled:opacity-50"
+                  title="Dodeli sledeći broj KEPTP"
+                >
+                  nema KEPTP
+                </button>
+              )}
+            </p>
+          )}
           <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm" role="status">
             <Info className="w-4 h-4 text-primary shrink-0" />
             {kurs?.kurs != null ? (
@@ -1295,6 +1374,35 @@ export default function RezervacijePage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={keptpUpit !== null} onOpenChange={(open) => { if (!open) setKeptpUpit(null); }}>
+        <DialogContent className="max-w-md bg-card">
+          <DialogHeader>
+            <DialogTitle>Nema broja KEPTP</DialogTitle>
+            <DialogDescription>
+              {keptpUpit?.izmena
+                ? "Molimo evidentirajte ugovor u Knjigu evidencije prodatih turističkih aranžmana."
+                : "Ne postoji broj KEPTP za ovaj ugovor."}{" "}
+              Želite li da dodate broj KEPTP?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={() => setKeptpUpit(null)}>Ne sada</Button>
+            <Button
+              type="button"
+              className="bg-orange-500 hover:bg-orange-600"
+              disabled={keptpSeDodeljuje}
+              onClick={() => {
+                const kljuc = keptpUpit?.kljuc;
+                setKeptpUpit(null);
+                if (kljuc) void keptpDodeli(kljuc);
+              }}
+            >
+              Dodaj KEPTP
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={stornoOtvoren} onOpenChange={(open) => { if (!stornoSeCuva) setStornoOtvoren(open); }}>
         <DialogContent className="max-w-lg bg-card" onEscapeKeyDown={(e) => { if (stornoSeCuva) e.preventDefault(); }}>
@@ -1689,12 +1797,22 @@ export default function RezervacijePage() {
                     disabled={zakljucano}
                   />
                 </Fld>
-                <Fld label="Promena strukture" className="md:col-span-3 xl:col-span-6">
+                <Fld label="Promena strukture" className="md:col-span-2 xl:col-span-5">
                   <Input
                     value={boravak.promenaStrukture}
                     onChange={(e) => setBoravak({ ...boravak, promenaStrukture: e.target.value })}
                     disabled={zakljucano}
                   />
+                </Fld>
+                <Fld label="Viza" className="md:col-span-1 xl:col-span-1">
+                  <label className="flex h-8 items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={boravak.viza}
+                      onCheckedChange={(v) => setBoravak({ ...boravak, viza: v === true })}
+                      disabled={zakljucano}
+                    />
+                    <span className="text-muted-foreground">Viza</span>
+                  </label>
                 </Fld>
                 <Fld label="Napomena" className="md:col-span-3">
                   <Textarea

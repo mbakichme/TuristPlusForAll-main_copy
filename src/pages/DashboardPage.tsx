@@ -21,6 +21,7 @@ type UgovorDanas = {
   datumod: string | null;
   datumdo: string | null;
   soba: string | null;
+  struktura: string | null;
   obradio: string | null;
 };
 
@@ -272,7 +273,9 @@ export default function DashboardPage() {
                       <TableCell className="px-2 py-1 whitespace-nowrap">
                         {formatTermin(u.datumod, u.datumdo)}
                       </TableCell>
-                      <TableCell className="px-2 py-1 whitespace-nowrap">{u.soba || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 whitespace-nowrap">
+                        {u.soba ? `${u.soba.trim()}${u.struktura?.trim() ? ` (${u.struktura.trim()})` : ""}` : "—"}
+                      </TableCell>
                       <TableCell className="px-2 py-1 max-w-[7.5rem] truncate" title={u.obradio ?? ""}>{u.obradio || "—"}</TableCell>
                     </TableRow>
                   ))}

@@ -25,7 +25,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Receipt, Search, CalendarDays, Lock, Trash2, SlidersHorizontal } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Receipt, Search, CalendarDays, Lock, Trash2, SlidersHorizontal } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { srLatn } from "date-fns/locale";
@@ -1594,18 +1594,18 @@ export default function CenovniciPage() {
         if (v === "izmena" && tab !== "izmena") resetujCreateDraft();
         setTab(v as TabKey);
       }}>
-        <TabsList className="h-auto p-2 gap-3">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border bg-muted/70 p-1.5 md:w-auto md:inline-flex">
           <TabsTrigger
             value="kreiranje"
-            className="h-12 rounded-lg px-9 text-base font-semibold data-[state=active]:shadow-md"
+            className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"
           >
-            Kreiranje cenovnika
+            <Plus className="size-4 sm:size-5" />Kreiranje cenovnika
           </TabsTrigger>
           <TabsTrigger
             value="izmena"
-            className="h-12 rounded-lg px-9 text-base font-semibold data-[state=active]:shadow-md"
+            className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"
           >
-            Izmena kreiranih cenovnika
+            <Pencil className="size-4 sm:size-5" />Izmena kreiranih cenovnika
           </TabsTrigger>
         </TabsList>
 
