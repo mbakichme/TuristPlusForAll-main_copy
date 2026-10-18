@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 import type { AuthUser } from "../types";
-import { apiFetch, clearToken, setToken } from "../lib/api";
+import { apiFetch, clearToken, setToken, SESIJA_ISTEKLA } from "../lib/api";
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -20,6 +20,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(setUser)
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const onIstekla = () => setUser(null);
+    window.addEventListener(SESIJA_ISTEKLA, onIstekla);
+    return () => window.removeEventListener(SESIJA_ISTEKLA, onIstekla);
   }, []);
 
   async function login(email: string, password: string) {

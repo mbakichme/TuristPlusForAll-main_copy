@@ -235,6 +235,9 @@ def init_db(engine):
                 grafik INTEGER DEFAULT 0
             )
         """))
+        conn.execute(text(
+            "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS granica_chd DOUBLE PRECISION NOT NULL DEFAULT 6.99"
+        ))
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS agencija (
@@ -798,6 +801,7 @@ class SmestajCreate(BaseModel):
     organizator: Optional[int] = None
     predstavnik: Optional[int] = None
     grafik: Optional[int] = 0
+    granica_chd: Optional[float] = 6.99
 
 
 class SmestajUpdate(BaseModel):
@@ -811,6 +815,7 @@ class SmestajUpdate(BaseModel):
     organizator: Optional[int] = None
     predstavnik: Optional[int] = None
     grafik: Optional[int] = None
+    granica_chd: Optional[float] = None
 
 
 class PeriodGrupaCreate(BaseModel):
@@ -1836,6 +1841,7 @@ def create_app(static_dir: str) -> FastAPI:
             rows = conn.execute(text("""
                 SELECT s.id, s.naziv, s.drzava, s.destinacija, s.mesto, s.tip_smestaja,
                        s.grupa_datuma, s.status, s.organizator, s.predstavnik, s.grafik,
+                       s.granica_chd,
                        dr.naziv as drzava_naziv, de.naziv as destinacija_naziv,
                        me.naziv as mesto_naziv, ts.naziv as tip_smestaja_naziv,
                        pg.naziv as grupa_datuma_naziv
@@ -1853,6 +1859,7 @@ def create_app(static_dir: str) -> FastAPI:
             "grupa_datuma": r.grupa_datuma,
             "status": r.status, "organizator": r.organizator,
             "predstavnik": r.predstavnik, "grafik": r.grafik,
+            "granica_chd": r.granica_chd,
             "drzava_naziv": r.drzava_naziv,
             "destinacija_naziv": r.destinacija_naziv,
             "mesto_naziv": r.mesto_naziv,
@@ -1864,14 +1871,15 @@ def create_app(static_dir: str) -> FastAPI:
     def create_smestaj(body: SmestajCreate, _: dict = Depends(get_current_user)):
         with engine.begin() as conn:
             row = conn.execute(text("""
-                INSERT INTO smestaj (naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik)
-                VALUES (:naziv, :drzava, :destinacija, :mesto, :tip_smestaja, :grupa_datuma, :status, :organizator, :predstavnik, :grafik)
-                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik
+                INSERT INTO smestaj (naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd)
+                VALUES (:naziv, :drzava, :destinacija, :mesto, :tip_smestaja, :grupa_datuma, :status, :organizator, :predstavnik, :grafik, COALESCE(:granica_chd, 6.99))
+                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd
             """), {
                 "naziv": body.naziv, "drzava": body.drzava, "destinacija": body.destinacija,
                 "mesto": body.mesto, "tip_smestaja": body.tip_smestaja,
                 "grupa_datuma": body.grupa_datuma, "status": body.status,
                 "organizator": body.organizator, "predstavnik": body.predstavnik, "grafik": body.grafik,
+                "granica_chd": body.granica_chd,
             }).fetchone()
         return {
             "id": row.id, "naziv": row.naziv, "drzava": row.drzava,
@@ -1879,6 +1887,7 @@ def create_app(static_dir: str) -> FastAPI:
             "grupa_datuma": row.grupa_datuma,
             "status": row.status, "organizator": row.organizator,
             "predstavnik": row.predstavnik, "grafik": row.grafik,
+            "granica_chd": row.granica_chd,
         }
 
     @api.put("/smestaj/{item_id}")
@@ -1892,7 +1901,7 @@ def create_app(static_dir: str) -> FastAPI:
             row = conn.execute(text(f"""
                 UPDATE smestaj SET {set_clause}
                 WHERE id = :id
-                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik
+                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd
             """), fields).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Smeštaj nije pronađen")
@@ -1902,6 +1911,7 @@ def create_app(static_dir: str) -> FastAPI:
             "grupa_datuma": row.grupa_datuma,
             "status": row.status, "organizator": row.organizator,
             "predstavnik": row.predstavnik, "grafik": row.grafik,
+            "granica_chd": row.granica_chd,
         }
 
     @api.delete("/smestaj/{item_id}")
@@ -2168,8 +2178,8 @@ def create_app(static_dir: str) -> FastAPI:
     # Privremene fiksne cene karata (EUR) dok se tabela polazak ne doradi
     KARTA_ADL = Decimal("80")
     KARTA_CHD = Decimal("70")
-    # Dete mlađe od ove granice (godine) računa se kao INF, ostala deca kao CHD
-    INF_GRANICA = 2
+    # Dete do granica_chd (smeštaj.granica_chd, godine na datum početka boravka)
+    # računa se kao CHD, starije kao ADL. INF se ne razlikuje.
 
     def _q2(x) -> float:
         return float(Decimal(x).quantize(Decimal("0.01")))
@@ -2413,8 +2423,6 @@ def create_app(static_dir: str) -> FastAPI:
         obracun = odrasli_raw != ""
         adl = int(odrasli_raw) if odrasli_raw.isdigit() else 2
         godine = [int(x) for x in deca_raw.split(",") if x.strip().isdigit()] if deca_raw else []
-        chd = sum(1 for gd in godine if gd >= INF_GRANICA)
-        inf = sum(1 for gd in godine if gd < INF_GRANICA)
         sopstveni = prevoz_raw.startswith("sopstveni")
         if not od:
             raise HTTPException(status_code=400, detail="datum_od je obavezan")
@@ -2449,7 +2457,7 @@ def create_app(static_dir: str) -> FastAPI:
                       ON pd2.grupa_id = l.grupa_id AND pd2.datum_od = l.kraj
                     WHERE l.kraj < :ddo
                 )
-                SELECT s.id AS smestaj_id, s.naziv AS smestaj_naziv,
+                SELECT s.id AS smestaj_id, s.naziv AS smestaj_naziv, s.granica_chd,
                        b.id, TRIM(b.broj_sobe) AS broj_sobe, b.tip, b.opis, b.opis_dodatno
                 FROM sobe b
                 JOIN smestaj s ON s.id = b.veza_id_smestaj
@@ -2475,7 +2483,8 @@ def create_app(static_dir: str) -> FastAPI:
             grouped: dict = {}
             for r in rows:
                 g = grouped.setdefault(r.smestaj_id, {
-                    "smestaj_id": r.smestaj_id, "smestaj_naziv": r.smestaj_naziv, "sobe": [],
+                    "smestaj_id": r.smestaj_id, "smestaj_naziv": r.smestaj_naziv,
+                    "granica_chd": float(r.granica_chd), "sobe": [],
                 })
                 g["sobe"].append({
                     "id": r.id, "broj_sobe": r.broj_sobe, "tip": r.tip or "",
@@ -2495,7 +2504,14 @@ def create_app(static_dir: str) -> FastAPI:
                 smestaji = _smestaji_za_termin(conn, d_od, d_do)
                 if not obracun:
                     return smestaji  # stari klijenti bez putnika: samo raspoloživost
-                return _obracun_cena(conn, smestaji, d_od, d_do, adl, chd, inf, sopstveni)
+                # CHD/ADL po smeštaju: dete do granica_chd = CHD, starije = ADL
+                rezultat = []
+                for g in smestaji:
+                    granica = g["granica_chd"]
+                    chd_g = sum(1 for gd in godine if gd <= granica)
+                    adl_g = adl + len(godine) - chd_g
+                    rezultat.extend(_obracun_cena(conn, [g], d_od, d_do, adl_g, chd_g, 0, sopstveni))
+                return rezultat
 
             # ── NOVI MOD: pretraga po SVIM lancima perioda koji počinju na datum_od ──
             # (grupa_id filter ili obavezno mesto_id — opcije su krajevi LANACA
@@ -3948,8 +3964,13 @@ def create_app(static_dir: str) -> FastAPI:
         pod advisory lock-om; datum = danas (Europe/Belgrade)."""
         kljuc = body.kljuc.strip().strip("/")
         with engine.begin() as conn:
-            if not conn.execute(text("SELECT 1 FROM aranzman WHERE kljuc = :k"), {"k": kljuc}).fetchone():
+            ugovor = conn.execute(text(
+                "SELECT viza FROM aranzman WHERE kljuc = :k ORDER BY id FOR UPDATE"
+            ), {"k": kljuc}).fetchall()
+            if not ugovor:
                 raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            if any(int(red.viza or 0) == 1 for red in ugovor):
+                raise HTTPException(status_code=400, detail="KEPTP se ne dodeljuje kada je označena Viza")
             conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": KEPTP_ADVISORY_LOCK})
             postojeci = conn.execute(text(
                 "SELECT broj_keptp, datum FROM keptp WHERE broj_ugovora = :k"

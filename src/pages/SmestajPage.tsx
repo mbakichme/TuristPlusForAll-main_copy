@@ -33,9 +33,10 @@ interface SmestajForm {
   organizator: string;
   predstavnik: string;
   grafik: string;
+  granica_chd: string;
 }
 
-const emptyForm: SmestajForm = { naziv: "", drzava: "", destinacija: "", mesto: "", tip_smestaja: "", grupa_datuma: "", status: "1", organizator: "", predstavnik: "", grafik: "0" };
+const emptyForm: SmestajForm = { naziv: "", drzava: "", destinacija: "", mesto: "", tip_smestaja: "", grupa_datuma: "", status: "1", organizator: "", predstavnik: "", grafik: "0", granica_chd: "6.99" };
 
 export default function SmestajPage() {
   const [items, setItems] = useState<Smestaj[]>([]);
@@ -95,6 +96,7 @@ export default function SmestajPage() {
       organizator: item.organizator ? String(item.organizator) : "",
       predstavnik: item.predstavnik ? String(item.predstavnik) : "",
       grafik: String(item.grafik),
+      granica_chd: String(item.granica_chd ?? 6.99),
     });
     setSheetOpen(true);
   }
@@ -105,6 +107,8 @@ export default function SmestajPage() {
 
   async function handleSave() {
     if (!form.naziv) { toast.error("Naziv je obavezan"); return; }
+    const granica = Number(form.granica_chd.replace(",", "."));
+    if (!Number.isFinite(granica) || granica <= 0 || granica >= 18) { toast.error("Granica CHD mora biti broj između 0 i 18"); return; }
     setSaving(true);
     try {
       const payload = {
@@ -118,6 +122,7 @@ export default function SmestajPage() {
         organizator: form.organizator ? Number(form.organizator) : undefined,
         predstavnik: form.predstavnik ? Number(form.predstavnik) : undefined,
         grafik: Number(form.grafik),
+        granica_chd: granica,
       };
       if (editing) {
         await apiFetch(`/smestaj/${editing.id}`, {
@@ -187,12 +192,13 @@ export default function SmestajPage() {
                 <TableHead>Grupa perioda</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Grafik</TableHead>
+                <TableHead>Granica CHD</TableHead>
                 <TableHead className="w-24 text-right">Akcije</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Nema podataka</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Nema podataka</TableCell></TableRow>
               ) : items.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="font-medium">{item.naziv}</TableCell>
@@ -210,6 +216,7 @@ export default function SmestajPage() {
                       {item.grafik === 1 ? "Da" : "Ne"}
                     </Badge>
                   </TableCell>
+                  <TableCell>{item.granica_chd ?? 6.99}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(item)}><Pencil className="w-4 h-4" /></Button>
@@ -316,6 +323,10 @@ export default function SmestajPage() {
                   <SelectItem value="0">Ne</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Granica godina za CHD</Label>
+              <Input inputMode="decimal" value={form.granica_chd} onChange={(e) => setField("granica_chd", e.target.value)} placeholder="6.99" />
             </div>
           </div>
           <SheetFooter>

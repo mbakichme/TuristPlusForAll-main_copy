@@ -723,7 +723,7 @@ export default function RezervacijePage() {
   };
 
   const keptpDodeli = async (kljuc: string) => {
-    if (keptpSeDodeljuje) return;
+    if (keptpSeDodeljuje || keptpNijePotreban(tipRezervacije, boravak.viza)) return;
     setKeptpSeDodeljuje(true);
     try {
       const r = await apiFetch<KeptpInfo>("/keptp/dodeli", { method: "POST", body: JSON.stringify({ kljuc }) });
@@ -1302,16 +1302,20 @@ export default function RezervacijePage() {
           <p className="text-muted-foreground text-sm">Unos / izmena rezervacije — aranžman, prevoz i uplate</p>
         </div>
         <div className="flex flex-col gap-2 sm:items-end">
+          <div className="flex items-center gap-4 sm:justify-end">
           {ucitanUgovor?.danas && (
             <p className="text-xs text-muted-foreground">
               Datum rezervacije: <span className="font-semibold text-foreground tabular-nums">{ucitanUgovor.danas}</span>
             </p>
           )}
-          {izabraniUgovor && ucitanUgovor && (keptp || !keptpNijePotreban(ucitanUgovor.tiprezervacije ?? "", Number(ucitanUgovor.viza) === 1)) && (
+          {ucitanUgovor?.danas && izabraniUgovor && ucitanUgovor && (keptp || !keptpNijePotreban(tipRezervacije, boravak.viza)) && (
+            <span className="text-xs text-muted-foreground" aria-hidden="true">|</span>
+          )}
+          {izabraniUgovor && ucitanUgovor && (keptp || !keptpNijePotreban(tipRezervacije, boravak.viza)) && (
             <p className="text-xs text-muted-foreground">
               KEPTP:{" "}
               {keptp ? (
-                <span className="font-semibold text-foreground tabular-nums" title={`Datum: ${keptp.datum}`}>{keptp.broj_keptp}</span>
+                <span className="rounded border border-emerald-300 bg-emerald-50 px-1.5 py-px text-xs font-semibold leading-4 text-emerald-700 tabular-nums" title={`Datum: ${keptp.datum}`}>{keptp.broj_keptp}</span>
               ) : (
                 <button
                   type="button"
@@ -1325,6 +1329,7 @@ export default function RezervacijePage() {
               )}
             </p>
           )}
+          </div>
           <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm" role="status">
             <Info className="w-4 h-4 text-primary shrink-0" />
             {kurs?.kurs != null ? (
@@ -1430,7 +1435,7 @@ export default function RezervacijePage() {
       </Dialog>
 
       <Tabs defaultValue="aranzman">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border bg-muted/70 p-1.5 sm:grid-cols-4 md:w-auto md:inline-flex">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border bg-white p-1.5 sm:grid-cols-4 md:w-auto md:inline-flex">
           <TabsTrigger value="aranzman" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><CalendarPlus className="size-4 sm:size-5" />Aranžman</TabsTrigger>
           <TabsTrigger value="obracun" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><Receipt className="size-4 sm:size-5" />Obračun</TabsTrigger>
           <TabsTrigger value="prevoz" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><Bus className="size-4 sm:size-5" />Prevoz</TabsTrigger>

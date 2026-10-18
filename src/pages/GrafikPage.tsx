@@ -741,6 +741,8 @@ export default function GrafikPage() {
             <SelectContent>
               {grupe
                 .filter((g) => mesta.find((m) => String(m.id) === mestoId)?.grupe?.includes(g.id))
+                .slice()
+                .sort((a, b) => a.id - b.id)
                 .map((g) => (
                   <SelectItem key={g.id} value={String(g.id)}>{g.naziv}</SelectItem>
                 ))}

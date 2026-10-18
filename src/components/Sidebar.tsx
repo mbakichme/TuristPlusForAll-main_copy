@@ -127,17 +127,17 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             )}
           >
             <NavItem to="/agencija/tip-ponude" icon={Tag} label="Tipovi ponude" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/tip-smestaja" icon={Hotel} label="Tipovi smeštaja" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/drzava" icon={Flag} label="Države" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/destinacija" icon={MapPin} label="Destinacije" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/mesto" icon={Map} label="Mesta" collapsed={collapsed} onClick={onNavClick} />
-            <NavItem to="/agencija/tip-smestaja" icon={Hotel} label="Tipovi smeštaja" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/smestaj" icon={BedDouble} label="Smeštaj" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/sobe" icon={DoorOpen} label="Sobe" collapsed={collapsed} onClick={onNavClick} />
-            <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={collapsed} onClick={onNavClick} />
-            <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/koeficijenti" icon={Sigma} label="Koeficijenti prodaje" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={collapsed} onClick={onNavClick} />
-            <NavItem to="/agencija/koeficijenti" icon={Sigma} label="Koeficijenti prodaje" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
           </div>
         </div>
@@ -498,17 +498,17 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   )}
                 >
                   <NavItem to="/agencija/tip-ponude" icon={Tag} label="Tipovi ponude" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/tip-smestaja" icon={Hotel} label="Tipovi smeštaja" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/drzava" icon={Flag} label="Države" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/destinacija" icon={MapPin} label="Destinacije" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/mesto" icon={Map} label="Mesta" collapsed={false} onClick={closeMobile} />
-                  <NavItem to="/agencija/tip-smestaja" icon={Hotel} label="Tipovi smeštaja" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/smestaj" icon={BedDouble} label="Smeštaj" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/sobe" icon={DoorOpen} label="Sobe" collapsed={false} onClick={closeMobile} />
-                  <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={false} onClick={closeMobile} />
-                  <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/koeficijenti" icon={Sigma} label="Koeficijenti prodaje" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={false} onClick={closeMobile} />
-                  <NavItem to="/agencija/koeficijenti" icon={Sigma} label="Koeficijenti prodaje" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={false} onClick={closeMobile} />
                 </div>
               </div>

@@ -1594,7 +1594,7 @@ export default function CenovniciPage() {
         if (v === "izmena" && tab !== "izmena") resetujCreateDraft();
         setTab(v as TabKey);
       }}>
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border bg-muted/70 p-1.5 md:w-auto md:inline-flex">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border bg-white p-1.5 md:w-auto md:inline-flex">
           <TabsTrigger
             value="kreiranje"
             className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"
