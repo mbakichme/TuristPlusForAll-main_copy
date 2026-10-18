@@ -1,0 +1,22 @@
+[
+  {
+    "content": "[lanci-1] Proveriti lance perioda u bazi (grupe mesta 1, polazak 25.05) — krajevi lanaca",
+    "id": "lanci-1",
+    "status": "completed"
+  },
+  {
+    "content": "[lanci-2] Backend /slobodne-sobe: rekurzivni CTE lanac (opcije bez datum_do + exact validacija sa datum_do)",
+    "id": "lanci-2",
+    "status": "completed"
+  },
+  {
+    "content": "[lanci-3] Frontend PretragaPage: doOpcije iz lanaca perioda + bun run build",
+    "id": "lanci-3",
+    "status": "completed"
+  },
+  {
+    "content": "[lanci-4] Testovi UI + API (lanci, 7 opcija, pretraga izabranog trajanja) + commit",
+    "id": "lanci-4",
+    "status": "completed"
+  }
+]

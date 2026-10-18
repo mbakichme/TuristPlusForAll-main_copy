@@ -371,7 +371,7 @@ export default function PromenaSmestajaDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-3xl" aria-busy={saving}>
+      <DialogContent className="max-w-3xl bg-card" aria-busy={saving}>
         <DialogHeader>
           <DialogTitle>Promena smeštaja</DialogTitle>
           <DialogDescription>

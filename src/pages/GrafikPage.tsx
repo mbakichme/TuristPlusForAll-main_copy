@@ -810,7 +810,7 @@ export default function GrafikPage() {
 
       {/* Popup: podaci o ugovoru */}
       <Dialog open={ugovorOpen} onOpenChange={setUgovorOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md bg-card">
           <DialogHeader>
             <DialogTitle>Ugovor {ugovorKljuc}</DialogTitle>
             <DialogDescription>Podaci o ugovoru</DialogDescription>
@@ -854,8 +854,7 @@ export default function GrafikPage() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Button
-                  variant="outline"
-                  size="sm"
+                  className="h-10 rounded-lg bg-green-600 font-semibold text-white shadow-sm hover:bg-green-700 hover:text-white"
                   onClick={() => {
                     setUgovorOpen(false);
                     navigate(`/prodaja/rezervacije?u=${encodeURIComponent(ugovorDetail.kljuc || ugovorKljuc)}`);
@@ -864,8 +863,7 @@ export default function GrafikPage() {
                   <ExternalLink className="w-4 h-4 mr-2" />Otvori rezervaciju
                 </Button>
                 <Button
-                  variant="outline"
-                  size="sm"
+                  className="h-10 rounded-lg bg-yellow-400 font-semibold text-black shadow-sm hover:bg-yellow-500 hover:text-black"
                   onClick={() => {
                     setUgovorOpen(false);
                     setPromenaOpen(true);

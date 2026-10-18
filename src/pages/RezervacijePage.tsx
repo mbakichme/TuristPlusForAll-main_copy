@@ -603,6 +603,28 @@ export default function RezervacijePage() {
     return () => clearTimeout(timer);
   }, [pretraga, izabraniUgovor]);
 
+  const [stornoOtvoren, setStornoOtvoren] = useState(false);
+  const [stornoSeCuva, setStornoSeCuva] = useState(false);
+  const stornoLock = useRef(false);
+
+  async function stornirajRezervaciju() {
+    if (!izabraniUgovor || stornoLock.current) return;
+    const kljuc = izabraniUgovor;
+    stornoLock.current = true;
+    setStornoSeCuva(true);
+    try {
+      await apiFetch(`/rezervacije/${encodeURIComponent(kljuc)}/storno`, { method: "POST" });
+      setStornoOtvoren(false);
+      await izaberiUgovor(kljuc);
+      toast.success(`Rezervacija ${kljuc} je stornirana`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Storniranje nije uspelo");
+    } finally {
+      stornoLock.current = false;
+      setStornoSeCuva(false);
+    }
+  }
+
   const izaberiUgovor = async (kljuc: string) => {
     const request = ++izborRequest.current;
     setBrisanjeStavka(null);
@@ -1232,7 +1254,14 @@ export default function RezervacijePage() {
               <span className="text-muted-foreground">Kurs trenutno nije dostupan.</span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline"
+              className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800"
+              disabled={!ucitanUgovor || izmena || rezSeCuva || izborUcitava || stornoSeCuva || (ucitanUgovor.tiprezervacije ?? "").trim().toUpperCase() === "STORNO"}
+              title={izmena ? "Sačuvajte ili odbacite izmene pre storniranja" : "Storniraj rezervaciju"}
+              onClick={() => setStornoOtvoren(true)}>
+              <Ban className="mr-1.5 size-4" /> STORNO
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -1266,6 +1295,31 @@ export default function RezervacijePage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={stornoOtvoren} onOpenChange={(open) => { if (!stornoSeCuva) setStornoOtvoren(open); }}>
+        <DialogContent className="max-w-lg bg-card" onEscapeKeyDown={(e) => { if (stornoSeCuva) e.preventDefault(); }}>
+          <DialogHeader>
+            <DialogTitle>Storniranje ugovora broj {ucitanUgovor?.kljuc}</DialogTitle>
+            <DialogDescription>Potvrdite storniranje rezervacije. Smeštaj i soba biće sačuvani u napomeni, a soba oslobođena.</DialogDescription>
+          </DialogHeader>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border bg-muted/30 p-4 text-sm">
+            {([
+              ["Nosilac", ucitanUgovor?.putnik], ["Mesto", ucitanUgovor?.mesto],
+              ["Smeštaj", ucitanUgovor?.naziv], ["Soba", ucitanUgovor?.soba],
+              ["Datum od", ucitanUgovor?.datumod], ["Datum do", ucitanUgovor?.datumdo],
+              ["Tip rezervacije", ucitanUgovor?.tiprezervacije],
+            ] as const).map(([label, value]) => (
+              <div key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words font-medium">{value || "—"}</dd></div>
+            ))}
+          </dl>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" disabled={stornoSeCuva} onClick={() => setStornoOtvoren(false)}>Odustani</Button>
+            <Button className="bg-red-600 text-white hover:bg-red-700" disabled={stornoSeCuva} onClick={() => void stornirajRezervaciju()}>
+              {stornoSeCuva ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Ban className="mr-2 size-4" />}Storniraj rezervaciju
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Tabs defaultValue="aranzman">
         <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border bg-muted/70 p-1.5 sm:grid-cols-4 md:w-auto md:inline-flex">

@@ -3907,6 +3907,38 @@ def create_app(static_dir: str) -> FastAPI:
                      diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici)))
         return {"ok": True, "kljuc": kljuc, "message": "Izmene su sačuvane"}
 
+    @api.post("/rezervacije/{kljuc:path}/storno")
+    def storniraj_rezervaciju(kljuc: str, current_user: dict = Depends(get_current_user)):
+        kljuc = kljuc.strip().strip("/")
+        _rez_user_row(current_user)
+        with engine.begin() as conn:
+            redovi = conn.execute(text(
+                "SELECT id, tiprezervacije, naziv, soba, smestaj_id, napomena, putnik "
+                "FROM aranzman WHERE kljuc = :k ORDER BY id FOR UPDATE"
+            ), {"k": kljuc}).mappings().all()
+            if not redovi:
+                raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            uid, uime = log_user(conn, current_user)
+            for red in redovi:
+                if (red["tiprezervacije"] or "").strip().upper() == "STORNO":
+                    continue
+                napomena = red["napomena"] or ""
+                dodatak = f"STORNO — prethodni smeštaj: {red['naziv'] or '—'}; soba: {red['soba'] or '—'}."
+                napomena = f"{napomena}\n{dodatak}" if napomena else dodatak
+                if len(napomena) > 1024:
+                    raise HTTPException(status_code=400, detail="Napomena je preduga za dopisivanje podataka storniranja. Skratite je i pokušajte ponovo.")
+                putnik = (red["putnik"] or "").rstrip()
+                if not putnik.upper().endswith("(STORNO)"):
+                    putnik = f"{putnik} - (STORNO)" if putnik else "(STORNO)"
+                novo = {"tiprezervacije": "STORNO", "naziv": "STORNO", "soba": "", "smestaj_id": None, "napomena": napomena, "putnik": putnik}
+                conn.execute(text(
+                    "UPDATE aranzman SET tiprezervacije = :tiprezervacije, naziv = :naziv, "
+                    "soba = :soba, smestaj_id = :smestaj_id, napomena = :napomena, putnik = :putnik WHERE id = :id"
+                ), {**novo, "id": red["id"]})
+                for oblast, promene in podeli_po_oblastima(dict(red), novo).items():
+                    zabelezi(conn, kljuc, oblast, "izmena", uid, uime, promene)
+        return {"ok": True, "kljuc": kljuc, "message": f"Rezervacija {kljuc} je stornirana"}
+
     def dodatne_contract(conn, kljuc: str, current_user: dict) -> int:
         try:
             user_id = int(current_user["sub"])
