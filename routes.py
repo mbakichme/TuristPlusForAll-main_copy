@@ -4201,8 +4201,8 @@ def create_app(static_dir: str) -> FastAPI:
     def list_ugovori(request: Request, _: dict = Depends(get_current_user)):
         q = dict(request.query_params)
         search = q.get("search", "").strip()
-        sort = q.get("sort", "kljuc")
-        direction = q.get("dir", "asc")
+        sort = q.get("sort", "danas")
+        direction = q.get("dir", "desc")
         try:
             page = max(int(q.get("page", "1")), 1)
         except ValueError:
@@ -4243,7 +4243,7 @@ def create_app(static_dir: str) -> FastAPI:
             rows = conn.execute(text(f"""
                 SELECT kljuc,
                        to_char(danas, 'DD.MM.YYYY') AS danas_fmt,
-                       putnik, mesto, naziv, subagent,
+                       putnik, mesto, naziv, subagent, apartman, soba,
                        (SELECT COALESCE(json_agg(saputnici.sk), '[]'::json) FROM (
                            SELECT saputnik AS sk FROM aranzman_dopuna ad
                            WHERE ad.aranzman_id = a.id
@@ -4254,8 +4254,7 @@ def create_app(static_dir: str) -> FastAPI:
                        to_char(datumdo, 'DD.MM.YYYY') AS datumdo_fmt,
                        {', '.join(UGOVORI_LIST_COLS)}
                 FROM aranzman a {where}
-                ORDER BY {sort} {direction} NULLS LAST
-                LIMIT :limit OFFSET :offset
+                ORDER BY {sort} {direction} NULLS LAST, a.id {direction}
             """), {**bind, "limit": page_size, "offset": (page - 1) * page_size}).fetchall()
 
         kurs = get_eur_middle()
@@ -4277,8 +4276,9 @@ def create_app(static_dir: str) -> FastAPI:
                 "putnici": row_putnici(r),
                 "mesto": r.mesto,
                 "naziv": r.naziv,
+                "struktura": r.apartman,
+                "soba": r.soba,
                 "subagent": r.subagent,
-                "datumod": r.datumod_fmt,
                 "datumdo": r.datumdo_fmt,
                 "ukupna_vrednost": row_ukupna(r),
             } for r in rows],

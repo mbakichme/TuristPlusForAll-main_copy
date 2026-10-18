@@ -71,6 +71,8 @@ export interface UgovorRow {
   putnici?: string[] | null;
   mesto: string;
   naziv: string;
+  struktura?: string | null;
+  soba?: string | null;
   subagent?: string | null;
   datumod: string;
   datumdo: string;

@@ -24,6 +24,7 @@ const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: "putnik", label: "Nosilac", sortable: true },
   { key: "mesto", label: "Mesto", sortable: true },
   { key: "naziv", label: "Smeštaj", sortable: true },
+  { key: "struktura", label: "Struktura / soba", sortable: false },
   { key: "subagent", label: "Subagent", sortable: true },
   { key: "datumod", label: "Datum od", sortable: true },
   { key: "datumdo", label: "Datum do", sortable: true },
@@ -48,8 +49,8 @@ export default function UgovoriPage() {
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("kljuc");
-  const [dir, setDir] = useState<"asc" | "desc">("asc");
+  const [sort, setSort] = useState("danas");
+  const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [filterInput, setFilterInput] = useState<Record<string, string>>(emptyFilters);
   const [filters, setFilters] = useState<Record<string, string>>(emptyFilters);
   const [loading, setLoading] = useState(true);
@@ -168,58 +169,58 @@ export default function UgovoriPage() {
   const shown = rows.length;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 space-y-3 text-xs">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Ugovori</h1>
-          <p className="text-muted-foreground text-sm">Preuzeti ugovori</p>
+          <h1 className="text-xl font-bold">Ugovori</h1>
+          <p className="text-muted-foreground text-xs">Preuzeti ugovori</p>
         </div>
-        <Button variant="outline" onClick={refresh}>
-          <RefreshCw className="w-4 h-4 mr-2" />Osveži
+        <Button variant="outline" size="sm" onClick={refresh}>
+          <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Osveži
         </Button>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="w-5 h-5" />Ugovori
+        <CardHeader className="p-3 pb-2 space-y-1">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <FileText className="w-4 h-4" />Ugovori
           </CardTitle>
-          <CardDescription>
+          <CardDescription className="text-xs">
             Ukupno: <span className="font-semibold text-foreground">{total.toLocaleString("sr-RS")}</span> zapisa
             {" · "}prikazano: <span className="font-semibold text-foreground">{shown.toLocaleString("sr-RS")}</span>
           </CardDescription>
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex items-center gap-2 pt-1">
             <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground" />
               <Input
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="Pretraga po svim poljima..."
-                className="pl-9"
+                className="pl-8 h-7 text-xs"
               />
-              {loading && <Loader2 className="absolute right-2.5 top-2.5 w-4 h-4 animate-spin text-muted-foreground" />}
+              {loading && <Loader2 className="absolute right-2.5 top-2 w-3.5 h-3.5 animate-spin text-muted-foreground" />}
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-3 pt-0">
           <div className="rounded-md border">
-            <Table>
+            <Table className="text-xs">
               <TableHeader>
-                <TableRow>
+                <TableRow className="h-7">
                   {COLUMNS.map((c) => (
-                    <TableHead key={c.key} className="whitespace-nowrap">
+                    <TableHead key={c.key} className="h-7 px-2 py-1 whitespace-nowrap">
                       {c.sortable ? (
                         <button
                           onClick={() => toggleSort(c.key)}
-                          className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+                          className="inline-flex items-center gap-0.5 hover:text-foreground transition-colors"
                         >
                           {c.label}
                           {sort === c.key ? (
                             dir === "asc"
-                              ? <ChevronUp className="w-3.5 h-3.5" />
-                              : <ChevronDown className="w-3.5 h-3.5" />
+                              ? <ChevronUp className="w-3 h-3" />
+                              : <ChevronDown className="w-3 h-3" />
                           ) : (
-                            <ChevronUp className="w-3.5 h-3.5 opacity-0" />
+                            <ChevronUp className="w-3 h-3 opacity-0" />
                           )}
                         </button>
                       ) : (
@@ -228,19 +229,19 @@ export default function UgovoriPage() {
                     </TableHead>
                   ))}
                 </TableRow>
-                <TableRow>
+                <TableRow className="h-7">
                   {COLUMNS.map((c) => (
-                    <TableHead key={`${c.key}-filter`} className="h-auto px-2 py-1 align-middle">
+                    <TableHead key={`${c.key}-filter`} className="h-auto px-2 py-0.5 align-middle">
                       {FILTER_COLS.includes(c.key) ? (
                         <div className="relative">
                           <Input
                             value={filterInput[c.key] || ""}
                             onChange={(e) => setFilterInput((prev) => ({ ...prev, [c.key]: e.target.value }))}
                             placeholder="Filter..."
-                            className="h-7 text-xs"
+                            className="h-6 text-xs px-1.5"
                           />
                           {loading && (filterInput[c.key] || "").trim().length >= 3 && (
-                            <Loader2 className="absolute right-2 top-1.5 w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                            <Loader2 className="absolute right-1.5 top-1 w-3 h-3 animate-spin text-muted-foreground" />
                           )}
                         </div>
                       ) : null}
@@ -268,21 +269,24 @@ export default function UgovoriPage() {
                       <TableRow
                         key={`${r.kljuc}-${idx}`}
                         className={cn(
-                          "cursor-pointer hover:bg-muted/50",
+                          "cursor-pointer hover:bg-muted/50 h-7",
                           hasSubagent && "bg-indigo-50/70 hover:bg-indigo-100/80 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50"
                         )}
                         title={hasSubagent ? `Subagent: ${r.subagent}` : undefined}
                         onClick={() => openDetail(r.kljuc)}
                       >
-                        <TableCell className="font-mono font-medium">{r.kljuc}</TableCell>
-                        <TableCell className="whitespace-nowrap">{r.danas || "—"}</TableCell>
-                        <TableCell className="font-medium">{r.putnik || "—"}</TableCell>
-                        <TableCell>{r.mesto || "—"}</TableCell>
-                        <TableCell>{r.naziv || "—"}</TableCell>
-                        <TableCell>{r.subagent || "—"}</TableCell>
-                        <TableCell className="whitespace-nowrap">{r.datumod || "—"}</TableCell>
-                        <TableCell className="whitespace-nowrap">{r.datumdo || "—"}</TableCell>
-                        <TableCell className="whitespace-nowrap font-medium">
+                        <TableCell className="px-2 py-1 font-mono font-medium">{r.kljuc}</TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">{r.danas || "—"}</TableCell>
+                        <TableCell className="px-2 py-1 font-medium">{r.putnik || "—"}</TableCell>
+                        <TableCell className="px-2 py-1">{r.mesto || "—"}</TableCell>
+                        <TableCell className="px-2 py-1">{r.naziv || "—"}</TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">
+                          {[r.struktura, r.soba].filter((x) => (x || "").trim()).join(" · ") || "—"}
+                        </TableCell>
+                        <TableCell className="px-2 py-1">{r.subagent || "—"}</TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">{r.datumod || "—"}</TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">{r.datumdo || "—"}</TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap font-medium">
                           {fmtRSD(r.ukupna_vrednost)}
                         </TableCell>
                       </TableRow>
