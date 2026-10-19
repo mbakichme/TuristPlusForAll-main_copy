@@ -42,11 +42,11 @@ export interface Drzava { id: number; id_cis?: string; naziv: string; naziv_cis?
 export interface Destinacija { id: number; naziv: string; drzava?: number; drzava_naziv?: string; status: number; organizator?: number; predstavnik?: number; naziv_cis?: string; }
 export interface Mesto { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; grupa_datuma?: number; grupa_datuma_naziv?: string; grupe?: number[]; grupe_nazivi?: string[]; status: number; organizator?: number; predstavnik?: number; grafik: number; cis?: string; }
 export interface TipSmestaja { id: number; naziv: string; }
-export interface Smestaj { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; mesto?: number; mesto_naziv?: string; tip_smestaja?: number; tip_smestaja_naziv?: string; grupa_datuma?: number | null; grupa_datuma_naziv?: string | null; status: number; organizator?: number; predstavnik?: number; grafik: number; granica_chd: number; }
+export interface Smestaj { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; mesto?: number; mesto_naziv?: string; tip_smestaja?: number; tip_smestaja_naziv?: string; grupa_datuma?: number | null; grupa_datuma_naziv?: string | null; status: number; organizator?: number; predstavnik?: number; grafik: number; granica_chd: number; prima_decu: boolean; ne_prima_ispod_godina: number | null; }
 
 export interface Soba { id: number; veza_id_smestaj: number; smestaj_naziv?: string | null; mesto_naziv?: string | null; broj_sobe: string; opis: string; tip: string; status: number; opis_dodatno: string; veliki_opis: string; koeficijenti?: string[]; }
 
-export interface Polazak { id: number; destinacija: string | null; polazak: string | null; sat: string | null; valuta: string | null; adlrt: number | null; chdrt: number | null; infrt: number | null; adlow: number | null; chdow: number | null; infow: number | null; }
+export interface Polazak { id: number; destinacija: string | null; polazak: string | null; sat: string | null; valuta: string | null; adlrt: number | null; chdrt: number | null; infrt: number | null; adlow: number | null; chdow: number | null; infow: number | null; cena_transfera: number | null; destinacija_id: number | null; mesto_id: number | null; grupa_id: number | null; mesto_naziv: string | null; grupa_naziv: string | null; }
 
 export interface Dokument { tip: string; naziv: string; napomena: string | null; slika: string | null; updated_at?: string | null; }
 

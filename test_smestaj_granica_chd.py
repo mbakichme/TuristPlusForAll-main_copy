@@ -46,6 +46,35 @@ def main():
         back = [s for s in api.get("/smestaj").json() if s["id"] == s1["id"]][0]
         assert float(back["granica_chd"]) == 7.25, back
         print("OK 3: PUT 7.25 → GET 7.25")
+
+        # prima_decu (DA/NE) + ne_prima_ispod_godina (nedefinisano kad je DA)
+        assert s1["prima_decu"] is True and s1["ne_prima_ispod_godina"] is None, s1
+        print("OK 4a: POST default → prima_decu=True, godine=None")
+
+        r = api.put(f"/smestaj/{s1['id']}", json={"prima_decu": False})
+        assert r.status_code == 400, f"NE bez godina treba 400, ima {r.status_code}"
+        r = api.put(f"/smestaj/{s1['id']}", json={"prima_decu": False, "ne_prima_ispod_godina": 5})
+        assert r.status_code == 200 and r.json()["prima_decu"] is False and r.json()["ne_prima_ispod_godina"] == 5, r.text
+        print("OK 4b: NE + godine 5 → sačuvano; NE bez godina → 400")
+
+        r = api.put(f"/smestaj/{s1['id']}", json={"ne_prima_ispod_godina": 7})
+        assert r.status_code == 200 and r.json()["ne_prima_ispod_godina"] == 7, r.text
+        print("OK 4c: izmena godina 5 → 7")
+
+        r = api.put(f"/smestaj/{s1['id']}", json={"prima_decu": True})
+        assert r.status_code == 200 and r.json()["prima_decu"] is True and r.json()["ne_prima_ispod_godina"] is None, r.text
+        print("OK 4d: DA → godine se brišu (null)")
+
+        r = api.post("/smestaj", json={**base, "naziv": "TEST-CHD3", "prima_decu": False})
+        assert r.status_code == 400, r.status_code
+        r = api.post("/smestaj", json={**base, "naziv": "TEST-CHD3", "prima_decu": False, "ne_prima_ispod_godina": 3})
+        assert r.status_code == 200 and r.json()["ne_prima_ispod_godina"] == 3, r.text
+        ids.append(r.json()["id"])
+        print("OK 4e: POST NE bez godina → 400; NE + 3 → 200")
+
+        r = api.put(f"/smestaj/{s1['id']}", json={"ne_prima_ispod_godina": 19})
+        assert r.status_code == 422, r.status_code
+        print("OK 4f: godine 19 → 422")
     finally:
         for i in ids:
             api.delete(f"/smestaj/{i}")

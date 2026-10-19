@@ -238,6 +238,24 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS granica_chd DOUBLE PRECISION NOT NULL DEFAULT 6.99"
         ))
+        conn.execute(text(
+            "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS prima_decu BOOLEAN NOT NULL DEFAULT TRUE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS ne_prima_ispod_godina INTEGER NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE IF EXISTS polazak ADD COLUMN IF NOT EXISTS cena_transfera DOUBLE PRECISION NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE IF EXISTS polazak ADD COLUMN IF NOT EXISTS mesto_id INTEGER NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE IF EXISTS polazak ADD COLUMN IF NOT EXISTS grupa_id INTEGER NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE IF EXISTS polazak ADD COLUMN IF NOT EXISTS destinacija_id INTEGER NULL"
+        ))
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS agencija (
@@ -802,6 +820,15 @@ class SmestajCreate(BaseModel):
     predstavnik: Optional[int] = None
     grafik: Optional[int] = 0
     granica_chd: Optional[float] = 6.99
+    prima_decu: Optional[bool] = True
+    ne_prima_ispod_godina: Optional[int] = None
+
+    @field_validator("ne_prima_ispod_godina")
+    @classmethod
+    def _godine_0_18(cls, v):
+        if v is not None and not (0 <= v <= 18):
+            raise ValueError("Godine moraju biti između 0 i 18")
+        return v
 
 
 class SmestajUpdate(BaseModel):
@@ -816,6 +843,15 @@ class SmestajUpdate(BaseModel):
     predstavnik: Optional[int] = None
     grafik: Optional[int] = None
     granica_chd: Optional[float] = None
+    prima_decu: Optional[bool] = None
+    ne_prima_ispod_godina: Optional[int] = None
+
+    @field_validator("ne_prima_ispod_godina")
+    @classmethod
+    def _godine_0_18(cls, v):
+        if v is not None and not (0 <= v <= 18):
+            raise ValueError("Godine moraju biti između 0 i 18")
+        return v
 
 
 class PeriodGrupaCreate(BaseModel):
@@ -850,8 +886,10 @@ class PolazakSave(BaseModel):
     adlow: Optional[float] = None
     chdow: Optional[float] = None
     infow: Optional[float] = None
-
-# tip → prikazani naziv (logo je globalni, ostali su dokumenti sa headerom + napomenom)
+    cena_transfera: Optional[float] = None  # EUR, uvek; NULL = nije uneta (logo je globalni, ostali su dokumenti sa headerom + napomenom)
+    mesto_id: Optional[int] = None  # šifarnik mesto; obavezno za nove/izmenjene zapise
+    grupa_id: Optional[int] = None  # period_grupa; obavezno za nove/izmenjene zapise
+    destinacija_id: Optional[int] = None  # šifarnik destinacija; obavezno; destinacija (tekst) se popunjava iz naziva
 DOKUMENTI_TIPOVI = {
     "logo": "Logo agencije",
     "predracun": "Predračun",
@@ -1841,8 +1879,7 @@ def create_app(static_dir: str) -> FastAPI:
             rows = conn.execute(text("""
                 SELECT s.id, s.naziv, s.drzava, s.destinacija, s.mesto, s.tip_smestaja,
                        s.grupa_datuma, s.status, s.organizator, s.predstavnik, s.grafik,
-                       s.granica_chd,
-                       dr.naziv as drzava_naziv, de.naziv as destinacija_naziv,
+                       s.granica_chd, s.prima_decu, s.ne_prima_ispod_godina,                       dr.naziv as drzava_naziv, de.naziv as destinacija_naziv,
                        me.naziv as mesto_naziv, ts.naziv as tip_smestaja_naziv,
                        pg.naziv as grupa_datuma_naziv
                 FROM smestaj s
@@ -1860,6 +1897,7 @@ def create_app(static_dir: str) -> FastAPI:
             "status": r.status, "organizator": r.organizator,
             "predstavnik": r.predstavnik, "grafik": r.grafik,
             "granica_chd": r.granica_chd,
+            "prima_decu": r.prima_decu, "ne_prima_ispod_godina": r.ne_prima_ispod_godina,
             "drzava_naziv": r.drzava_naziv,
             "destinacija_naziv": r.destinacija_naziv,
             "mesto_naziv": r.mesto_naziv,
@@ -1869,17 +1907,22 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.post("/smestaj")
     def create_smestaj(body: SmestajCreate, _: dict = Depends(get_current_user)):
+        prima = True if body.prima_decu is None else body.prima_decu
+        if not prima and body.ne_prima_ispod_godina is None:
+            raise HTTPException(status_code=400, detail="Za „ne prima decu“ unesite godine ispod kojih se deca ne primaju")
         with engine.begin() as conn:
             row = conn.execute(text("""
-                INSERT INTO smestaj (naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd)
-                VALUES (:naziv, :drzava, :destinacija, :mesto, :tip_smestaja, :grupa_datuma, :status, :organizator, :predstavnik, :grafik, COALESCE(:granica_chd, 6.99))
-                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd
+                INSERT INTO smestaj (naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina)
+                VALUES (:naziv, :drzava, :destinacija, :mesto, :tip_smestaja, :grupa_datuma, :status, :organizator, :predstavnik, :grafik, COALESCE(:granica_chd, 6.99), :prima, :ispod)
+                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina
             """), {
                 "naziv": body.naziv, "drzava": body.drzava, "destinacija": body.destinacija,
                 "mesto": body.mesto, "tip_smestaja": body.tip_smestaja,
                 "grupa_datuma": body.grupa_datuma, "status": body.status,
                 "organizator": body.organizator, "predstavnik": body.predstavnik, "grafik": body.grafik,
                 "granica_chd": body.granica_chd,
+                "prima": prima,
+                "ispod": None if prima else body.ne_prima_ispod_godina,
             }).fetchone()
         return {
             "id": row.id, "naziv": row.naziv, "drzava": row.drzava,
@@ -1888,23 +1931,37 @@ def create_app(static_dir: str) -> FastAPI:
             "status": row.status, "organizator": row.organizator,
             "predstavnik": row.predstavnik, "grafik": row.grafik,
             "granica_chd": row.granica_chd,
+            "prima_decu": row.prima_decu, "ne_prima_ispod_godina": row.ne_prima_ispod_godina,
         }
 
     @api.put("/smestaj/{item_id}")
     def update_smestaj(item_id: int, body: SmestajUpdate, _: dict = Depends(get_current_user)):
         fields = {k: v for k, v in body.model_dump().items() if v is not None}
+        # godine može da se obriše (null u zahtevu) — samo ako je eksplicitno poslato
+        if "ne_prima_ispod_godina" in body.model_fields_set:
+            fields["ne_prima_ispod_godina"] = body.ne_prima_ispod_godina
         if not fields:
             raise HTTPException(status_code=400, detail="Nema podataka za ažuriranje")
-        set_clause = ", ".join(f"{k} = :{k}" for k in fields)
-        fields["id"] = item_id
         with engine.begin() as conn:
+            cur = conn.execute(text(
+                "SELECT prima_decu, ne_prima_ispod_godina FROM smestaj WHERE id = :id FOR UPDATE"
+            ), {"id": item_id}).fetchone()
+            if not cur:
+                raise HTTPException(status_code=404, detail="Smeštaj nije pronađen")
+            prima = fields.get("prima_decu", cur.prima_decu)
+            ispod = fields.get("ne_prima_ispod_godina", cur.ne_prima_ispod_godina)
+            if not prima:
+                if ispod is None:
+                    raise HTTPException(status_code=400, detail="Za „ne prima decu“ unesite godine ispod kojih se deca ne primaju")
+            else:
+                fields["ne_prima_ispod_godina"] = None  # DA: godine nisu definisane
+            set_clause = ", ".join(f"{k} = :{k}" for k in fields)
+            fields["id"] = item_id
             row = conn.execute(text(f"""
                 UPDATE smestaj SET {set_clause}
                 WHERE id = :id
-                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd
+                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina
             """), fields).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Smeštaj nije pronađen")
         return {
             "id": row.id, "naziv": row.naziv, "drzava": row.drzava,
             "destinacija": row.destinacija, "mesto": row.mesto, "tip_smestaja": row.tip_smestaja,
@@ -1912,6 +1969,7 @@ def create_app(static_dir: str) -> FastAPI:
             "status": row.status, "organizator": row.organizator,
             "predstavnik": row.predstavnik, "grafik": row.grafik,
             "granica_chd": row.granica_chd,
+            "prima_decu": row.prima_decu, "ne_prima_ispod_godina": row.ne_prima_ispod_godina,
         }
 
     @api.delete("/smestaj/{item_id}")
@@ -2034,48 +2092,76 @@ def create_app(static_dir: str) -> FastAPI:
         return {"ok": True}
 
     # ── Polazak (cena i mesto polaska agencijskog prevoza) ─────────────────
-    POLAZAK_COLS = ("id, destinacija, polazak, sat, valuta, "
-                    "adlrt, chdrt, infrt, adlow, chdow, infow")
+    def _polazak_sa_nazivima(conn, item_id: int | None = None):
+        where = "WHERE p.id = :id" if item_id is not None else ""
+        rows = conn.execute(text(f"""
+            SELECT p.id, COALESCE(ds.naziv, p.destinacija) AS destinacija,
+                   p.destinacija_id, ds.naziv AS destinacija_naziv,
+                   p.polazak, p.sat, p.valuta,
+                   p.adlrt, p.chdrt, p.infrt, p.adlow, p.chdow, p.infow,
+                   p.cena_transfera, p.mesto_id, p.grupa_id,
+                   m.naziv AS mesto_naziv, g.naziv AS grupa_naziv
+            FROM polazak p
+            LEFT JOIN destinacija ds ON ds.id = p.destinacija_id
+            LEFT JOIN mesto m ON m.id = p.mesto_id
+            LEFT JOIN period_grupa g ON g.id = p.grupa_id
+            {where}
+            ORDER BY destinacija, p.polazak, p.sat, p.id
+        """), {"id": item_id} if item_id is not None else {}).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    def _polazak_validiraj(conn, body: "PolazakSave") -> dict:
+        if body.destinacija_id is None or body.mesto_id is None or body.grupa_id is None:
+            raise HTTPException(status_code=400, detail="Destinacija, mesto i grupa termina su obavezni")
+        naziv = conn.execute(text("SELECT naziv FROM destinacija WHERE id = :id"),
+                             {"id": body.destinacija_id}).scalar()
+        if naziv is None:
+            raise HTTPException(status_code=400, detail="Destinacija nije u šifarniku")
+        vals = body.model_dump()
+        vals["destinacija"] = naziv
+        return vals
 
     @api.get("/polazak")
     def list_polazak(_: dict = Depends(get_current_user)):
         with engine.connect() as conn:
-            rows = conn.execute(text(f"""
-                SELECT {POLAZAK_COLS} FROM polazak
-                ORDER BY destinacija, polazak, sat, id
-            """)).fetchall()
-        return [dict(r._mapping) for r in rows]
+            return _polazak_sa_nazivima(conn)
 
     @api.post("/polazak")
     def create_polazak(body: PolazakSave, _: dict = Depends(get_current_user)):
-        vals = body.model_dump()
         with engine.begin() as conn:
-            row = conn.execute(text(f"""
-                INSERT INTO polazak (destinacija, polazak, sat, valuta,
-                                     adlrt, chdrt, infrt, adlow, chdow, infow)
-                VALUES (:destinacija, :polazak, :sat, :valuta,
-                        :adlrt, :chdrt, :infrt, :adlow, :chdow, :infow)
-                RETURNING {POLAZAK_COLS}
+            vals = _polazak_validiraj(conn, body)
+            row = conn.execute(text("""
+                INSERT INTO polazak (destinacija, destinacija_id, polazak, sat, valuta,
+                                     adlrt, chdrt, infrt, adlow, chdow, infow, cena_transfera,
+                                     mesto_id, grupa_id)
+                VALUES (:destinacija, :destinacija_id, :polazak, :sat, :valuta,
+                        :adlrt, :chdrt, :infrt, :adlow, :chdow, :infow, :cena_transfera,
+                        :mesto_id, :grupa_id)
+                RETURNING id
             """), vals).fetchone()
-        return dict(row._mapping)
+            return _polazak_sa_nazivima(conn, row.id)[0]
 
     @api.put("/polazak/{item_id}")
     def update_polazak(item_id: int, body: PolazakSave, _: dict = Depends(get_current_user)):
-        vals = body.model_dump()
-        vals["id"] = item_id
         with engine.begin() as conn:
-            row = conn.execute(text(f"""
+            vals = _polazak_validiraj(conn, body)
+            vals["id"] = item_id
+            row = conn.execute(text("""
                 UPDATE polazak SET
-                    destinacija = :destinacija, polazak = :polazak,
+                    destinacija = :destinacija, destinacija_id = :destinacija_id,
+                    polazak = :polazak,
                     sat = :sat, valuta = :valuta,
                     adlrt = :adlrt, chdrt = :chdrt, infrt = :infrt,
-                    adlow = :adlow, chdow = :chdow, infow = :infow
+                    adlow = :adlow, chdow = :chdow, infow = :infow,
+                    cena_transfera = :cena_transfera,
+                    mesto_id = :mesto_id, grupa_id = :grupa_id
                 WHERE id = :id
-                RETURNING {POLAZAK_COLS}
+                RETURNING id
             """), vals).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Polazak nije pronađen")
-        return dict(row._mapping)
+            if not row:
+                raise HTTPException(status_code=404, detail="Polazak nije pronađen")
+            return _polazak_sa_nazivima(conn, row.id)[0]
+
 
     @api.delete("/polazak/{item_id}")
     def delete_polazak(item_id: int, _: dict = Depends(get_current_user)):
@@ -2458,6 +2544,7 @@ def create_app(static_dir: str) -> FastAPI:
                     WHERE l.kraj < :ddo
                 )
                 SELECT s.id AS smestaj_id, s.naziv AS smestaj_naziv, s.granica_chd,
+                       s.prima_decu, s.ne_prima_ispod_godina,
                        b.id, TRIM(b.broj_sobe) AS broj_sobe, b.tip, b.opis, b.opis_dodatno
                 FROM sobe b
                 JOIN smestaj s ON s.id = b.veza_id_smestaj
@@ -2484,7 +2571,10 @@ def create_app(static_dir: str) -> FastAPI:
             for r in rows:
                 g = grouped.setdefault(r.smestaj_id, {
                     "smestaj_id": r.smestaj_id, "smestaj_naziv": r.smestaj_naziv,
-                    "granica_chd": float(r.granica_chd), "sobe": [],
+                    "granica_chd": float(r.granica_chd),
+                    "prima_decu": bool(r.prima_decu),
+                    "ne_prima_ispod_godina": r.ne_prima_ispod_godina,
+                    "sobe": [],
                 })
                 g["sobe"].append({
                     "id": r.id, "broj_sobe": r.broj_sobe, "tip": r.tip or "",
@@ -2502,6 +2592,15 @@ def create_app(static_dir: str) -> FastAPI:
                 if d_do <= d_od:
                     raise HTTPException(status_code=400, detail="Datum do mora biti posle datuma od")
                 smestaji = _smestaji_za_termin(conn, d_od, d_do)
+                # smeštaj koji ne prima decu ispod N godina: ako neko od dece
+                # putnika ima manje od N, smeštaj se ne nudi (DA ili nedefinisane
+                # godine ne utiču na pretragu)
+                if godine:
+                    smestaji = [
+                        g for g in smestaji
+                        if g["prima_decu"] or g["ne_prima_ispod_godina"] is None
+                        or not any(gd < g["ne_prima_ispod_godina"] for gd in godine)
+                    ]
                 if not obracun:
                     return smestaji  # stari klijenti bez putnika: samo raspoloživost
                 # CHD/ADL po smeštaju: dete do granica_chd = CHD, starije = ADL

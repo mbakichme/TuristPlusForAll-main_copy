@@ -10,12 +10,17 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
 } from "@/components/ui/alert-dialog";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
+} from "@/components/ui/select";
+import {
   Plus, Pencil, Trash2, Loader2, Bus, Check, X, ArrowUp, ArrowDown, ChevronsUpDown, Search
 } from "lucide-react";
 import { toast } from "sonner";
 
-type PolazakKey = "destinacija" | "polazak" | "sat" | "valuta"
-  | "adlrt" | "chdrt" | "infrt" | "adlow" | "chdow" | "infow";
+interface Sifarnik { id: number; naziv: string; }
+
+type PolazakKey = "destinacija" | "polazak" | "sat" | "valuta" | "mesto_naziv" | "grupa_naziv"
+  | "adlrt" | "chdrt" | "adlow" | "chdow" | "cena_transfera";
 
 interface ColDef {
   key: PolazakKey;
@@ -30,40 +35,52 @@ const COLUMNS: ColDef[] = [
   { key: "polazak", label: "Mesto polaska", cls: "min-w-56" },
   { key: "sat", label: "Sat", cls: "w-20" },
   { key: "valuta", label: "Valuta", cls: "w-20" },
+  { key: "mesto_naziv", label: "Mesto", tip: "Mesto iz šifarnika (obavezno)", cls: "min-w-40" },
+  { key: "grupa_naziv", label: "Grupa termina", tip: "Grupa termina (obavezno)", cls: "min-w-44" },
   { key: "adlrt", label: "ADL RT", tip: "Odrasli — povratna karta (RT)", num: true, cls: "w-24" },
   { key: "chdrt", label: "CHD RT", tip: "Dete — povratna karta (RT)", num: true, cls: "w-24" },
-  { key: "infrt", label: "INF RT", tip: "Beba — povratna karta (RT)", num: true, cls: "w-24" },
   { key: "adlow", label: "ADL OW", tip: "Odrasli — jedan pravac (OW)", num: true, cls: "w-24" },
   { key: "chdow", label: "CHD OW", tip: "Dete — jedan pravac (OW)", num: true, cls: "w-24" },
-  { key: "infow", label: "INF OW", tip: "Beba — jedan pravac (OW)", num: true, cls: "w-24" },
+  { key: "cena_transfera", label: "Cena transfera (EUR)", tip: "Cena transfera u EUR", num: true, cls: "w-32" },
 ];
 
-const NUM_KEYS: PolazakKey[] = ["adlrt", "chdrt", "infrt", "adlow", "chdow", "infow"];
+const NUM_KEYS: PolazakKey[] = ["adlrt", "chdrt", "adlow", "chdow", "cena_transfera"];
 
 interface PolazakForm {
-  destinacija: string; polazak: string; sat: string; valuta: string;
+  destinacija_id: string; polazak: string; sat: string; valuta: string;
+  mesto_id: string; grupa_id: string;
   adlrt: string; chdrt: string; infrt: string; adlow: string; chdow: string; infow: string;
+  cena_transfera: string;
 }
 
+// INF RT/OW nisu u tabeli; podrazumevano 0 za nove zapise, a kod izmene ostaje sačuvana vrednost (toForm)
 const emptyForm: PolazakForm = {
-  destinacija: "", polazak: "", sat: "", valuta: "EUR",
-  adlrt: "", chdrt: "", infrt: "", adlow: "", chdow: "", infow: "",
+  destinacija_id: "", polazak: "", sat: "", valuta: "EUR", mesto_id: "", grupa_id: "",
+  adlrt: "", chdrt: "", infrt: "0", adlow: "", chdow: "", infow: "0", cena_transfera: "",
+};
+
+const EMPTY_FILTERS: Record<PolazakKey, string> = {
+  destinacija: "", polazak: "", sat: "", valuta: "", mesto_naziv: "", grupa_naziv: "",
+  adlrt: "", chdrt: "", adlow: "", chdow: "", cena_transfera: "",
 };
 
 const fmtNum = new Intl.NumberFormat("sr-RS", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 function toForm(p: Polazak): PolazakForm {
   return {
-    destinacija: p.destinacija ?? "",
+    destinacija_id: p.destinacija_id == null ? "" : String(p.destinacija_id),
     polazak: p.polazak ?? "",
     sat: p.sat ?? "",
     valuta: p.valuta ?? "",
+    mesto_id: p.mesto_id == null ? "" : String(p.mesto_id),
+    grupa_id: p.grupa_id == null ? "" : String(p.grupa_id),
     adlrt: p.adlrt == null ? "" : String(p.adlrt),
     chdrt: p.chdrt == null ? "" : String(p.chdrt),
     infrt: p.infrt == null ? "" : String(p.infrt),
     adlow: p.adlow == null ? "" : String(p.adlow),
     chdow: p.chdow == null ? "" : String(p.chdow),
     infow: p.infow == null ? "" : String(p.infow),
+    cena_transfera: p.cena_transfera == null ? "" : String(p.cena_transfera),
   };
 }
 
@@ -80,10 +97,10 @@ export default function PrevozPage() {
   const [items, setItems] = useState<Polazak[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<Record<PolazakKey, string>>({
-    destinacija: "", polazak: "", sat: "", valuta: "",
-    adlrt: "", chdrt: "", infrt: "", adlow: "", chdow: "", infow: "",
-  });
+  const [filters, setFilters] = useState<Record<PolazakKey, string>>(EMPTY_FILTERS);
+  const [mesta, setMesta] = useState<Sifarnik[]>([]);
+  const [grupe, setGrupe] = useState<Sifarnik[]>([]);
+  const [destinacije, setDestinacije] = useState<Sifarnik[]>([]);
   const [sort, setSort] = useState<{ key: PolazakKey; dir: "asc" | "desc" }>({ key: "destinacija", dir: "asc" });
   const [editId, setEditId] = useState<number | "new" | null>(null);
   const [form, setForm] = useState<PolazakForm>(emptyForm);
@@ -101,6 +118,20 @@ export default function PrevozPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    Promise.all([
+      apiFetch<Sifarnik[]>("/mesto"),
+      apiFetch<Sifarnik[]>("/period-grupa"),
+      apiFetch<Sifarnik[]>("/destinacija"),
+    ])
+      .then(([m, g, d]) => {
+        setMesta([...m].sort((a, b) => a.naziv.localeCompare(b.naziv, "sr")));
+        setGrupe([...g].sort((a, b) => a.naziv.localeCompare(b.naziv, "sr")));
+        setDestinacije([...d].sort((a, b) => a.naziv.localeCompare(b.naziv, "sr")));
+      })
+      .catch(() => toast.error("Greška pri učitavanju šifarnika"));
+  }, []);
 
   const deferredSearch = useDeferredValue(search);
   const deferredFilters = useDeferredValue(filters);
@@ -173,24 +204,31 @@ export default function PrevozPage() {
     setForm(emptyForm);
   }
 
-  function setField(key: PolazakKey, value: string) {
+  function setField(key: keyof PolazakForm, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
   async function handleSave() {
+    if (!form.destinacija_id || !form.mesto_id || !form.grupa_id) {
+      toast.error("Destinacija, mesto i grupa termina su obavezni");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
-        destinacija: form.destinacija.trim(),
+        destinacija_id: form.destinacija_id ? Number(form.destinacija_id) : null,
         polazak: form.polazak.trim(),
         sat: form.sat.trim(),
         valuta: form.valuta.trim(),
+        mesto_id: form.mesto_id ? Number(form.mesto_id) : null,
+        grupa_id: form.grupa_id ? Number(form.grupa_id) : null,
         adlrt: parseNum(form.adlrt),
         chdrt: parseNum(form.chdrt),
         infrt: parseNum(form.infrt),
         adlow: parseNum(form.adlow),
         chdow: parseNum(form.chdow),
         infow: parseNum(form.infow),
+        cena_transfera: parseNum(form.cena_transfera),
       };
       if (editId === "new") {
         await apiFetch("/polazak", { method: "POST", body: JSON.stringify(payload) });
@@ -222,17 +260,38 @@ export default function PrevozPage() {
 
   function clearFilters() {
     setSearch("");
-    setFilters({ destinacija: "", polazak: "", sat: "", valuta: "", adlrt: "", chdrt: "", infrt: "", adlow: "", chdow: "", infow: "" });
+    setFilters(EMPTY_FILTERS);
   }
 
   function editCell(col: ColDef, autoFocus = false) {
+    if (col.key === "destinacija" || col.key === "mesto_naziv" || col.key === "grupa_naziv") {
+      const formKey = col.key === "destinacija" ? "destinacija_id"
+        : col.key === "mesto_naziv" ? "mesto_id" : "grupa_id";
+      const opcije = col.key === "destinacija" ? destinacije
+        : col.key === "mesto_naziv" ? mesta : grupe;
+      const placeholder = col.key === "destinacija" ? "Izaberi destinaciju"
+        : col.key === "mesto_naziv" ? "Izaberi mesto" : "Izaberi grupu";
+      return (
+        <Select value={form[formKey] || undefined} onValueChange={(v) => setField(formKey, v)}>
+          <SelectTrigger aria-label={col.label} className="h-8 text-sm">
+            <SelectValue placeholder={placeholder} />
+          </SelectTrigger>
+          <SelectContent>
+            {opcije.map((o) => (
+              <SelectItem key={o.id} value={String(o.id)}>{o.naziv}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+    const k = col.key as keyof PolazakForm;
     return (
       <Input
         autoFocus={autoFocus}
         inputMode={col.num ? "decimal" : undefined}
         className={cn("h-8 text-sm", col.num && "text-right")}
-        value={form[col.key]}
-        onChange={(e) => setField(col.key, e.target.value)}
+        value={form[k]}
+        onChange={(e) => setField(k, e.target.value)}
       />
     );
   }
@@ -377,6 +436,12 @@ export default function PrevozPage() {
                       </td>
                       <td className="px-2 py-1.5">
                         {item.valuta || <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5" title={item.mesto_naziv || undefined}>
+                        {item.mesto_naziv || <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5" title={item.grupa_naziv || undefined}>
+                        {item.grupa_naziv || <span className="text-muted-foreground">—</span>}
                       </td>
                       {NUM_KEYS.map((k) => (
                         <td key={k} className={cn("px-2 py-1.5 text-right", item[k] == null && "text-muted-foreground")}>

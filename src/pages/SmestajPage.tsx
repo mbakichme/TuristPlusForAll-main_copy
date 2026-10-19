@@ -34,9 +34,11 @@ interface SmestajForm {
   predstavnik: string;
   grafik: string;
   granica_chd: string;
+  prima_decu: string;
+  ne_prima_ispod_godina: string;
 }
 
-const emptyForm: SmestajForm = { naziv: "", drzava: "", destinacija: "", mesto: "", tip_smestaja: "", grupa_datuma: "", status: "1", organizator: "", predstavnik: "", grafik: "0", granica_chd: "6.99" };
+const emptyForm: SmestajForm = { naziv: "", drzava: "", destinacija: "", mesto: "", tip_smestaja: "", grupa_datuma: "", status: "1", organizator: "", predstavnik: "", grafik: "0", granica_chd: "6.99", prima_decu: "1", ne_prima_ispod_godina: "" };
 
 export default function SmestajPage() {
   const [items, setItems] = useState<Smestaj[]>([]);
@@ -97,6 +99,8 @@ export default function SmestajPage() {
       predstavnik: item.predstavnik ? String(item.predstavnik) : "",
       grafik: String(item.grafik),
       granica_chd: String(item.granica_chd ?? 6.99),
+      prima_decu: item.prima_decu === false ? "0" : "1",
+      ne_prima_ispod_godina: item.ne_prima_ispod_godina != null ? String(item.ne_prima_ispod_godina) : "",
     });
     setSheetOpen(true);
   }
@@ -109,6 +113,14 @@ export default function SmestajPage() {
     if (!form.naziv) { toast.error("Naziv je obavezan"); return; }
     const granica = Number(form.granica_chd.replace(",", "."));
     if (!Number.isFinite(granica) || granica <= 0 || granica >= 18) { toast.error("Granica CHD mora biti broj između 0 i 18"); return; }
+    const primaDecu = form.prima_decu === "1";
+    const godineDeteta = form.ne_prima_ispod_godina.trim();
+    let ispod: number | null = null;
+    if (!primaDecu) {
+      if (godineDeteta === "") { toast.error("Unesite godine ispod kojih smeštaj ne prima decu"); return; }
+      ispod = Number(godineDeteta);
+      if (!Number.isInteger(ispod) || ispod < 0 || ispod > 18) { toast.error("Godine moraju biti ceo broj između 0 i 18"); return; }
+    }
     setSaving(true);
     try {
       const payload = {
@@ -123,6 +135,8 @@ export default function SmestajPage() {
         predstavnik: form.predstavnik ? Number(form.predstavnik) : undefined,
         grafik: Number(form.grafik),
         granica_chd: granica,
+        prima_decu: primaDecu,
+        ne_prima_ispod_godina: ispod,
       };
       if (editing) {
         await apiFetch(`/smestaj/${editing.id}`, {
@@ -193,12 +207,13 @@ export default function SmestajPage() {
                 <TableHead>Status</TableHead>
                 <TableHead>Grafik</TableHead>
                 <TableHead>Granica CHD</TableHead>
+                <TableHead>Prima decu</TableHead>
                 <TableHead className="w-24 text-right">Akcije</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Nema podataka</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Nema podataka</TableCell></TableRow>
               ) : items.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="font-medium">{item.naziv}</TableCell>
@@ -217,6 +232,9 @@ export default function SmestajPage() {
                     </Badge>
                   </TableCell>
                   <TableCell>{item.granica_chd ?? 6.99}</TableCell>
+                  <TableCell>
+                    {item.prima_decu === false ? `NE (ispod ${item.ne_prima_ispod_godina} god.)` : "DA"}
+                  </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(item)}><Pencil className="w-4 h-4" /></Button>
@@ -328,6 +346,22 @@ export default function SmestajPage() {
               <Label>Granica godina za CHD</Label>
               <Input inputMode="decimal" value={form.granica_chd} onChange={(e) => setField("granica_chd", e.target.value)} placeholder="6.99" />
             </div>
+            <div className="space-y-2">
+              <Label>Prima decu</Label>
+              <Select value={form.prima_decu} onValueChange={(v) => setField("prima_decu", v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">DA</SelectItem>
+                  <SelectItem value="0">NE</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {form.prima_decu === "0" && (
+              <div className="space-y-2">
+                <Label>Ne prima decu mlađu od (godina)</Label>
+                <Input inputMode="numeric" value={form.ne_prima_ispod_godina} onChange={(e) => setField("ne_prima_ispod_godina", e.target.value)} placeholder="npr. 5" />
+              </div>
+            )}
           </div>
           <SheetFooter>
             <Button variant="outline" onClick={() => setSheetOpen(false)}>Otkaži</Button>

@@ -2,7 +2,7 @@
 
 API: /slobodne-sobe?odrasli=&deca=&prevoz= vraća, posle provere raspoloživosti
 (pravilo 1), samo sobe čija struktura (sobe.tip + soba_koeficijenti) ima red u
-koeficijenti_prodaje za TAČNO (adl, chd, inf) (pravilo 2) i obračun cene iz
+koeficijenti_prodaje za TAČNO (adl, chd) (pravilo 2) i obračun cene iz
 aktivnog cenovnika (pravilo 3) sa listom koraka `obracun`.
 
 Ground truth se računa direktno iz baze (cenovnik_cene/opcije_soba/popust_soba).
@@ -36,12 +36,12 @@ def proveri(naziv, uslov, detalj=""):
 def q2(x):
     return float(Decimal(x).quantize(Decimal("0.01")))
 
-def ground_truth(conn, smestaj_id, soba, d_od, d_do, adl, chd, inf, sopstveni):
+def ground_truth(conn, smestaj_id, soba, d_od, d_do, adl, chd, sopstveni):
     """Očekivana (osnovna, snižena) za sobu ili None ako pravilo 2 ne prolazi."""
     danas = date.today()
     koef = {r.struktura.strip(): Decimal(str(r.koeficijent or 0)) for r in reversed(conn.execute(text(
-        "SELECT struktura, koeficijent FROM koeficijenti_prodaje WHERE adl=:a AND chd=:c AND inf=:i "
-        "ORDER BY (koeficijent > 0) DESC, rucno DESC, id DESC"), {"a": adl, "c": chd, "i": inf}).fetchall())}
+        "SELECT struktura, koeficijent FROM koeficijenti_prodaje WHERE adl=:a AND chd=:c AND inf=0 "
+        "ORDER BY (koeficijent > 0) DESC, rucno DESC, id DESC"), {"a": adl, "c": chd}).fetchall())}
     strukture = [soba["tip"].strip()] + [r.struktura.strip() for r in conn.execute(text(
         "SELECT struktura FROM soba_koeficijenti WHERE soba_id=:s"), {"s": soba["id"]})]
     kand = [(s, koef[s]) for s in strukture if s in koef]
@@ -112,23 +112,25 @@ def main():
             raspolozivo and all("cena_osnovna" not in s for g in raspolozivo for s in g["sobe"]))
 
     with engine.connect() as conn:
-        for adl, deca, prevoz in [(2, "", "autobuski"), (1, "5", "sopstveni"), (3, "", "autobuski"), (2, "1", "autobuski")]:
+        for odrasli, deca, prevoz in [(2, "", "autobuski"), (1, "5", "sopstveni"), (3, "", "autobuski"), (2, "1", "autobuski")]:
             godine = [int(x) for x in deca.split(",") if x]
-            chd, inf = sum(1 for g in godine if g >= 2), sum(1 for g in godine if g < 2)
+            # CHD = dete do 6.99 (smeštaj.granica_chd, default); starije = ADL
+            chd = sum(1 for g in godine if g <= 6.99)
+            adl = odrasli + len(godine) - chd
             sop = prevoz == "sopstveni"
             rez = api.get("/slobodne-sobe", params={"mesto_id": 1, "datum_od": OD, "datum_do": DO,
-                                                    "odrasli": adl, "deca": deca, "prevoz": prevoz}).json()
+                                                    "odrasli": odrasli, "deca": deca, "prevoz": prevoz}).json()
             po_sobi = {(g["smestaj_id"], s["id"]): s for g in rez for s in g["sobe"]}
             ocek = {}
             isklj = {}
             for g in raspolozivo:
                 for s in g["sobe"]:
-                    gt = ground_truth(conn, g["smestaj_id"], s, d_od, d_do, adl, chd, inf, sop)
+                    gt = ground_truth(conn, g["smestaj_id"], s, d_od, d_do, adl, chd, sop)
                     if gt is None:
                         isklj[g["smestaj_id"]] = isklj.get(g["smestaj_id"], 0) + 1
                     else:
                         ocek[(g["smestaj_id"], s["id"])] = gt
-            tag = f"{adl} ADL/{chd} CHD/{inf} INF, {prevoz}"
+            tag = f"{adl} ADL/{chd} CHD, {prevoz}"
             proveri(f"[{tag}] skup soba == ground truth (pravilo 2)", set(po_sobi) == set(ocek),
                     f"api-only={set(po_sobi) - set(ocek)}, gt-only={set(ocek) - set(po_sobi)}")
             for k, gt in ocek.items():

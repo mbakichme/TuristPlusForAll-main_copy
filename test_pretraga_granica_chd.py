@@ -56,10 +56,24 @@ def main():
         dete12_c = pretraga(odrasli="2", deca="12")
         assert cene(dete12_c, SMESTAJ_ID) != cene(odr3, SMESTAJ_ID), "C: sa granicom 12, deca=12 treba CHD"
         print("OK C: sa granicom 12, deca=12 je CHD")
+
+        # D — prima_decu: NE ispod 5 → dete 3 isključuje smeštaj, dete 6 ne
+        api.put(f"/smestaj/{SMESTAJ_ID}", json={"prima_decu": False, "ne_prima_ispod_godina": 5})
+        d3 = pretraga(odrasli="2", deca="3")
+        assert po_smestaju(d3, SMESTAJ_ID) == [], "D: dete 3 < 5 — smeštaj mora nestati"
+        d6 = pretraga(odrasli="2", deca="6")
+        assert po_smestaju(d6, SMESTAJ_ID) != [], "D: dete 6 >= 5 — smeštaj mora ostati"
+        print("OK D: NE ispod 5 → dete 3 isključuje, dete 6 prolazi")
+
+        # E — DA (godine nedefinisane) ne utiče na pretragu
+        api.put(f"/smestaj/{SMESTAJ_ID}", json={"prima_decu": True})
+        e3 = pretraga(odrasli="2", deca="3")
+        assert po_smestaju(e3, SMESTAJ_ID) != [], "E: DA — dete 3 ne sme isključiti smeštaj"
+        print("OK E: DA → pretraga ne zavisi od godina")
     finally:
         if original is not None:
-            api.put(f"/smestaj/{SMESTAJ_ID}", json={"granica_chd": float(original)})
-            print("cleanup: granica_chd vraćena na", original)
+            api.put(f"/smestaj/{SMESTAJ_ID}", json={"granica_chd": float(original), "prima_decu": True})
+            print("cleanup: granica_chd vraćena na", original, "; prima_decu=DA")
 
 
 if __name__ == "__main__":
