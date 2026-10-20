@@ -19,13 +19,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
@@ -393,37 +386,17 @@ export default function KoeficijentiPage() {
                   <tr key={r.id ?? `n${r.rid}`} className="border-b last:border-b-0 hover:bg-muted/20">
                     <td className="px-3 py-1.5">
                       {r.rucno ? (
-                        opcijeStruktura.length > 0 ? (
-                          <Select
-                            value={r.struktura}
-                            onValueChange={(v) => {
-                              izmeniStrukturu(i, v);
-                              sortirajPosleUnosa();
-                            }}
-                            disabled={snima}
-                          >
-                            <SelectTrigger
-                              className="h-8 w-36 bg-background"
-                              aria-label={`Struktura — red ${i + 1}`}
-                            >
-                              <SelectValue placeholder="Struktura" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {opcijeStruktura.map((s) => (
-                                <SelectItem key={s} value={s}>{s}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <Input
-                            value={r.struktura}
-                            onChange={(e) => izmeniStrukturu(i, e.target.value)}
-                            onBlur={sortirajPosleUnosa}
-                            className="h-8 w-36 bg-background"
-                            aria-label={`Struktura — red ${i + 1}`}
-                            disabled={snima}
-                          />
-                        )
+                        <Input
+                          value={r.struktura}
+                          onChange={(e) => izmeniStrukturu(i, e.target.value)}
+                          onBlur={sortirajPosleUnosa}
+                          list="koef-strukture-predlozi"
+                          placeholder="npr. 1/2*"
+                          maxLength={100}
+                          className="h-8 w-36 bg-background"
+                          aria-label={`Struktura — red ${i + 1}`}
+                          disabled={snima}
+                        />
                       ) : (
                         <span className="font-medium tabular-nums">{r.struktura}</span>
                       )}
@@ -494,6 +467,11 @@ export default function KoeficijentiPage() {
               </tbody>
             </table>
           </div>
+          <datalist id="koef-strukture-predlozi">
+            {opcijeStruktura.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
         </CardContent>
       </Card>
 

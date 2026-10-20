@@ -532,6 +532,9 @@ def init_db(engine):
                 kontakt VARCHAR(300) DEFAULT ''
             )
         """))
+        conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS pib VARCHAR(30) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS matbroj VARCHAR(20) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS email VARCHAR(200) DEFAULT ''"))
 
         # Knjigovodstvo — predracuni
         conn.execute(text("""
@@ -941,6 +944,9 @@ class SubagentCreate(BaseModel):
     provizija2: Optional[float] = 0
     punnaziv: Optional[str] = None
     kontakt: Optional[str] = None
+    pib: Optional[str] = ""
+    matbroj: Optional[str] = ""
+    email: Optional[str] = ""
 
 
 class SubagentUpdate(BaseModel):
@@ -959,6 +965,9 @@ class SubagentUpdate(BaseModel):
     provizija2: Optional[float] = None
     punnaziv: Optional[str] = None
     kontakt: Optional[str] = None
+    pib: Optional[str] = None
+    matbroj: Optional[str] = None
+    email: Optional[str] = None
 
 
 class PredracunCreate(BaseModel):
@@ -4546,10 +4555,11 @@ def create_app(static_dir: str) -> FastAPI:
             row = conn.execute(text("""
                 INSERT INTO subagenti (naziv, adresa, mesto, osoba, tel, tel1, tel2,
                                        fax, racun, provizija, provizija1, provizija1a,
-                                       provizija2, punnaziv, kontakt)
+                                       provizija2, punnaziv, kontakt, pib, matbroj, email)
                 VALUES (:naziv, :adresa, :mesto, :osoba, :tel, :tel1, :tel2,
                         :fax, :racun, :provizija, :provizija1, :provizija1a,
-                        :provizija2, :punnaziv, :kontakt)
+                        :provizija2, :punnaziv, :kontakt, COALESCE(:pib, ''),
+                        COALESCE(:matbroj, ''), COALESCE(:email, ''))
                 RETURNING id
             """), body.model_dump()).fetchone()
         return {"id": row.id}
