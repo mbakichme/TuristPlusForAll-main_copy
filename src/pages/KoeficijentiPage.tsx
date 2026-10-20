@@ -131,7 +131,12 @@ function mergeRedovi(
       rucno: false,
     });
   }
-  return redovi.sort((a, b) => {
+  return sortirajRedove(redovi);
+}
+
+/** Sortiranje po strukturi; isti redovi ostaju u istom poretku (id, pa redosled unosa). */
+function sortirajRedove(redovi: KoefRed[]): KoefRed[] {
+  return [...redovi].sort((a, b) => {
     const p = porediStrukture(a.struktura, b.struktura);
     if (p !== 0) return p;
     return (a.id ?? Number.MAX_SAFE_INTEGER) - (b.id ?? Number.MAX_SAFE_INTEGER);
@@ -229,7 +234,6 @@ export default function KoeficijentiPage() {
 
   function dodajRed() {
     setRedovi((pre) => [
-      ...pre,
       {
         rid: sledeciRid(),
         id: null,
@@ -240,7 +244,13 @@ export default function KoeficijentiPage() {
         koeficijent: "0",
         rucno: true,
       },
+      ...pre,
     ]);
+  }
+
+  /** Posle izbora ili unosa strukture red se vraća na mesto po sortiranju. */
+  function sortirajPosleUnosa() {
+    setRedovi((pre) => sortirajRedove(pre));
   }
 
   function obrisiRed(indeks: number) {
@@ -386,7 +396,10 @@ export default function KoeficijentiPage() {
                         opcijeStruktura.length > 0 ? (
                           <Select
                             value={r.struktura}
-                            onValueChange={(v) => izmeniStrukturu(i, v)}
+                            onValueChange={(v) => {
+                              izmeniStrukturu(i, v);
+                              sortirajPosleUnosa();
+                            }}
                             disabled={snima}
                           >
                             <SelectTrigger
@@ -405,6 +418,7 @@ export default function KoeficijentiPage() {
                           <Input
                             value={r.struktura}
                             onChange={(e) => izmeniStrukturu(i, e.target.value)}
+                            onBlur={sortirajPosleUnosa}
                             className="h-8 w-36 bg-background"
                             aria-label={`Struktura — red ${i + 1}`}
                             disabled={snima}

@@ -6,7 +6,8 @@ Flow:
   3. Negativ: „abc“ u Adl → toast greške, PUT nije poslat, unos nije prepisan.
   4. Sačuvaj → PUT 200; API ima 13 redova; reload → ručni red seća (Select + vrednosti).
   5. Dirty-guard: izmena → klik na link „/“ → AlertDialog → Otkaži ostaje; Nastavi navigira.
-Cleanup: briše sve redove koeficijenata (test kontroliše celu tabelu).
+Preduslov: tabela koeficijenata je PRAZNA (test proverava pre bilo kakvog upisa).
+Cleanup: briše samo redove sa id > max(id) snimljenog pre testa — nikad ne briše postojeće podatke.
 """
 import json
 import os
@@ -28,6 +29,10 @@ def main():
     api = httpx.Client(base_url=API, headers={"Authorization": "Bearer " + token}, timeout=30)
     engine = get_engine()
     page_errors = []
+    # Cleanup briše SAMO redove sa id većim od ovog (ono što je test napravio).
+    # Postojeći redovi u tabeli se nikad ne diraju.
+    with engine.connect() as conn:
+        max_id_pre = conn.execute(text("SELECT COALESCE(MAX(id), 0) FROM koeficijenti_prodaje")).scalar()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -57,15 +62,21 @@ def main():
             print(f"[grid] {len(strukture)} auto-redova sa nulama, struktura tekstom (bez Select-a)")
 
             # ── 2. Ručni red za istu strukturu ──
-            red_n = len(strukture) + 1
             page.get_by_role("button", name="Dodaj red").click()
             expect(page.get_by_role("combobox")).to_have_count(1)
             trigger = page.get_by_role("combobox")
             trigger.click()
             page.get_by_role("option", name="1/3", exact=True).click()
+            # Novi red je na vrhu, pa se posle izbora strukture sortira na svoje mesto —
+            # pozicija (a time i aria-label „red N“) se računa iz stvarnog stanja tabele.
+            red_n = page.evaluate(
+                "() => [...document.querySelectorAll('table tbody tr')]"
+                ".findIndex((tr) => tr.querySelector('[role=combobox]')) + 1"
+            )
+            expect(page.get_by_role("combobox")).to_have_text("1/3")
             page.get_by_label(f"Adl — red {red_n}", exact=True).fill("2")
             page.get_by_label(f"Koeficijent — red {red_n}", exact=True).fill("1,5")
-            print("[dodaj] rucni red: struktura 1/3, Adl=2, koeficijent 1,5")
+            print(f"[dodaj] rucni red: struktura 1/3 (red {red_n} posle sortiranja), Adl=2, koeficijent 1,5")
 
             # ── 3. Negativ: 'abc' u Adl ──
             adl = page.get_by_label(f"Adl — red {red_n}", exact=True)
@@ -130,11 +141,15 @@ def main():
             context.close()
             browser.close()
             with engine.begin() as conn:
-                conn.execute(text("DELETE FROM koeficijenti_prodaje"))
+                conn.execute(
+                    text("DELETE FROM koeficijenti_prodaje WHERE id > :m"), {"m": max_id_pre}
+                )
             with engine.connect() as conn:
-                ostalo = conn.execute(text("SELECT COUNT(*) FROM koeficijenti_prodaje")).scalar()
+                ostalo = conn.execute(
+                    text("SELECT COUNT(*) FROM koeficijenti_prodaje WHERE id > :m"), {"m": max_id_pre}
+                ).scalar()
             assert ostalo == 0
-            print(f"[cleanup] tabela koeficijenata prazna (ostalo={ostalo})")
+            print(f"[cleanup] obrisani samo redovi testa (id > {max_id_pre}); ostalo={ostalo}")
             api.close()
 
 
