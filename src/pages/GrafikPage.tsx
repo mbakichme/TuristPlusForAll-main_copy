@@ -459,7 +459,7 @@ export default function GrafikPage() {
       apiFetch<PeriodGrupa[]>("/period-grupa"),
       apiFetch<Smestaj[]>("/smestaj"),
     ])
-      .then(([m, g, s]) => { setMesta(m); setGrupe(g); setSmestaji(s); })
+      .then(([m, g, s]) => { setMesta(m); setGrupe(g); setSmestaji(s.filter((x) => x.status === 1)); })
       .catch(() => toast.error("Greška pri učitavanju podataka"))
       .finally(() => setInitialLoading(false));
   }, []);

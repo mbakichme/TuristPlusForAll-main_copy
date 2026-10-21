@@ -1,10 +1,12 @@
+import db_config
+
 """Import subagenti records from MariaDB dump into Postgres subagenti table."""
 import os, io, csv, sys
 from sqlalchemy import create_engine, text
 
 DUMP = "/data/users/Ynxr51Wm2KaiRlwUvADMwZ6Atva2/uploads/subagenti.sql"
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 
 # ── kreiraj tabelu ako ne postoji (ista DDL kao u init_db) ─────────────────
 with engine.begin() as conn:

@@ -1,3 +1,5 @@
+import db_config
+
 """Jednokratna migracija: split aranzman saputnik polja u aranzman_dopuna.
 
 Faza 1 (ovo): kreira aranzman_dopuna, dodaje aranzman.smer, prenosi
@@ -8,7 +10,7 @@ import os
 
 from sqlalchemy import create_engine, text
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 
 # uslov: red saputnika ima bar jedno popunjeno polje
 ANY_DATA = (
@@ -119,4 +121,3 @@ with engine.begin() as conn:
         assert c not in ostatak, f"kolona {c} jos uvek postoji!"
     assert "smer" in ostatak
 print("faza 2 OK")
-

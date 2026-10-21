@@ -1,3 +1,5 @@
+import db_config
+
 """Cenovnici — opcije/popusti po TERMINU: O·P dugme u koloni matrice (sve sobe, jedan termin).
 
 Za SVAKU sobu × taj termin upisuje se po jedan eksplicitan zapis (bez zbirnih period_id=0
@@ -16,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 import routes
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 app = routes.create_app("dist")
 c = TestClient(app)
 tok = routes.create_access_token({"sub": "1"})

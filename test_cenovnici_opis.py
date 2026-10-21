@@ -1,3 +1,5 @@
+import db_config
+
 """Cenovnici — polje Opis cenovnika: POST/PUT + UI (tab Kreiranje i tab Izmena)."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -7,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 import routes
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 app = routes.create_app("dist")
 c = TestClient(app)
 tok = routes.create_access_token({"sub": "1"})

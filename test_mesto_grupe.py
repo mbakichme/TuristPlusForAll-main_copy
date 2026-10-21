@@ -79,7 +79,8 @@ proveri("DELETE test mesto", st == 200, f"status={st}")
 # 7) DB provera: nema zaostalih redova u mesto_grupa
 import os  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
-_eng = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+import db_config  # noqa: E402
+_eng = db_config.get_engine()
 with _eng.connect() as conn:
     n = conn.execute(text("SELECT COUNT(*) FROM mesto_grupa WHERE mesto_id = :i"), {"i": mid}).scalar()
 proveri("DB: mesto_grupa ocisceno (CASCADE)", n == 0, f"ostalo={n}")

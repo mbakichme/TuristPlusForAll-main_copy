@@ -14,12 +14,13 @@ import os
 import urllib.error
 import urllib.request
 
+import db_config
 from sqlalchemy import create_engine, text
 
 from routes import create_access_token, hash_password, verify_password
 
 BASE = "http://127.0.0.1:3158/api"
-engine = create_engine(os.environ.get("EXTERNAL_NEON_DATABASE_URL"))
+engine = db_config.get_engine()
 STARA = "stara-lozinka-1"
 NOVA = "nova-lozinka-2"
 EMAIL = "profil.test@example.invalid"

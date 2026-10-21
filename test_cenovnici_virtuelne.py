@@ -1,3 +1,5 @@
+import db_config
+
 """Virtuelne sobe u cenovniku: redovi v{broj} / v{broj}-N po dodatnim koeficijentima sobe."""
 import os
 import sys
@@ -7,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 app = routes.create_app("dist")
 c = TestClient(app)
 tok = routes.create_access_token({"sub": "1"})

@@ -85,9 +85,9 @@ except Exception as e:
 import os
 import subprocess
 _sql_broj_b = r'''
-import os
-from sqlalchemy import create_engine, text
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+import db_config
+from sqlalchemy import text
+engine = db_config.get_engine()
 with engine.connect() as conn:
     print(conn.execute(text("SELECT count(*) FROM aranzman WHERE putnik = 'TEST KONFLIK B'")).scalar_one())
 '''
@@ -130,9 +130,9 @@ print("\nREZULTAT:", "SVE PROVERE PROŠLE" if ok else "IMA GREŠAKA")
 # ── čišćenje ──
 klj_list = ", ".join(f"'{k}'" for k in kljucevi)
 _sql_cleanup = r'''
-import os
-from sqlalchemy import create_engine, text
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+import db_config
+from sqlalchemy import text
+engine = db_config.get_engine()
 with engine.begin() as conn:
     r = conn.execute(text("DELETE FROM aranzman WHERE putnik LIKE 'TEST KONFLIK%' AND kljuc IN (''' + klj_list + r''') RETURNING id"))
     ids = [row[0] for row in r.fetchall()]

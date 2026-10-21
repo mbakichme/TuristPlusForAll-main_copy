@@ -1,7 +1,9 @@
+import db_config
+
 import os, time
 from sqlalchemy import create_engine, text
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 
 SQL = text("""
 INSERT INTO aranzman (

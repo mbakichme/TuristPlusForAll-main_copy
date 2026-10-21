@@ -1,3 +1,5 @@
+import db_config
+
 """Cenovnici — brisanje kompletnog cenovnika (tab Izmena + DELETE endpoint).
 
 1) API: DELETE /cenovnici/{id} — 401 bez tokena, 404 nepoznat, roundtrip
@@ -18,7 +20,7 @@ import routes
 
 BASE = os.environ.get("TA_BASE", "http://localhost:3158/api")
 UI = "http://localhost:3058"
-eng = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+eng = db_config.get_engine()
 H = {"Authorization": f"Bearer {routes.create_access_token({'sub': '1'})}"}
 
 def proveri(naziv, uslov, detalj=""):

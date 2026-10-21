@@ -18,13 +18,14 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/tmp/pw-browsers")
 
 import httpx
 from playwright.sync_api import sync_playwright
+import db_config
 from sqlalchemy import create_engine, text
 
 from routes import create_access_token
 
 APP = os.environ.get("TEST_APP_URL", "http://localhost:3058")
 API = os.environ.get("TEST_API_URL", "http://localhost:3158/api")
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 OD, DO = "25.05.2026", "14.06.2026"  # lanac od 2 termina (grupa 6)
 KARTA_ADL, KARTA_CHD = Decimal(80), Decimal(70)
 

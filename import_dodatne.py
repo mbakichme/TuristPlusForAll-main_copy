@@ -1,3 +1,5 @@
+import db_config
+
 """Prenos dodatne.sql; čuva i identična ponavljanja. Bez --apply radi rollback."""
 import argparse
 from collections import Counter
@@ -94,10 +96,7 @@ def main():
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     rows = parse_rows(args.sql_path)
-    url = os.environ.get('EXTERNAL_NEON_DATABASE_URL')
-    if not url:
-        raise RuntimeError('EXTERNAL_NEON_DATABASE_URL nije definisan')
-    engine = create_engine(url)
+    engine = db_config.get_engine()
     try:
         stats = run_import(engine, rows, args.apply)
         print('SNIMLJENO' if args.apply else 'PROVERA — rollback')

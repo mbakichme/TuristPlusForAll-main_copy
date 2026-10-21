@@ -1,3 +1,5 @@
+import db_config
+
 """Import tabele `uplate` (sva plaćanja iz starog sistema) iz phpMyAdmin dumpa.
 
 Struktura po dumpu uplate.sql:
@@ -19,7 +21,7 @@ from sqlalchemy import create_engine, text
 
 SQL_PATH = sys.argv[1] if len(sys.argv) > 1 else "/data/users/Ynxr51Wm2KaiRlwUvADMwZ6Atva2/uploads/uplate_extract/uplate.sql"
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 
 COLUMNS = ("danas", "ime", "adresa", "nacin", "din", "evro", "uevro", "svrha",
            "obradio", "vrsta", "kljuc", "broj", "faktura", "destinacija",

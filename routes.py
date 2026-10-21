@@ -14,12 +14,13 @@ from fastapi import FastAPI, APIRouter, Request, Depends, HTTPException, UploadF
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 import bcrypt
 from jose import JWTError, jwt
 
 from predracun_pdf import generate_predracun_pdf
+import db_config
 from kurs_service import ensure_kurs_table, get_eur_rate
 from grafik_boje import kategorija_grafika
 from cenovnici_api import init_cenovnici, register_cenovnici
@@ -106,10 +107,7 @@ def _belgrade_now() -> datetime:
 
 # ─── DB ─────────────────────────────────────────────────────────────────────
 def get_engine():
-    db_url = os.environ.get("EXTERNAL_NEON_DATABASE_URL")
-    if not db_url:
-        raise RuntimeError("EXTERNAL_NEON_DATABASE_URL nije podešen")
-    return create_engine(db_url, pool_pre_ping=True)
+    return db_config.get_engine()
 
 
 def init_db(engine):
@@ -2557,7 +2555,8 @@ def create_app(static_dir: str) -> FastAPI:
                        b.id, TRIM(b.broj_sobe) AS broj_sobe, b.tip, b.opis, b.opis_dodatno
                 FROM sobe b
                 JOIN smestaj s ON s.id = b.veza_id_smestaj
-                WHERE (CAST(:g AS INTEGER) IS NULL OR s.grupa_datuma = CAST(:g AS INTEGER))
+                WHERE s.status = 1  -- neaktivni smeštaji se ne nude u pretrazi
+                  AND (CAST(:g AS INTEGER) IS NULL OR s.grupa_datuma = CAST(:g AS INTEGER))
                   AND (CAST(:m AS INTEGER) IS NULL OR s.mesto = CAST(:m AS INTEGER))
                   -- vezuje Grupu termina za vilu: traženi boravak (od→do) mora
                   -- biti pokriven lancom perioda u grupi termina tog smeštaja
@@ -2785,14 +2784,14 @@ def create_app(static_dir: str) -> FastAPI:
             if sve:
                 # "Prikaži sve" — svi smeštaji grupe perioda, po sekciji za svaki smeštaj
                 srows = conn.execute(text(
-                    "SELECT id, naziv, mesto FROM smestaj WHERE grupa_datuma = :g ORDER BY naziv"
+                    "SELECT id, naziv, mesto FROM smestaj WHERE grupa_datuma = :g AND status = 1 ORDER BY naziv"
                 ), {"g": grupa_id}).fetchall()
                 return {"sve": True, "sekcije": [sekcija(s) for s in srows]}
             srow = conn.execute(text(
-                "SELECT id, naziv, mesto FROM smestaj WHERE id = :id"
+                "SELECT id, naziv, mesto FROM smestaj WHERE id = :id AND status = 1"
             ), {"id": smestaj_id}).fetchone()
             if not srow:
-                raise HTTPException(status_code=404, detail="Smeštaj nije pronađen")
+                raise HTTPException(status_code=404, detail="Smeštaj nije pronađen ili nije aktivan")
             return sekcija(srow)
 
     # ── Periodi ─────────────────────────────────────────────────────────────

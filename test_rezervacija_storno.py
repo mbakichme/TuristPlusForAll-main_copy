@@ -2,12 +2,13 @@
 import os
 from uuid import uuid4
 import httpx
+import db_config
 from sqlalchemy import create_engine, text
 from routes import create_access_token
 
 
 def main():
-    engine = create_engine(os.environ.get("EXTERNAL_NEON_DATABASE_URL"))
+    engine = db_config.get_engine()
     kljuc = f"TEST-STORNO-{uuid4().hex[:12]}/26"
     headers = {"Authorization": "Bearer " + create_access_token({"sub": "1"})}
     base = "http://127.0.0.1:3158/api"

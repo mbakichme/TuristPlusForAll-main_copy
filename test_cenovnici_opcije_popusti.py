@@ -1,3 +1,5 @@
+import db_config
+
 """Cenovnici — Opcije · Popusti: tabele opcije_soba/popust_soba + API + UI dijalog.
 
 API: GET/PUT/DELETE /cenovnici/{id}/opcije-soba/{soba_id} i /popust-soba/{soba_id} — opseg = soba
@@ -16,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 import routes
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 app = routes.create_app("dist")
 c = TestClient(app)
 tok = routes.create_access_token({"sub": "1"})

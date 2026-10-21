@@ -12,10 +12,11 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import requests
+import db_config
 from sqlalchemy import create_engine, text
 
 BASE = os.environ.get("TA_BASE", "http://localhost:3158/api")
-eng = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+eng = db_config.get_engine()
 tok = None
 from routes import create_access_token
 tok = create_access_token({"sub": "1"})

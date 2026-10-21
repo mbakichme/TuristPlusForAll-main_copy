@@ -28,9 +28,9 @@ def req(path, method="GET", body=None):
 # očekivani broj: MAX preko split_part u bazi
 import subprocess
 sql_probe = r'''
-import os
-from sqlalchemy import create_engine, text
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+import db_config
+from sqlalchemy import text
+engine = db_config.get_engine()
 with engine.connect() as conn:
     m = conn.execute(text("SELECT COALESCE(MAX(split_part(kljuc,'/',1)::bigint),0) FROM aranzman "
                           "WHERE split_part(kljuc,'/',1) ~ '^[0-9]+$' AND split_part(kljuc,'/',2)='26'")).scalar_one()
@@ -112,8 +112,9 @@ for naziv_, stvarno, ocekivano in provere:
 # kolone koje API ne vraća → direktno iz baze
 _sql_col = r'''
 import os, json
-from sqlalchemy import create_engine, text
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+import db_config
+from sqlalchemy import text
+engine = db_config.get_engine()
 with engine.connect() as conn:
     row = conn.execute(text("SELECT procenatpr, popustpr, obradio, cenaaranzd, cenadrt, cenadow, datumoddo FROM aranzman WHERE kljuc = :k"),
                        {"k": "''' + kljuc + r'''"}).fetchone()
@@ -185,9 +186,9 @@ print("\nREZULTAT:", "SVE PROVERE PROŠLE" if ok else "IMA GREŠAKA")
 
 # ── čišćenje test redova ──
 sql_cleanup = r'''
-import os
-from sqlalchemy import create_engine, text
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+import db_config
+from sqlalchemy import text
+engine = db_config.get_engine()
 with engine.begin() as conn:
     r = conn.execute(text("DELETE FROM aranzman WHERE putnik LIKE 'TEST TESTIC%' AND kljuc = :k RETURNING id"),
                      {"k": "''' + kljuc + r'''"})

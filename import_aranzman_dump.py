@@ -1,3 +1,5 @@
+import db_config
+
 """Import aranzman records from MariaDB SQL dump into Postgres aranzman table.
 
 - Clears the aranzman table first
@@ -12,7 +14,7 @@ SUFFIX = "/26"
 
 data = open(DUMP, encoding="utf-8", errors="replace").read()
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 
 # ── 1. kolone iz naše Postgres tabele ──────────────────────────────────────
 with engine.connect() as conn:

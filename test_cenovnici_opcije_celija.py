@@ -1,3 +1,5 @@
+import db_config
+
 """Cenovnici — opcije/popusti po POLJU (soba × termin): klik na ćeliju cene kad je zaključano.
 
 Endpointi termin-dijela prošireni opcionim ?soba_id= — puni replace SAMO tog polja (jedan zapis).
@@ -15,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 import routes
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 app = routes.create_app("dist")
 c = TestClient(app)
 tok = routes.create_access_token({"sub": "1"})

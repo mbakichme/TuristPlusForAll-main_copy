@@ -13,10 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/tmp/pw-browsers")
 from playwright.sync_api import sync_playwright, expect
 from sqlalchemy import create_engine, text
+import db_config
 import routes
 
 BASE = "http://localhost:3058"
-eng = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+eng = db_config.get_engine()
 cid = None
 
 def proveri(naziv, uslov, detalj=""):

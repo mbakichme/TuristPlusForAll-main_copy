@@ -1,3 +1,5 @@
+import db_config
+
 """Jednokratni import: tabela `polazak` (cena i mesto polaska agencijskog prevoza).
 
 Kreira tabelu (ako ne postoji) i puni je iz phpMyAdmin dumpa polazak.sql
@@ -12,7 +14,7 @@ from sqlalchemy import create_engine, text
 
 SQL_PATH = sys.argv[1] if len(sys.argv) > 1 else "/data/users/Ynxr51Wm2KaiRlwUvADMwZ6Atva2/uploads/polazak.sql"
 
-engine = create_engine(os.environ["EXTERNAL_NEON_DATABASE_URL"])
+engine = db_config.get_engine()
 
 COLUMNS = ("destinacija", "polazak", "sat", "valuta",
            "adlrt", "chdrt", "infrt", "adlow", "chdow", "infow")

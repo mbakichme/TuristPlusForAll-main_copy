@@ -1,3 +1,5 @@
+import db_config
+
 """Import rod.sql u postojeće ugovore; dry-run je podrazumevan, --apply snima."""
 import argparse
 from datetime import date, datetime
@@ -186,10 +188,7 @@ def main():
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     rows = parse_rows(args.sql_path)
-    url = os.environ.get('EXTERNAL_NEON_DATABASE_URL')
-    if not url:
-        raise RuntimeError('EXTERNAL_NEON_DATABASE_URL nije definisan')
-    engine = create_engine(url)
+    engine = db_config.get_engine()
     try:
         stats = run_import(engine, rows, apply=args.apply)
         print('SNIMLJENO' if args.apply else 'PROVERA — sve promene vraćene rollback-om')

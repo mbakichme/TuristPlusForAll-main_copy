@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+import db_config
 from sqlalchemy import create_engine, text
 
 from routes import create_access_token
@@ -20,7 +21,7 @@ from routes import create_access_token
 BASE = "http://127.0.0.1:3158/api"
 tok = create_access_token({"sub": "1"})
 hdr = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
-engine = create_engine(os.environ.get("EXTERNAL_NEON_DATABASE_URL"))
+engine = db_config.get_engine()
 
 
 def req(path, method="GET", body=None):
