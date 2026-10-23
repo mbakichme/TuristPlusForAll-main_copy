@@ -51,7 +51,7 @@ class GrafikBojeTest(unittest.TestCase):
         self.assertEqual(boje_response.status_code, 200)
         boje = boje_response.json()
         for smestaj in ["sve", "41"]:
-            response = client.get("/api/grafik", params={"grupa_id": 16, "smestaj_id": smestaj}, headers=headers)
+            response = client.get("/api/grafik", params={"grupa_id": 16, "mesto_id": 1, "smestaj_id": smestaj}, headers=headers)
             self.assertEqual(response.status_code, 200, response.text)
             data = response.json()
             sekcije = data["sekcije"] if smestaj == "sve" else [data]

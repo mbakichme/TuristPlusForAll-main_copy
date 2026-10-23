@@ -2668,10 +2668,11 @@ def create_app(static_dir: str) -> FastAPI:
         sve = raw_smestaj.lower() == "sve"
         try:
             grupa_id = int(q.get("grupa_id", ""))
+            mesto_id = int(q.get("mesto_id", ""))
             if not sve:
                 smestaj_id = int(raw_smestaj)
         except ValueError:
-            raise HTTPException(status_code=400, detail="smestaj_id i grupa_id su obavezni")
+            raise HTTPException(status_code=400, detail="smestaj_id, grupa_id i mesto_id su obavezni")
         kurs = get_eur_middle()
         sada = _belgrade_now()
         with engine.connect() as conn:
@@ -2771,8 +2772,43 @@ def create_app(static_dir: str) -> FastAPI:
                         "boja_kategorija": kategorija,
                         "boja": boje.get(kategorija, "zelena"),
                     })
+                # Aktivan cenovnik smeštaja (ista pravila kao pretraga) — osnovne cene po
+                # sobi i virtuelnoj sobi za tooltip praznih polja. Datumi perioda DD.MM.YYYY
+                # kao u grafiku. Bez aktivnog cenovnika: cenovnik = None.
+                cenovnik_out = None
+                cen_row = conn.execute(text("""
+                    SELECT c.id, c.sobe, c.periodi
+                    FROM cenovnici c
+                    JOIN cenovnik_opcije o ON o.cenovnik_id = c.id
+                    WHERE c.smestaj_id = :sid AND o.datumod <= :d AND o.datumdo >= :d
+                    ORDER BY c.id DESC LIMIT 1
+                """), {"sid": srow.id, "d": sada.date()}).fetchone()
+                if cen_row:
+                    def _dmy(s):
+                        return datetime.fromisoformat(str(s)[:10]).strftime("%d.%m.%Y")
+                    per = {int(p["id"]): p for p in (cen_row.periodi or [])}
+                    cene_out = []
+                    for cr in conn.execute(text(
+                        "SELECT soba_id, period_id, cena FROM cenovnik_cene WHERE cenovnik_id = :c"
+                    ), {"c": cen_row.id}):
+                        p = per.get(int(cr.period_id))
+                        if p is None:
+                            continue
+                        cene_out.append({
+                            "soba_id": int(cr.soba_id),
+                            "datum_od": _dmy(p["datum_od"]), "datum_do": _dmy(p["datum_do"]),
+                            "cena": float(cr.cena),
+                        })
+                    cenovnik_out = {
+                        "sobe": [{
+                            "id": int(s["id"]), "broj_sobe": s.get("broj_sobe") or "",
+                            "tip": s.get("tip") or "", "izvor_soba_id": s.get("izvor_soba_id"),
+                        } for s in (cen_row.sobe or []) if s.get("id") is not None],
+                        "cene": cene_out,
+                    }
                 return {
                     "smestaj": {"id": srow.id, "naziv": srow.naziv},
+                    "cenovnik": cenovnik_out,
                     "periodi": periodi,
                     "sobe": [{
                         "id": r.id, "broj_sobe": r.broj_sobe, "tip": r.tip,
@@ -2782,16 +2818,16 @@ def create_app(static_dir: str) -> FastAPI:
                 }
 
             if sve:
-                # "Prikaži sve" — svi smeštaji grupe perioda, po sekciji za svaki smeštaj
+                # "Prikaži sve" — smeštaji izabranog MESTA u grupi perioda (mesto + grupa)
                 srows = conn.execute(text(
-                    "SELECT id, naziv, mesto FROM smestaj WHERE grupa_datuma = :g AND status = 1 ORDER BY naziv"
-                ), {"g": grupa_id}).fetchall()
+                    "SELECT id, naziv, mesto FROM smestaj WHERE grupa_datuma = :g AND mesto = :m AND status = 1 ORDER BY naziv"
+                ), {"g": grupa_id, "m": mesto_id}).fetchall()
                 return {"sve": True, "sekcije": [sekcija(s) for s in srows]}
             srow = conn.execute(text(
-                "SELECT id, naziv, mesto FROM smestaj WHERE id = :id AND status = 1"
-            ), {"id": smestaj_id}).fetchone()
+                "SELECT id, naziv, mesto FROM smestaj WHERE id = :id AND mesto = :m AND status = 1"
+            ), {"id": smestaj_id, "m": mesto_id}).fetchone()
             if not srow:
-                raise HTTPException(status_code=404, detail="Smeštaj nije pronađen ili nije aktivan")
+                raise HTTPException(status_code=404, detail="Smeštaj nije pronađen u izabranom mestu ili nije aktivan")
             return sekcija(srow)
 
     # ── Periodi ─────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
-import type { ReactNode, MouseEvent as ReactMouseEvent } from "react";
+import type { ReactNode, MouseEvent as ReactMouseEvent, RefObject } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import type { Mesto, Smestaj, PeriodGrupa, UgovorDetail } from "../types";
 import { apiFetch } from "../lib/api";
@@ -38,11 +39,16 @@ type GrafikBoja = keyof typeof GRAFIK_BOJE;
 const stilBoje = (boja?: GrafikBoja) => GRAFIK_BOJE[boja ?? "zelena"] ?? GRAFIK_BOJE.zelena;
 interface GrafikUgovor { kljuc: string; soba: string; datum_od: string; datum_do: string; putnik: string; subagent: string; saldo: number; boja?: GrafikBoja; }
 interface GrafikPeriod { datum_od: string; datum_do: string; }
+interface GrafikCenovnik {
+  sobe: { id: number; broj_sobe: string; tip: string; izvor_soba_id: number | null }[];
+  cene: { soba_id: number; datum_od: string; datum_do: string; cena: number }[];
+}
 interface GrafikData {
   smestaj: { id: number; naziv: string };
   periodi: GrafikPeriod[];
   sobe: GrafikSoba[];
   ugovori: GrafikUgovor[];
+  cenovnik: GrafikCenovnik | null;
 }
 
 /** DD.MM.YYYY → Date */
@@ -54,6 +60,41 @@ function pDate(s: string): Date {
 /** Date → DD.MM.YYYY */
 const fmtDatum = (d: Date) =>
   `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+
+interface PonudaStavka { naziv: string; cena: string | null; glavna: boolean; }
+interface PonudaInfo { naslov: string; napomena: string | null; stavke: PonudaStavka[]; }
+
+/** Podaci tooltipa praznog polja: slobodan period + cene sobe i njenih virtuelnih soba,
+ *  osnovna cena iz aktivnog cenovnika za NAJUŽI period cenovnika koji obuhvata slobodan deo. */
+function ponudaInfo(sec: GrafikData, soba: GrafikSoba, p: GrafikPeriod): PonudaInfo {
+  const naslov = `Soba ${soba.broj_sobe || "—"} · ${p.datum_od} – ${p.datum_do}`;
+  const c = sec.cenovnik;
+  if (!c) return { naslov, napomena: "Nema aktivnog cenovnika", stavke: [] };
+  const od = pDate(p.datum_od).getTime();
+  const doo = pDate(p.datum_do).getTime();
+  const parovi = new Map<string, GrafikPeriod>();
+  for (const x of c.cene) parovi.set(`${x.datum_od}|${x.datum_do}`, { datum_od: x.datum_od, datum_do: x.datum_do });
+  let period: GrafikPeriod | null = null;
+  let najuzi = Number.POSITIVE_INFINITY;
+  for (const q of parovi.values()) {
+    const a = pDate(q.datum_od).getTime();
+    const b = pDate(q.datum_do).getTime();
+    if (a <= od && doo <= b && b - a < najuzi) { period = q; najuzi = b - a; }
+  }
+  if (!period) return { naslov, napomena: "Nema cene za ovaj period", stavke: [] };
+  const redovi = c.sobe
+    .filter((s) => s.id === soba.id || s.izvor_soba_id === soba.id)
+    .sort((a, b) => (a.id === soba.id ? -1 : 0) - (b.id === soba.id ? -1 : 0));
+  const stavke = redovi.map((s) => {
+    const cena = c.cene.find((x) => x.soba_id === s.id && x.datum_od === period!.datum_od && x.datum_do === period!.datum_do);
+    return {
+      naziv: `${s.broj_sobe || "—"}${s.tip ? ` (${s.tip})` : ""}`,
+      cena: cena ? `${cena.cena.toLocaleString("sr-RS", { maximumFractionDigits: 2 })} €` : null,
+      glavna: s.id === soba.id,
+    };
+  });
+  return { naslov, napomena: null, stavke };
+}
 
 const fmtEur = (v: number | null | undefined) =>
   v == null ? "—" : `${v.toLocaleString("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
@@ -79,6 +120,48 @@ function UgovorTooltip({ u }: { u: GrafikUgovor }) {
       ) : null}
       <p className="text-xs text-primary-foreground/80">Saldo: <span className="font-mono font-semibold text-primary-foreground">{fmtEur(u.saldo)}</span></p>
     </div>
+  );
+}
+
+/** Lebdeći prikaz cene praznog polja — renderuje se u body (portal), prati miša
+ *  i nestaje čim kursor napusti polje (onMouseLeave na ćeliji). */
+function PonudaTooltip({ info, tipRef, pos }: {
+  info: PonudaInfo; tipRef: RefObject<HTMLDivElement | null>; pos: { x: number; y: number };
+}) {
+  return createPortal(
+    <div
+      ref={tipRef}
+      className="pointer-events-none fixed left-0 top-0 z-[100] w-64 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-xl"
+      style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+    >
+      <div className="flex items-center gap-2 border-b border-border bg-emerald-50 px-3 py-2">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">Slobodno</p>
+          <p className="truncate text-xs font-medium">{info.naslov}</p>
+        </div>
+      </div>
+      {info.napomena ? (
+        <p className="px-3 py-2.5 text-xs text-muted-foreground">{info.napomena}</p>
+      ) : (
+        <div className="px-3 py-2">
+          <p className="pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Cena</p>
+          <ul className="space-y-1">
+            {info.stavke.map((s, i) => (
+              <li key={i} className={cn("flex items-baseline justify-between gap-3 text-xs", !s.glavna && "text-muted-foreground")}>
+                <span className={cn("truncate", s.glavna && "font-semibold text-foreground")}>
+                  {s.naziv}
+                </span>
+                <span className={cn("shrink-0 font-mono tabular-nums", s.glavna ? "text-sm font-semibold text-foreground" : "text-xs")}>
+                  {s.cena ?? "nema cene"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>,
+    document.body
   );
 }
 
@@ -285,7 +368,26 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
     const frac = rect.width > 0 ? Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) : 0;
     return new Date(t0 + frac * (t1 - t0));
   };
+  // Tooltip cene praznog polja: sadržaj menja samo kad se promeni slobodan period
+  // (ključ), a pozicija se ažurira direktno u DOM-u da ne bi bilo re-rendera na svaki pokret.
+  const [tip, setTip] = useState<PonudaInfo | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  const tipPos = useRef({ x: 0, y: 0 });
+  const tipKljuc = useRef("");
+  const ponudaMove = (e: ReactMouseEvent<HTMLDivElement>, info: PonudaInfo) => {
+    const h = 96 + info.stavke.length * 22;
+    let x = e.clientX + 16;
+    if (x + 256 > window.innerWidth) x = e.clientX - 256 - 8;
+    let y = e.clientY + 16;
+    if (y + h > window.innerHeight) y = Math.max(8, e.clientY - h - 8);
+    tipPos.current = { x, y };
+    if (tipRef.current) tipRef.current.style.transform = `translate(${x}px, ${y}px)`;
+    const k = `${info.naslov}|${info.napomena ?? ""}|${info.stavke.map((s) => `${s.naziv}=${s.cena}`).join(";")}`;
+    if (k !== tipKljuc.current) { tipKljuc.current = k; setTip(info); }
+  };
+  const ponudaKraj = () => { tipKljuc.current = ""; setTip(null); };
   return (
+    <>
     <table className="table-fixed text-[11px]" style={{ width: "100%", minWidth: `${144 + Math.max(kolone.length, 1) * 110}px`, borderCollapse: "separate", borderSpacing: 0 }}>
       <tbody>
         {/* Datumi u VRHU — sticky header: fiksira se na vrh scroll polja dok se skroluje na dole.
@@ -335,18 +437,14 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
                   const zdo = pDate(k.datum_do);
                   const zauzeca = zauzecaPoSobi.get(rkey) ?? [];
                   const ponudaU = (klik: Date) => ponudaZaKlik(sec.periodi, zauzeca, zod, zdo, klik);
-                  const ponudaTitle = (klik: Date) => {
-                    const p = ponudaU(klik);
-                    return `Slobodno — Soba ${soba.broj_sobe || "—"} · ${p.datum_od} – ${p.datum_do}`;
-                  };
                   return (
                     <div
                       key={`k-${i}`}
                       className="absolute bottom-[2px] top-[2px] cursor-pointer hover:bg-muted/60"
                       style={{ left: `${k.leftPct}%`, width: `${k.widthPct}%` }}
                       onClick={(e) => onRez(sec, soba, ponudaU(klikDatum(e)))}
-                      onMouseMove={(e) => { const t = ponudaTitle(klikDatum(e)); if (e.currentTarget.title !== t) e.currentTarget.title = t; }}
-                      title={ponudaTitle(new Date((zod.getTime() + zdo.getTime()) / 2))}
+                      onMouseMove={(e) => ponudaMove(e, ponudaInfo(sec, soba, ponudaU(klikDatum(e))))}
+                      onMouseLeave={ponudaKraj}
                     />
                   );
                 })}
@@ -359,18 +457,14 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
                 {(gaps.get(rkey) || []).map((g, gi) => {
                   const zauzeca = zauzecaPoSobi.get(rkey) ?? [];
                   const ponudaU = (klik: Date) => ponudaZaKlik(sec.periodi, zauzeca, pDate(g.od), pDate(g.doo), klik);
-                  const ponudaTitle = (klik: Date) => {
-                    const p = ponudaU(klik);
-                    return `Slobodno — Soba ${soba.broj_sobe || "—"} · ${p.datum_od} – ${p.datum_do}`;
-                  };
                   return (
                     <div
                       key={`g-${gi}`}
                       className="absolute bottom-[2px] top-[2px] z-20 cursor-pointer hover:bg-muted/50"
                       style={{ left: `${g.leftPct}%`, width: `${g.widthPct}%` }}
                       onClick={(e) => onRez(sec, soba, ponudaU(klikDatum(e)))}
-                      onMouseMove={(e) => { const t = ponudaTitle(klikDatum(e)); if (e.currentTarget.title !== t) e.currentTarget.title = t; }}
-                      title={ponudaTitle(new Date((pDate(g.od).getTime() + pDate(g.doo).getTime()) / 2))}
+                      onMouseMove={(e) => ponudaMove(e, ponudaInfo(sec, soba, ponudaU(klikDatum(e))))}
+                      onMouseLeave={ponudaKraj}
                     />
                   );
                 })}
@@ -414,6 +508,8 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
         })}
       </tbody>
     </table>
+    {tip ? <PonudaTooltip info={tip} tipRef={tipRef} pos={tipPos.current} /> : null}
+    </>
   );
 }
 
@@ -643,10 +739,11 @@ export default function GrafikPage() {
     }
   }
 
-  // Smeštaji povezani sa izabranom grupom perioda
+  // Smeštaji vezani za izabrano MESTO i grupu perioda (ista vila u drugom mestu ne ulazi)
   const smestajiGrupe = useMemo(
-    () => smestaji.filter((s) => grupaId && s.grupa_datuma === Number(grupaId)),
-    [smestaji, grupaId]
+    () => smestaji.filter((s) => grupaId && s.grupa_datuma === Number(grupaId)
+      && (!mestoId || String(s.mesto) === mestoId)),
+    [smestaji, grupaId, mestoId]
   );
 
   // Auto-učitavanje grafika na izbor smeštaja ("sve" → sekcije po svim smeštajima grupe;
@@ -656,7 +753,7 @@ export default function GrafikPage() {
     let cancelled = false;
     setLoading(true);
     apiFetch<GrafikData | { sve: boolean; sekcije: GrafikData[] }>(
-      `/grafik?smestaj_id=${smestajId}&grupa_id=${grupaId}`
+      `/grafik?smestaj_id=${smestajId}&grupa_id=${grupaId}&mesto_id=${mestoId}`
     )
       .then((d) => {
         if (cancelled) return;
@@ -666,7 +763,7 @@ export default function GrafikPage() {
       .catch(() => { if (!cancelled) { toast.error("Greška pri učitavanju grafika"); setData(null); setSekcije([]); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [grupaId, smestajId, refreshKey]);
+  }, [grupaId, smestajId, mestoId, refreshKey]);
 
   function handlePromenaSuccess() {
     setRefreshKey((k) => k + 1); // osveži trenutni grafik

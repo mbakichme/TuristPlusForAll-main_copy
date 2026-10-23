@@ -543,6 +543,8 @@ export default function RezervacijePage() {
   const rezZakljucana = useRef(false);
   /** zaključano: ugovor je učitan/sačuvan i nije u režimu izmene (osim pretrage) */
   const zakljucano = izabraniUgovor !== null && !izmena;
+  /** postojeća rezervacija: datumi, smeštaj, mesto i struktura se ne menjaju ni u režimu izmene */
+  const boravakFiksan = izabraniUgovor !== null;
   // opcije Tipa rezervacije — proširene sačuvanom vrednošću van standardnog spiska
   const [tipOpcije, setTipOpcije] = useState<string[]>(TIP_REZERVACIJE);
   // sačuvani nazivi van referentnih lista (stari ugovori) — prikaz + čuvanje bez gubitka
@@ -1741,19 +1743,19 @@ export default function RezervacijePage() {
                   label="Datum od"
                   value={boravak.datumOd}
                   onChange={(v) => setBoravak({ ...boravak, datumOd: v })}
-                  disabled={zakljucano}
+                  disabled={zakljucano || boravakFiksan}
                 />
                 <DatumField
                   label="Datum do"
                   value={boravak.datumDo}
                   onChange={(v) => setBoravak({ ...boravak, datumDo: v })}
-                  disabled={zakljucano}
+                  disabled={zakljucano || boravakFiksan}
                 />
                 <Fld label="Smeštaj">
                   <Select
                     value={boravak.smestaj}
                     onValueChange={(v) => { if (v !== CUVAR) setSmestajSacuvan(null); setBoravak({ ...boravak, smestaj: v, soba: "" }); }}
-                    disabled={zakljucano}
+                    disabled={zakljucano || boravakFiksan}
                   >
                     <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite smeštaj" /></SelectTrigger>
                     <SelectContent>
@@ -1768,7 +1770,7 @@ export default function RezervacijePage() {
                   <Select
                     value={boravak.soba}
                     onValueChange={(v) => { if (v !== CUVAR) setSobaSacuvana(null); setBoravak({ ...boravak, soba: v }); }}
-                    disabled={zakljucano || !boravak.smestaj || boravak.smestaj === CUVAR}
+                    disabled={zakljucano || boravakFiksan || !boravak.smestaj || boravak.smestaj === CUVAR}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder={boravak.smestaj ? "Izaberite sobu" : "Prvo izaberite smeštaj"} />
@@ -1784,7 +1786,7 @@ export default function RezervacijePage() {
                   </Select>
                 </Fld>
                 <Fld label="Mesto">
-                  <Select value={boravak.mesto} onValueChange={(v) => { if (v !== CUVAR) setMestoSacuvano(null); setBoravak({ ...boravak, mesto: v }); }} disabled={zakljucano}>
+                  <Select value={boravak.mesto} onValueChange={(v) => { if (v !== CUVAR) setMestoSacuvano(null); setBoravak({ ...boravak, mesto: v }); }} disabled={zakljucano || boravakFiksan}>
                     <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite mesto" /></SelectTrigger>
                     <SelectContent>
                       {mestoSacuvano && <SelectItem value={CUVAR}>{mestoSacuvano} (sačuvano)</SelectItem>}
@@ -1799,7 +1801,7 @@ export default function RezervacijePage() {
                     value={boravak.struktura}
                     onChange={(e) => setBoravak({ ...boravak, struktura: e.target.value })}
                     placeholder="npr. 1/2 + 1/2"
-                    disabled={zakljucano}
+                    disabled={zakljucano || boravakFiksan}
                   />
                 </Fld>
                 <Fld label="Promena strukture" className="md:col-span-2 xl:col-span-5">

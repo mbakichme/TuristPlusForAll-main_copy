@@ -163,9 +163,10 @@ interface MatricaCenaProps {
   onOpcijeTermina?: (periodId: number, label: string) => void;
   onOpcijeCelije?: (sobaId: number, periodId: number, label: string) => void;
   opcijeCelije?: Set<string>;
+  blokiraneCelije?: Set<string>;
 }
 
-function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTermina, onOpcijeCelije, opcijeCelije }: MatricaCenaProps) {
+function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTermina, onOpcijeCelije, opcijeCelije, blokiraneCelije }: MatricaCenaProps) {
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
       <table
@@ -255,6 +256,7 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTerm
                 {periodi.map((p) => {
                   const k = cellKey(soba.id, p.id);
                   const imaOpcije = opcijeCelije?.has(k) ?? false;
+                  const blokirana = blokiraneCelije?.has(k) ?? false;
                   const poljeLabel = `soba ${soba.broj_sobe} · ${fmtIso(p.datum_od)} – ${fmtIso(p.datum_do)}`;
                   return (
                     <td key={p.id} className="relative w-[76px] border-b px-1 py-1.5">
@@ -267,7 +269,7 @@ function MatricaCena({ sobe, periodi, cene, onCenaChange, disabled, onOpcijeTerm
                         aria-label={`Cena — soba ${soba.broj_sobe}, period ${fmtIso(p.datum_od)}–${fmtIso(p.datum_do)}`}
                         className={cn(
                           "h-8 min-w-0 border-input/60 bg-background px-1.5 text-center text-xs tabular-nums",
-                          imaOpcije && "border-sky-400/70 bg-sky-500/15",
+                          blokirana ? "border-red-300 bg-red-100" : imaOpcije && "border-sky-400/70 bg-sky-500/15",
                         )}
                       />
                       {disabled && onOpcijeCelije ? (
@@ -411,9 +413,11 @@ interface UrednikCenovnikaProps {
   kopiraj: boolean;
   onKopirajChange: (v: boolean) => void;
   onOtvoriOpcije?: () => void;
+  onOtvoriBlokadu?: () => void;
   onOpcijeTermina?: (periodId: number, label: string) => void;
   onOpcijeCelije?: (sobaId: number, periodId: number, label: string) => void;
   opcijeCelije?: Set<string>;
+  blokiraneCelije?: Set<string>;
 }
 
 function UrednikCenovnika(p: UrednikCenovnikaProps) {
@@ -482,16 +486,31 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
                   — uneta cena se automatski upisuje u sve sobe iste strukture i opisa
                 </span>
               </label>
-              {p.onOtvoriOpcije ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={p.onOtvoriOpcije}
-                  title="Opcije · Popusti"
-                >
-                  <SlidersHorizontal className="mr-2 h-4 w-4" />
-                  Opcije · Popusti
-                </Button>
+              {p.onOtvoriOpcije || p.onOtvoriBlokadu ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {p.onOtvoriBlokadu ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={p.onOtvoriBlokadu}
+                      title="Blokada polja po sobama i terminima"
+                    >
+                      <Lock className="mr-2 h-4 w-4" />
+                      Blokada
+                    </Button>
+                  ) : null}
+                  {p.onOtvoriOpcije ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={p.onOtvoriOpcije}
+                      title="Opcije · Popusti"
+                    >
+                      <SlidersHorizontal className="mr-2 h-4 w-4" />
+                      Opcije · Popusti
+                    </Button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
             <MatricaCena
@@ -503,11 +522,195 @@ function UrednikCenovnika(p: UrednikCenovnikaProps) {
               onOpcijeTermina={p.onOpcijeTermina}
               onOpcijeCelije={p.onOpcijeCelije}
               opcijeCelije={p.opcijeCelije}
+              blokiraneCelije={p.blokiraneCelije}
             />
           </>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ── Blokada polja (soba × termin) — menja SAMO kolonu blokirano ─────────────
+
+function BlokadaDialog({ cid, sobe, periodi, onPromena, onClose }: {
+  cid: number;
+  sobe: SablonSoba[];
+  periodi: SablonPeriod[];
+  onPromena: () => void;
+  onClose: () => void;
+}) {
+  const [od, setOd] = useState("");
+  const [ddo, setDdo] = useState("");
+  const [izabrane, setIzabrane] = useState<Set<number>>(new Set());
+  const [blokirano, setBlokirano] = useState(true);
+  const [snima, setSnima] = useState(false);
+
+  // predefinisani datumi = granice perioda iz tabele
+  const odOpcije = useMemo(() => [...new Set(periodi.map((p) => p.datum_od))].sort(), [periodi]);
+  const ddoOpcije = useMemo(() => [...new Set(periodi.map((p) => p.datum_do))].sort(), [periodi]);
+  // termin ulazi u opseg SAMO ako je potpuno unutar [od, do]
+  const obuhvaceni = useMemo(
+    () => (od && ddo && od <= ddo ? periodi.filter((p) => p.datum_od >= od && p.datum_do <= ddo) : []),
+    [periodi, od, ddo],
+  );
+  const neispravanOpseg = !!od && !!ddo && od > ddo;
+  const sveIzabrane = sobe.length > 0 && izabrane.size === sobe.length;
+  const brojPolja = izabrane.size * obuhvaceni.length;
+  const moze = !snima && obuhvaceni.length > 0 && izabrane.size > 0;
+
+  function postaviSobu(id: number, v: boolean) {
+    setIzabrane((prev) => {
+      const sledeci = new Set(prev);
+      if (v) sledeci.add(id); else sledeci.delete(id);
+      return sledeci;
+    });
+  }
+
+  async function snimi() {
+    if (!moze) return;
+    setSnima(true);
+    try {
+      const o = await apiFetch<{ broj_polja: number }>(`/cenovnici/${cid}/blokada`, {
+        method: "PUT",
+        body: JSON.stringify({
+          sobe: [...izabrane],
+          periodi: obuhvaceni.map((p) => p.id),
+          blokirano,
+        }),
+      });
+      toast.success(blokirano
+        ? `Blokirano polja: ${o.broj_polja}`
+        : `Blokada skinuta sa polja: ${o.broj_polja}`);
+      onPromena();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Čuvanje blokade nije uspelo");
+    } finally {
+      setSnima(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto bg-card sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <Lock className="h-4 w-4 text-muted-foreground" />
+            Blokada polja
+          </DialogTitle>
+          <DialogDescription>
+            Cenovnik #{cid} — izabrane sobe i termini u opsegu
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Polje id="blk-od" label="Datum od">
+              <Select value={od} onValueChange={setOd}>
+                <SelectTrigger id="blk-od" className="h-9 w-full bg-background">
+                  <SelectValue placeholder="Izaberite" />
+                </SelectTrigger>
+                <SelectContent>
+                  {odOpcije.map((d) => (
+                    <SelectItem key={d} value={d}>{fmtIso(d)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Polje>
+            <Polje id="blk-do" label="Datum do">
+              <Select value={ddo} onValueChange={setDdo}>
+                <SelectTrigger id="blk-do" className="h-9 w-full bg-background">
+                  <SelectValue placeholder="Izaberite" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ddoOpcije.map((d) => (
+                    <SelectItem key={d} value={d}>{fmtIso(d)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Polje>
+          </div>
+
+          <div className="rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+            {neispravanOpseg ? (
+              <span className="text-destructive">„Datum od“ mora biti pre ili isti kao „Datum do“.</span>
+            ) : !od || !ddo ? (
+              <span className="text-muted-foreground">Izaberite opseg datuma.</span>
+            ) : obuhvaceni.length === 0 ? (
+              <span className="text-muted-foreground">Nijedan termin nije u potpunosti unutar opsega.</span>
+            ) : (
+              <>
+                <span className="font-medium">Termini u opsegu ({obuhvaceni.length}):</span>{" "}
+                <span className="text-muted-foreground">
+                  {obuhvaceni.map((p) => `${fmtIso(p.datum_od)} – ${fmtIso(p.datum_do)}`).join(" · ")}
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Sobe ({izabrane.size}/{sobe.length})</span>
+              <label htmlFor="blk-sve" className="flex cursor-pointer items-center gap-2 text-xs">
+                <Checkbox
+                  id="blk-sve"
+                  checked={sveIzabrane}
+                  onCheckedChange={(c) => setIzabrane(c === true ? new Set(sobe.map((s) => s.id)) : new Set())}
+                />
+                Sve sobe
+              </label>
+            </div>
+            <div className="grid max-h-64 gap-1.5 overflow-y-auto rounded-lg border p-2 sm:grid-cols-2">
+              {sobe.map((s) => (
+                <label
+                  key={s.id}
+                  htmlFor={`blk-soba-${s.id}`}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/60",
+                    izabrane.has(s.id) && "bg-primary/5",
+                  )}
+                >
+                  <Checkbox
+                    id={`blk-soba-${s.id}`}
+                    checked={izabrane.has(s.id)}
+                    onCheckedChange={(c) => postaviSobu(s.id, c === true)}
+                  />
+                  {s.virtuelna ? (
+                    <span className="inline-flex rounded-full border border-violet-500/40 bg-violet-500/10 px-2 text-[11px] italic text-violet-600">
+                      {s.broj_sobe}
+                    </span>
+                  ) : (
+                    <span className="font-medium">{s.broj_sobe}</span>
+                  )}
+                  <span className="truncate text-xs text-muted-foreground">{s.tip}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <Prekidac
+            id="blk-blokirano" label="Blokirano"
+            hint="Uključeno: blokira izabrana polja. Isključeno: skida blokadu sa istih polja."
+            checked={blokirano}
+            onChange={setBlokirano}
+          />
+
+          <p className="text-xs text-muted-foreground">
+            Menja se samo opcija blokirano. Ostale opcije i popusti ostaju nepromenjeni.
+            {brojPolja > 0 ? ` Biće izmenjeno polja: ${brojPolja}.` : ""}
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={onClose} disabled={snima}>Otkaži</Button>
+          <Button onClick={snimi} disabled={!moze}>
+            {snima ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Snimi
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1199,21 +1402,26 @@ export default function CenovniciPage() {
   // O·P po terminu (sve sobe × taj termin), klik na ćeliju cene (kad je zaključano) po POLJU (soba × termin)
   const [opcijeRed, setOpcijeRed] = useState<CenovnikRow | null>(null);
   const [opcijeMasovno, setOpcijeMasovno] = useState(false);
+  const [blokadaOtvorena, setBlokadaOtvorena] = useState(false);
   const [opcijeTermin, setOpcijeTermin] = useState<{ id: number; label: string } | null>(null);
   const [opcijeCelija, setOpcijeCelija] = useState<{ sobaId: number; periodId: number; label: string } | null>(null);
   // ključevi "sobaId:periodId" polja koja imaju definisane opcije/popuste (svetloplavo obeležavanje)
   const [opcijeCelije, setOpcijeCelije] = useState<Set<string>>(new Set());
+  // ključevi polja čiji je zapis blokiran (crveno obeležavanje, ima prednost nad plavim)
+  const [blokiraneCelije, setBlokiraneCelije] = useState<Set<string>>(new Set());
   const [celijeVerzija, setCelijeVerzija] = useState(0);
 
   useEffect(() => {
     const cid = editDetail?.id;
-    if (!cid) { setOpcijeCelije(new Set()); return; }
+    if (!cid) { setOpcijeCelije(new Set()); setBlokiraneCelije(new Set()); return; }
     let otkazano = false;
-    apiFetch<{ celije: { soba_id: number; period_id: number }[] }>(`/cenovnici/${cid}/opcije-celije`)
+    apiFetch<{ celije: { soba_id: number; period_id: number }[]; blokirane: { soba_id: number; period_id: number }[] }>(`/cenovnici/${cid}/opcije-celije`)
       .then((r) => {
-        if (!otkazano) setOpcijeCelije(new Set(r.celije.map((c) => `${c.soba_id}:${c.period_id}`)));
+        if (otkazano) return;
+        setOpcijeCelije(new Set(r.celije.map((c) => `${c.soba_id}:${c.period_id}`)));
+        setBlokiraneCelije(new Set(r.blokirane.map((c) => `${c.soba_id}:${c.period_id}`)));
       })
-      .catch(() => { if (!otkazano) setOpcijeCelije(new Set()); });
+      .catch(() => { if (!otkazano) { setOpcijeCelije(new Set()); setBlokiraneCelije(new Set()); } });
     return () => { otkazano = true; };
   }, [editDetail?.id, celijeVerzija]);
 
@@ -1923,14 +2131,27 @@ export default function CenovniciPage() {
                 kopiraj={kopirajCene}
                 onKopirajChange={setKopirajCene}
                 onOtvoriOpcije={() => setOpcijeMasovno(true)}
+                onOtvoriBlokadu={() => setBlokadaOtvorena(true)}
                 onOpcijeTermina={(periodId, label) => setOpcijeTermin({ id: periodId, label })}
                 onOpcijeCelije={(sobaId, periodId, label) => setOpcijeCelija({ sobaId, periodId, label })}
                 opcijeCelije={opcijeCelije}
+                blokiraneCelije={blokiraneCelije}
               />
             ) : null}
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Blokada polja (soba × termin) — menja samo kolonu blokirano */}
+      {blokadaOtvorena && editDetail ? (
+        <BlokadaDialog
+          cid={editDetail.id}
+          sobe={editDetail.sobe}
+          periodi={editDetail.periodi}
+          onPromena={() => setCelijeVerzija((v) => v + 1)}
+          onClose={() => setBlokadaOtvorena(false)}
+        />
+      ) : null}
 
       {/* Dijalog Opcije · Popusti (tab Izmena) — masovno iz liste ili editora, O·P po terminu,
           klik na ćeliju cene po polju (soba × termin) */}

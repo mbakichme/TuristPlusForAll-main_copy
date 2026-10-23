@@ -115,6 +115,12 @@ class OpcijeSobaIn(BaseModel):
         return _iznos_ili_none(v, "Popust za sopstveni prevoz")
 
 
+class BlokadaIn(BaseModel):
+    sobe: list[int]    # soba_id-jevi iz snimka (realne i virtuelne)
+    periodi: list[int]  # period_id-jevi iz snimka
+    blokirano: bool
+
+
 class PopustSobaIn(BaseModel):
     umanjenje_vrsta: str  # 'iznos' | 'procenat'
     umanjenje: Decimal
@@ -747,6 +753,66 @@ def register_cenovnici(api, engine, get_current_user):
                              {"c": item_id})
             return {"status": "obrisano", "broj": r.rowcount}
 
+    # ── Blokada polja (soba × termin) — menja SAMO kolonu blokirano ──────────────
+    # Blokirano=TRUE: za svako polje upisuje/menja red; ako red ne postoji, kopira ostale
+    # opcije iz globalnog (period_id=0) reda ako postoji, inače defaulte.
+    # Blokirano=FALSE: menja samo postojeći red; bez reda upisuje odblokirano samo ako
+    # polje blokira globalni (period_id=0) red — inače nema šta da se skine.
+
+    @api.put("/cenovnici/{item_id}/blokada")
+    def blokada_put(item_id: int, body: BlokadaIn, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            sobe_ids = set(_sobe_ids_u_cenovniku(conn, item_id))
+            pids = set(_periodi_ids_u_cenovniku(conn, item_id))
+            if not body.sobe or not body.periodi:
+                raise HTTPException(status_code=400, detail="Izaberite bar jednu sobu i jedan termin")
+            if not set(body.sobe) <= sobe_ids:
+                raise HTTPException(status_code=400, detail="Soba ne pripada ovom cenovniku")
+            if not set(body.periodi) <= pids:
+                raise HTTPException(status_code=400, detail="Period ne pripada ovom cenovniku")
+            for s in sorted(set(body.sobe)):
+                for p in sorted(set(body.periodi)):
+                    _postavi_blokadu(conn, item_id, s, p, body.blokirano)
+            return {"status": "sacuvano", "blokirano": body.blokirano,
+                    "broj_polja": len(set(body.sobe)) * len(set(body.periodi))}
+
+    def _postavi_blokadu(conn, item_id: int, soba_id: int, period_id: int, blokirano: bool) -> None:
+        params = {"c": item_id, "s": soba_id, "p": period_id}
+        if blokirano:
+            conn.execute(text("""
+                INSERT INTO opcije_soba (cenovnik_id, soba_id, period_id, blokirano, istaknuto,
+                    blokirano_subagenci, blokirano_sajt, prevoz, tip_aranzmana, tip_cene,
+                    popust_sopstveni_prevoz)
+                SELECT CAST(:c AS INTEGER), CAST(:s AS INTEGER), CAST(:p AS INTEGER), TRUE,
+                    COALESCE(g.istaknuto, FALSE), COALESCE(g.blokirano_subagenci, FALSE),
+                    COALESCE(g.blokirano_sajt, FALSE), g.prevoz, g.tip_aranzmana, g.tip_cene,
+                    g.popust_sopstveni_prevoz
+                FROM (SELECT 1) AS x
+                LEFT JOIN opcije_soba g
+                    ON g.cenovnik_id = CAST(:c AS INTEGER) AND g.soba_id = CAST(:s AS INTEGER)
+                    AND g.period_id = 0
+                ON CONFLICT (cenovnik_id, soba_id, period_id)
+                DO UPDATE SET blokirano = TRUE, updated_at = NOW()
+            """), params)
+            return
+        upd = conn.execute(text("""
+            UPDATE opcije_soba SET blokirano = FALSE, updated_at = NOW()
+            WHERE cenovnik_id = :c AND soba_id = :s AND period_id = :p
+        """), params)
+        if upd.rowcount == 0:
+            # globalna (period_id=0) blokada se mora poništiti eksplicitnim redom za polje
+            conn.execute(text("""
+                INSERT INTO opcije_soba (cenovnik_id, soba_id, period_id, blokirano, istaknuto,
+                    blokirano_subagenci, blokirano_sajt, prevoz, tip_aranzmana, tip_cene,
+                    popust_sopstveni_prevoz)
+                SELECT CAST(:c AS INTEGER), CAST(:s AS INTEGER), CAST(:p AS INTEGER), FALSE,
+                    g.istaknuto, g.blokirano_subagenci, g.blokirano_sajt, g.prevoz,
+                    g.tip_aranzmana, g.tip_cene, g.popust_sopstveni_prevoz
+                FROM opcije_soba g
+                WHERE g.cenovnik_id = :c AND g.soba_id = :s AND g.period_id = 0 AND g.blokirano = TRUE
+                ON CONFLICT (cenovnik_id, soba_id, period_id) DO NOTHING
+            """), params)
+
     # ── Opcije / popusti za JEDAN termin (sve sobe) — O·P dugme u koloni matrice ──
     # period_id = konkretan period iz snimka; za SVAKU sobu × taj termin upisuje se po jedan
     # eksplicitan zapis. Sa ?soba_id= = mod po POLJU (jedna soba × jedan termin).
@@ -875,16 +941,33 @@ def register_cenovnici(api, engine, get_current_user):
             soba_ids = {int(s["id"]) for s in (cen.sobe or []) if s.get("id") is not None}
             period_ids = [int(p["id"]) for p in (cen.periodi or []) if p.get("id") is not None]
             redovi = conn.execute(text("""
-                SELECT soba_id, period_id FROM opcije_soba WHERE cenovnik_id = :c
+                SELECT soba_id, period_id, blokirano FROM opcije_soba WHERE cenovnik_id = :c
                 UNION
-                SELECT soba_id, period_id FROM popust_soba WHERE cenovnik_id = :c
+                SELECT soba_id, period_id, FALSE AS blokirano FROM popust_soba WHERE cenovnik_id = :c
             """), {"c": item_id}).all()
-            parovi: set[tuple[int, int]] = set()
-            for soba_id, period_id in redovi:
-                if soba_id not in soba_ids:  # zapisi za sobe van snimka se ne obeležavaju
-                    continue
-                if period_id == 0:
-                    parovi.update((soba_id, p) for p in period_ids)
-                elif period_id in period_ids:
-                    parovi.add((soba_id, period_id))
-            return {"celije": [{"soba_id": s, "period_id": p} for s, p in sorted(parovi)]}
+
+            def _razvij(izabrani):
+                parovi: set[tuple[int, int]] = set()
+                for soba_id, period_id in izabrani:
+                    if soba_id not in soba_ids:  # zapisi za sobe van snimka se ne obeležavaju
+                        continue
+                    if period_id == 0:
+                        parovi.update((soba_id, p) for p in period_ids)
+                    elif period_id in period_ids:
+                        parovi.add((soba_id, period_id))
+                return parovi
+
+            svi = _razvij((s, p) for s, p, _ in redovi)
+            # efektivno blokirano po polju: eksplicitni red (opcije_soba) ima prednost, inače
+            # važi globalni (period_id=0) red te sobe
+            blok_redovi = conn.execute(text("""
+                SELECT soba_id, period_id, blokirano FROM opcije_soba WHERE cenovnik_id = :c
+            """), {"c": item_id}).all()
+            globalno = {s for s, p, b in blok_redovi if p == 0 and b}
+            eksplicitno = {(s, p): b for s, p, b in blok_redovi if p != 0}
+            blok = {(s, p) for s in soba_ids for p in period_ids
+                    if eksplicitno.get((s, p), s in globalno)}
+            return {
+                "celije": [{"soba_id": s, "period_id": p} for s, p in sorted(svi)],
+                "blokirane": [{"soba_id": s, "period_id": p} for s, p in sorted(blok)],
+            }
