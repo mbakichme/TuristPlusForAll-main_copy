@@ -41,7 +41,7 @@ interface GrafikUgovor { kljuc: string; soba: string; datum_od: string; datum_do
 interface GrafikPeriod { datum_od: string; datum_do: string; }
 interface GrafikCenovnik {
   sobe: { id: number; broj_sobe: string; tip: string; izvor_soba_id: number | null }[];
-  cene: { soba_id: number; datum_od: string; datum_do: string; cena: number }[];
+  cene: { soba_id: number; datum_od: string; datum_do: string; cena: number; blokirano: boolean }[];
 }
 interface GrafikData {
   smestaj: { id: number; naziv: string };
@@ -61,15 +61,27 @@ function pDate(s: string): Date {
 const fmtDatum = (d: Date) =>
   `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
 
-interface PonudaStavka { naziv: string; cena: string | null; glavna: boolean; }
+interface PonudaStavka { naziv: string; cena: string | null; glavna: boolean; blokirano: boolean; }
 interface PonudaInfo { naslov: string; napomena: string | null; stavke: PonudaStavka[]; }
 
-/** Podaci tooltipa praznog polja: slobodan period + cene sobe i njenih virtuelnih soba,
- *  osnovna cena iz aktivnog cenovnika za NAJUŽI period cenovnika koji obuhvata slobodan deo. */
-function ponudaInfo(sec: GrafikData, soba: GrafikSoba, p: GrafikPeriod): PonudaInfo {
-  const naslov = `Soba ${soba.broj_sobe || "—"} · ${p.datum_od} – ${p.datum_do}`;
+/** Red cenovnika za sobu: realna soba ili njena virtuelna soba (struktura = `tip`). */
+interface CenaOpcija {
+  sobaId: number;        // id reda u cenovniku (negativan za virtuelnu)
+  izvorId: number;       // stvarna soba (id u tabeli sobe) — ide u polje „Soba“
+  broj: string;          // broj reda (npr. 6 ili v6)
+  tip: string;           // struktura (npr. 1/3, 1/2)
+  virtuelna: boolean;
+  glavna: boolean;       // red same sobe
+  cena: number | null;   // EUR za najuži period cenovnika koji obuhvata slobodan deo
+  blokirano: boolean;
+}
+
+/** Redovi cena za slobodan termin: soba + njene virtuelne sobe iz aktivnog cenovnika.
+ *  Period = najuži period cenovnika koji obuhvata slobodan deo. */
+function cenaOpcije(sec: GrafikData, soba: GrafikSoba, p: GrafikPeriod):
+  { napomena: string | null; period: GrafikPeriod | null; opcije: CenaOpcija[] } {
   const c = sec.cenovnik;
-  if (!c) return { naslov, napomena: "Nema aktivnog cenovnika", stavke: [] };
+  if (!c) return { napomena: "Nema aktivnog cenovnika", period: null, opcije: [] };
   const od = pDate(p.datum_od).getTime();
   const doo = pDate(p.datum_do).getTime();
   const parovi = new Map<string, GrafikPeriod>();
@@ -81,20 +93,41 @@ function ponudaInfo(sec: GrafikData, soba: GrafikSoba, p: GrafikPeriod): PonudaI
     const b = pDate(q.datum_do).getTime();
     if (a <= od && doo <= b && b - a < najuzi) { period = q; najuzi = b - a; }
   }
-  if (!period) return { naslov, napomena: "Nema cene za ovaj period", stavke: [] };
+  if (!period) return { napomena: "Nema cene za ovaj period", period: null, opcije: [] };
+  const per = period;
   const redovi = c.sobe
     .filter((s) => s.id === soba.id || s.izvor_soba_id === soba.id)
     .sort((a, b) => (a.id === soba.id ? -1 : 0) - (b.id === soba.id ? -1 : 0));
-  const stavke = redovi.map((s) => {
-    const cena = c.cene.find((x) => x.soba_id === s.id && x.datum_od === period!.datum_od && x.datum_do === period!.datum_do);
+  const opcije = redovi.map((s): CenaOpcija => {
+    const zapis = c.cene.find((x) => x.soba_id === s.id && x.datum_od === per.datum_od && x.datum_do === per.datum_do);
     return {
-      naziv: `${s.broj_sobe || "—"}${s.tip ? ` (${s.tip})` : ""}`,
-      cena: cena ? `${cena.cena.toLocaleString("sr-RS", { maximumFractionDigits: 2 })} €` : null,
+      sobaId: s.id,
+      izvorId: soba.id,
+      broj: s.broj_sobe || "—",
+      tip: s.tip || "",
+      virtuelna: s.id !== soba.id,
       glavna: s.id === soba.id,
+      cena: zapis ? zapis.cena : null,
+      blokirano: zapis ? zapis.blokirano : false,
     };
   });
+  return { napomena: null, period, opcije };
+}
+
+/** Podaci tooltipa praznog polja: slobodan period + cene (blokirane cene se NE prikazuju). */
+function ponudaInfo(sec: GrafikData, soba: GrafikSoba, p: GrafikPeriod): PonudaInfo {
+  const naslov = `Soba ${soba.broj_sobe || "—"} · ${p.datum_od} – ${p.datum_do}`;
+  const { napomena, opcije } = cenaOpcije(sec, soba, p);
+  if (napomena) return { naslov, napomena, stavke: [] };
+  const stavke = opcije.map((o) => ({
+    naziv: `${o.broj}${o.tip ? ` (${o.tip})` : ""}`,
+    cena: o.blokirano || o.cena == null ? null : `${o.cena.toLocaleString("sr-RS", { maximumFractionDigits: 2 })} €`,
+    glavna: o.glavna,
+    blokirano: o.blokirano,
+  }));
   return { naslov, napomena: null, stavke };
 }
+
 
 const fmtEur = (v: number | null | undefined) =>
   v == null ? "—" : `${v.toLocaleString("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
@@ -119,6 +152,71 @@ function UgovorTooltip({ u }: { u: GrafikUgovor }) {
         <p className="text-xs text-primary-foreground/80">Subagent: {u.subagent.trim()}</p>
       ) : null}
       <p className="text-xs text-primary-foreground/80">Saldo: <span className="font-mono font-semibold text-primary-foreground">{fmtEur(u.saldo)}</span></p>
+    </div>
+  );
+}
+
+/** Izbor cene za slobodan termin u popupu: soba + virtuelne sobe, jedna cena (radio).
+ *  Blokirane i cene bez vrednosti su onemogućene. */
+function SlotCene({ sec, soba, p, izabrana, onIzbor }: {
+  sec: GrafikData; soba: GrafikSoba; p: GrafikPeriod;
+  izabrana: CenaOpcija | null; onIzbor: (o: CenaOpcija) => void;
+}) {
+  const { napomena, opcije } = useMemo(() => cenaOpcije(sec, soba, p), [sec, soba, p]);
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium text-muted-foreground">Cena za izabrani termin</p>
+      {napomena ? (
+        <p className="rounded-xl border border-dashed border-border p-3 text-xs text-muted-foreground">{napomena}</p>
+      ) : (
+        <div role="radiogroup" aria-label="Cena sobe" className="grid gap-2">
+          {opcije.map((o) => {
+            const izabran = izabrana?.sobaId === o.sobaId;
+            const nedostupna = o.blokirano || o.cena == null;
+            return (
+              <button
+                key={o.sobaId}
+                type="button"
+                role="radio"
+                aria-checked={izabran}
+                aria-label={`Soba ${o.broj}${o.tip ? ` ${o.tip}` : ""} — ${o.blokirano ? "blokirano" : o.cena == null ? "nema cene" : fmtEur(o.cena)}`}
+                disabled={nedostupna}
+                onClick={() => onIzbor(o)}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors",
+                  izabran ? "border-green-600 bg-green-600/10" : "border-border bg-card hover:bg-muted/50",
+                  o.blokirano && "border-red-300 bg-red-50 text-red-700 hover:bg-red-50",
+                  nedostupna && "cursor-not-allowed opacity-80",
+                )}
+              >
+                <span className={cn(
+                  "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+                  izabran ? "border-green-600 bg-green-600" : "border-muted-foreground/40",
+                )}>
+                  {izabran ? <span className="h-1.5 w-1.5 rounded-full bg-white" /> : null}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">
+                    Soba {o.broj}{o.tip ? ` · ${o.tip}` : ""}
+                  </span>
+                  {o.virtuelna ? (
+                    <span className="block text-[11px] text-muted-foreground">virtuelna · stvarna soba {soba.broj_sobe || "—"}</span>
+                  ) : null}
+                </span>
+                <span className="shrink-0 text-right">
+                  {o.blokirano ? (
+                    <span className="text-xs font-semibold">blokirano</span>
+                  ) : o.cena == null ? (
+                    <span className="text-xs text-muted-foreground">nema cene</span>
+                  ) : (
+                    <span className="font-mono text-sm font-semibold tabular-nums">{fmtEur(o.cena)}</span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -152,8 +250,8 @@ function PonudaTooltip({ info, tipRef, pos }: {
                 <span className={cn("truncate", s.glavna && "font-semibold text-foreground")}>
                   {s.naziv}
                 </span>
-                <span className={cn("shrink-0 font-mono tabular-nums", s.glavna ? "text-sm font-semibold text-foreground" : "text-xs")}>
-                  {s.cena ?? "nema cene"}
+                <span className={cn("shrink-0 font-mono tabular-nums", s.blokirano ? "text-[11px] font-sans font-medium text-red-600" : s.glavna ? "text-sm font-semibold text-foreground" : "text-xs")}>
+                  {s.blokirano ? "blokirano" : (s.cena ?? "nema cene")}
                 </span>
               </li>
             ))}
@@ -534,6 +632,7 @@ export default function GrafikPage() {
   const ugovorReqRef = useRef(0);
   // Slot popup (slobodan termin → Klasična/Brza) + forma brze rezervacije
   const [slotOtvoren, setSlotOtvoren] = useState(false);
+  const [slotCena, setSlotCena] = useState<CenaOpcija | null>(null); // izabrana cena (soba ili virtuelna)
   const [slotSec, setSlotSec] = useState<GrafikData | null>(null);
   const [slotSoba, setSlotSoba] = useState<GrafikSoba | null>(null);
   const [slotPeriod, setSlotPeriod] = useState<GrafikPeriod | null>(null);
@@ -625,6 +724,7 @@ export default function GrafikPage() {
     setSlotSec(sec);
     setSlotSoba(soba);
     setSlotPeriod(p);
+    setSlotCena(null);
     // predefinisani datumi slobodnog termina (mogu se ispraviti u formi)
     setBrzaOd(isoOdPrikaza(p.datum_od));
     setBrzaDo(isoOdPrikaza(p.datum_do));
@@ -683,6 +783,11 @@ export default function GrafikPage() {
       smestaj: String(slotSec.smestaj.id),
       mesto: mestoId,
     });
+    // izabrana cena iz popupa: cena cele sobe (EUR) + struktura virtuelne sobe u „Promena strukture“
+    if (slotCena && slotCena.cena != null && !slotCena.blokirano) {
+      params.set("cena", String(slotCena.cena));
+      if (slotCena.virtuelna && slotCena.tip) params.set("struktura", slotCena.tip);
+    }
     navigate(`/prodaja/rezervacije?${params.toString()}`);
   }
 
@@ -1016,6 +1121,15 @@ export default function GrafikPage() {
               <DatumBoravka label="Datum do" value={brzaDo} onChange={setBrzaDo} />
             </div>
           </div>
+          {slotSec && slotSoba && slotPeriod ? (
+            <SlotCene
+              sec={slotSec}
+              soba={slotSoba}
+              p={slotPeriod}
+              izabrana={slotCena}
+              onIzbor={(o) => setSlotCena((prev) => (prev?.sobaId === o.sobaId ? null : o))}
+            />
+          ) : null}
           <div className="grid grid-cols-2 gap-3">
             <Button
               className="h-auto min-h-14 w-full gap-2 rounded-xl bg-green-600 px-2 py-3 text-white shadow-sm transition-colors hover:bg-green-700 sm:px-3"

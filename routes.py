@@ -2787,6 +2787,13 @@ def create_app(static_dir: str) -> FastAPI:
                     def _dmy(s):
                         return datetime.fromisoformat(str(s)[:10]).strftime("%d.%m.%Y")
                     per = {int(p["id"]): p for p in (cen_row.periodi or [])}
+                    # Blokada (opcije_soba.blokirano): eksplicitan red po periodu, inače
+                    # globalni red (period_id = 0) za sobu — isto pravilo kao opcije-celije
+                    blok_rows = conn.execute(text(
+                        "SELECT soba_id, period_id, blokirano FROM opcije_soba WHERE cenovnik_id = :c"
+                    ), {"c": cen_row.id}).all()
+                    blok_globalno = {int(s) for s, pid, b in blok_rows if int(pid) == 0 and b}
+                    blok_eksplicitno = {(int(s), int(pid)): bool(b) for s, pid, b in blok_rows if int(pid) != 0}
                     cene_out = []
                     for cr in conn.execute(text(
                         "SELECT soba_id, period_id, cena FROM cenovnik_cene WHERE cenovnik_id = :c"
@@ -2794,10 +2801,12 @@ def create_app(static_dir: str) -> FastAPI:
                         p = per.get(int(cr.period_id))
                         if p is None:
                             continue
+                        sid, pid = int(cr.soba_id), int(cr.period_id)
                         cene_out.append({
-                            "soba_id": int(cr.soba_id),
+                            "soba_id": sid,
                             "datum_od": _dmy(p["datum_od"]), "datum_do": _dmy(p["datum_do"]),
                             "cena": float(cr.cena),
+                            "blokirano": blok_eksplicitno.get((sid, pid), sid in blok_globalno),
                         })
                     cenovnik_out = {
                         "sobe": [{
