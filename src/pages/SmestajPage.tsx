@@ -19,7 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Plus, Pencil, Trash2, Loader2, BedDouble } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, BedDouble, Search } from "lucide-react";
 import { toast } from "sonner";
 
 interface SmestajForm {
@@ -53,6 +53,13 @@ export default function SmestajPage() {
   const [editing, setEditing] = useState<Smestaj | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<SmestajForm>(emptyForm);
+  const [pretraga, setPretraga] = useState("");
+  const q = pretraga.trim().toLowerCase();
+  const prikaz = q
+    ? items.filter((s) =>
+        [s.naziv, s.drzava_naziv, s.destinacija_naziv, s.tip_smestaja_naziv, s.grupa_datuma_naziv]
+          .some((v) => (v || "").toLowerCase().includes(q)))
+    : items;
 
   async function load() {
     try {
@@ -195,50 +202,59 @@ export default function SmestajPage() {
           <CardTitle className="flex items-center gap-2"><BedDouble className="w-5 h-5" />Smeštaj</CardTitle>
           <CardDescription>Lista svih smeštaja</CardDescription>
         </CardHeader>
-        <CardContent>
-          <Table>
+        <CardContent className="space-y-3">
+          <div className="relative max-w-sm">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={pretraga}
+              onChange={(e) => setPretraga(e.target.value)}
+              placeholder="Pretraga po nazivu, državi, destinaciji, tipu, grupi…"
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+          <Table className="text-xs">
             <TableHeader>
               <TableRow>
-                <TableHead>Naziv</TableHead>
-                <TableHead>Država</TableHead>
-                <TableHead>Destinacija</TableHead>
-                <TableHead>Tip smeštaja</TableHead>
-                <TableHead>Grupa perioda</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Grafik</TableHead>
-                <TableHead>Granica CHD</TableHead>
-                <TableHead>Prima decu</TableHead>
-                <TableHead className="w-24 text-right">Akcije</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Naziv</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Država</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Destinacija</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Tip smeštaja</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Grupa perioda</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Status</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Grafik</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Granica CHD</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Prima decu</TableHead>
+                <TableHead className="h-8 w-20 px-2 text-right text-xs">Akcije</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.length === 0 ? (
-                <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Nema podataka</TableCell></TableRow>
-              ) : items.map((item) => (
+              {prikaz.length === 0 ? (
+                <TableRow><TableCell colSpan={10} className="py-6 text-center text-xs text-muted-foreground">{items.length === 0 ? "Nema podataka" : "Nema rezultata pretrage"}</TableCell></TableRow>
+              ) : prikaz.map((item) => (
                 <TableRow key={item.id}>
-                  <TableCell className="font-medium">{item.naziv}</TableCell>
-                  <TableCell>{item.drzava_naziv || "—"}</TableCell>
-                  <TableCell>{item.destinacija_naziv || "—"}</TableCell>
-                  <TableCell>{item.tip_smestaja_naziv || "—"}</TableCell>
-                  <TableCell>{item.grupa_datuma_naziv || "—"}</TableCell>
-                  <TableCell>
-                    <Badge variant={item.status === 1 ? "default" : "secondary"}>
+                  <TableCell className="px-2 py-1.5 font-medium">{item.naziv}</TableCell>
+                  <TableCell className="px-2 py-1.5">{item.drzava_naziv || "—"}</TableCell>
+                  <TableCell className="px-2 py-1.5">{item.destinacija_naziv || "—"}</TableCell>
+                  <TableCell className="px-2 py-1.5">{item.tip_smestaja_naziv || "—"}</TableCell>
+                  <TableCell className="px-2 py-1.5">{item.grupa_datuma_naziv || "—"}</TableCell>
+                  <TableCell className="px-2 py-1.5">
+                    <Badge variant={item.status === 1 ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
                       {item.status === 1 ? "Aktivan" : "Neaktivan"}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    <Badge variant={item.grafik === 1 ? "default" : "outline"}>
+                  <TableCell className="px-2 py-1.5">
+                    <Badge variant={item.grafik === 1 ? "default" : "outline"} className="text-[10px] px-1.5 py-0">
                       {item.grafik === 1 ? "Da" : "Ne"}
                     </Badge>
                   </TableCell>
-                  <TableCell>{item.granica_chd ?? 6.99}</TableCell>
-                  <TableCell>
+                  <TableCell className="px-2 py-1.5">{item.granica_chd ?? 6.99}</TableCell>
+                  <TableCell className="px-2 py-1.5">
                     {item.prima_decu === false ? `NE (ispod ${item.ne_prima_ispod_godina} god.)` : "DA"}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(item)}><Pencil className="w-4 h-4" /></Button>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => setDeleteId(item.id)}><Trash2 className="w-4 h-4" /></Button>
+                  <TableCell className="px-2 py-1 text-right">
+                    <div className="flex items-center justify-end gap-0.5">
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEdit(item)}><Pencil className="w-3.5 h-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => setDeleteId(item.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
                     </div>
                   </TableCell>
                 </TableRow>

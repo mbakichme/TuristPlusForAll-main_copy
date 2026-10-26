@@ -38,6 +38,7 @@ import PregledProdajaAranzmanaPage from "./pages/PregledProdajaAranzmanaPage";
 import NotifikacijePage from "./pages/NotifikacijePage";
 import ProfilPage from "./pages/ProfilPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
+import { useAgencijaPrviNaziv } from "./hooks/useAgencijaPrviNaziv";
 import { Loader2, Menu } from "lucide-react";
 
 // Tip "prodaja": dozvoljene su naslovna i stranice sekcije Prodaja
@@ -61,6 +62,7 @@ function ProdajaRouteGuard({ children }: { children: ReactNode }) {
 function ProtectedLayout() {
   const { user, loading } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const prviNaziv = useAgencijaPrviNaziv();
 
   if (loading) {
     return (
@@ -86,7 +88,7 @@ function ProtectedLayout() {
           <button onClick={() => setMobileOpen(true)} className="p-1 rounded-md hover:bg-accent transition-colors">
             <Menu className="w-6 h-6" />
           </button>
-          <span className="font-semibold text-sm">Oktopod Travel</span>
+          <span className="font-semibold text-sm">{prviNaziv || "TuristPlus"}</span>
         </div>
         <main className="flex-1 overflow-y-auto">
           <ProdajaRouteGuard>

@@ -81,7 +81,7 @@ export default function SobePage() {
     const q = search.trim().toLowerCase();
     if (!q) return items;
     return items.filter((b) =>
-      [b.broj_sobe, b.tip, b.opis, b.opis_dodatno, b.veliki_opis, b.smestaj_naziv, b.mesto_naziv]
+      [b.broj_sobe, b.tip, b.opis, b.opis_dodatno, b.veliki_opis, b.smestaj_naziv, b.mesto_naziv, b.grupa_datuma_naziv]
         .some((v) => (v || "").toLowerCase().includes(q))
     );
   }, [items, search]);
@@ -261,29 +261,35 @@ export default function SobePage() {
           </div>
         </CardHeader>
         <CardContent>
-          <Table>
+          <Table className="text-xs">
             <TableHeader>
               <TableRow>
-                <TableHead>Smeštaj</TableHead>
-                <TableHead>Mesto</TableHead>
-                <TableHead>Broj sobe</TableHead>
-                <TableHead>Tip (opis)</TableHead>
-                <TableHead>Koeficijenti</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-24 text-right">Akcije</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Smeštaj</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Mesto</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Grupa termina</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Broj sobe</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Tip (opis)</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Koeficijenti</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Status</TableHead>
+                <TableHead className="h-8 w-20 px-2 text-right text-xs">Akcije</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                <TableRow><TableCell colSpan={8} className="py-6 text-center text-xs text-muted-foreground">
                   {search.trim() ? "Nema rezultata za pretragu" : "Nema soba. Kliknite Dodaj da kreirate prvu."}
                 </TableCell></TableRow>
               ) : filtered.map((item) => (
                 <TableRow key={item.id}>
-                  <TableCell className="font-medium">{item.smestaj_naziv || `#${item.veza_id_smestaj}`}</TableCell>
-                  <TableCell className="text-muted-foreground">{item.mesto_naziv || "—"}</TableCell>
-                  <TableCell className="font-mono">{item.broj_sobe || "—"}</TableCell>
-                  <TableCell className="max-w-xs truncate" title={item.tip && item.opis ? `${item.tip} (${item.opis})` : item.tip || item.opis || undefined}>
+                  <TableCell className="px-2 py-1.5 font-medium">{item.smestaj_naziv || `#${item.veza_id_smestaj}`}</TableCell>
+                  <TableCell className="px-2 py-1.5 text-muted-foreground">{item.mesto_naziv || "—"}</TableCell>
+                  <TableCell className="px-2 py-1.5">{item.grupa_datuma_naziv || <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1.5">
+                    <span className="inline-flex min-w-8 items-center justify-center rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-sm font-bold text-primary">
+                      {item.broj_sobe || "—"}
+                    </span>
+                  </TableCell>
+                  <TableCell className="max-w-xs truncate px-2 py-1.5" title={item.tip && item.opis ? `${item.tip} (${item.opis})` : item.tip || item.opis || undefined}>
                     {item.tip && item.opis ? (
                       <>{item.tip} <span className="text-muted-foreground">({item.opis})</span></>
                     ) : item.tip || item.opis ? (
@@ -292,16 +298,16 @@ export default function SobePage() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="px-2 py-1.5">
                     {item.tip?.trim() ? (
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-8 gap-1.5"
+                        className="h-6 gap-1 px-2 text-xs"
                         aria-label={`Koeficijenti — soba ${item.broj_sobe || item.id}`}
                         onClick={() => otvoriKoeficijente(item)}
                       >
-                        <Sigma className="h-3.5 w-3.5 text-muted-foreground" />
+                        <Sigma className="h-3 w-3 text-muted-foreground" />
                         <span className="tabular-nums">
                           {item.koeficijenti && item.koeficijenti.length > 0
                             ? item.koeficijenti.join(" · ")
@@ -312,15 +318,15 @@ export default function SobePage() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell>
-                    <Badge variant={item.status === 1 ? "default" : "secondary"}>
+                  <TableCell className="px-2 py-1.5">
+                    <Badge variant={item.status === 1 ? "default" : "secondary"} className="px-1.5 py-0 text-[10px]">
                       {item.status === 1 ? "Aktivan" : "Neaktivan"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(item)}><Pencil className="w-4 h-4" /></Button>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => setDeleteId(item.id)}><Trash2 className="w-4 h-4" /></Button>
+                  <TableCell className="px-2 py-1 text-right">
+                    <div className="flex items-center justify-end gap-0.5">
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEdit(item)}><Pencil className="w-3.5 h-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => setDeleteId(item.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
                     </div>
                   </TableCell>
                 </TableRow>

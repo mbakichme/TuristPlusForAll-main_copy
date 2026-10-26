@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "../lib/api";
+import { postaviNazivAgencije } from "../hooks/useAgencijaPrviNaziv";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -107,6 +108,7 @@ export default function AgencijaPage() {
     setSaving(true);
     try {
       await apiFetch("/agencija", { method: "PUT", body: JSON.stringify(form) });
+      postaviNazivAgencije(form.naziv);
       toast.success("Podaci su sačuvani");
     } catch {
       toast.error("Greška pri čuvanju podataka");

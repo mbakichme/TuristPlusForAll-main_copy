@@ -3,11 +3,12 @@ import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, CreditCard, Download, FilePenLine, Loader2,
-  FilePlus, FileText, History, Info, Plus, Receipt, Search, Send, Ticket, Trash2, X,
+  FilePlus, FileText, Handshake, History, Info, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
   Users, Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
+import ZaduzenjePartnerTab from "@/components/ZaduzenjePartnerTab";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -64,6 +65,8 @@ const formattersKalendara = {
   formatWeekdayName: (day: Date) => DANI[day.getDay()],
 };
 const MESECI_KAL = MESECI.map((m) => m.charAt(0).toUpperCase() + m.slice(1));
+/** Broj ugovora po strani u padajućoj listi pretrage (backend maksimum je 100). */
+const PRETRAGA_STRANA = 100;
 const formattersKalendaraDatum = {
   formatWeekdayName: (day: Date) => DANI[day.getDay()],
   formatMonthDropdown: (date: Date) => MESECI_KAL[date.getMonth()],
@@ -544,7 +547,9 @@ export default function RezervacijePage() {
   /** zaključano: ugovor je učitan/sačuvan i nije u režimu izmene (osim pretrage) */
   const zakljucano = izabraniUgovor !== null && !izmena;
   /** postojeća rezervacija: datumi, smeštaj, mesto i struktura se ne menjaju ni u režimu izmene */
-  const boravakFiksan = izabraniUgovor !== null;
+  /** Boravak i smeštaj su uvek zaključani (i kad su prazni, i kod postojeće rezervacije) dok korisnik ne klikne „Otključaj“ */
+  const [boravakOtkljucan, setBoravakOtkljucan] = useState(false);
+  const boravakZakljucan = zakljucano || !boravakOtkljucan;
   // opcije Tipa rezervacije — proširene sačuvanom vrednošću van standardnog spiska
   const [tipOpcije, setTipOpcije] = useState<string[]>(TIP_REZERVACIJE);
   // sačuvani nazivi van referentnih lista (stari ugovori) — prikaz + čuvanje bez gubitka
@@ -608,7 +613,7 @@ export default function RezervacijePage() {
     setPretragaRezultati([]);
     setPretragaUcitava(true);
     const timer = setTimeout(() => {
-      const params = new URLSearchParams({ search: pretraga.trim(), search_in: "putnik,kljuc", page_size: "10", sort: "kljuc", dir: "asc" });
+      const params = new URLSearchParams({ search: pretraga.trim(), search_in: "putnik,kljuc", page_size: String(PRETRAGA_STRANA), sort: "kljuc", dir: "asc" });
       apiFetch<UgovoriResponse>(`/ugovori?${params}`)
         .then((data) => { if (request === pretragaRequest.current) { setPretragaRezultati(data.rows); setPretragaUkupno(data.total); } })
         .catch(() => { if (request === pretragaRequest.current) { setPretragaRezultati([]); setPretragaUkupno(0); toast.error("Pretraga ugovora nije uspela"); } })
@@ -616,6 +621,44 @@ export default function RezervacijePage() {
     }, 400);
     return () => clearTimeout(timer);
   }, [pretraga, izabraniUgovor]);
+
+  // Sledeća strana pretrage ugovora (dopunjava listu; zaštićeno od zastarelih odgovora)
+  const [pretragaDopunjava, setPretragaDopunjava] = useState(false);
+  async function ucitajVisePretrage() {
+    const request = pretragaRequest.current;
+    const strana = Math.floor(pretragaRezultati.length / PRETRAGA_STRANA) + 1;
+    setPretragaDopunjava(true);
+    try {
+      const params = new URLSearchParams({ search: pretraga.trim(), search_in: "putnik,kljuc", page: String(strana), page_size: String(PRETRAGA_STRANA), sort: "kljuc", dir: "asc" });
+      const data = await apiFetch<UgovoriResponse>(`/ugovori?${params}`);
+      if (request === pretragaRequest.current) {
+        setPretragaRezultati((prev) => [...prev, ...data.rows]);
+        setPretragaUkupno(data.total);
+      }
+    } catch {
+      toast.error("Učitavanje dodatnih ugovora nije uspelo");
+    } finally {
+      setPretragaDopunjava(false);
+    }
+  }
+
+  // Skrol-učitavanje: kad sentinel na dnu liste uđe u vidljivo polje liste, učitaj sledeću stranu
+  const pretragaListaRef = useRef<HTMLDivElement | null>(null);
+  const pretragaCuvarRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const root = pretragaListaRef.current;
+    const cuvar = pretragaCuvarRef.current;
+    if (!root || !cuvar || pretragaDopunjava) return;
+    const posmatrac = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void ucitajVisePretrage();
+      },
+      { root, rootMargin: "0px 0px 40px 0px" },
+    );
+    posmatrac.observe(cuvar);
+    return () => posmatrac.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pretragaRezultati.length, pretragaUkupno, pretragaDopunjava, pretragaOtvorena, pretraga]);
 
   const [stornoOtvoren, setStornoOtvoren] = useState(false);
   const [stornoSeCuva, setStornoSeCuva] = useState(false);
@@ -699,6 +742,7 @@ export default function RezervacijePage() {
       setUcitanUgovor(d);
       void osveziKeptp(d.kljuc);
       setIzmena(false); // učitavam postojeći ugovor → polja zaključana do klika na „Izmeni“
+      setBoravakOtkljucan(false);
       setPretraga(d.kljuc);
       setUplateOsvezi((n) => n + 1);
       setPretragaOtvorena(false);
@@ -1437,11 +1481,12 @@ export default function RezervacijePage() {
       </Dialog>
 
       <Tabs defaultValue="aranzman">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border bg-white p-1.5 sm:grid-cols-4 md:w-auto md:inline-flex">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border bg-white p-1.5 sm:grid-cols-5 md:w-auto md:inline-flex">
           <TabsTrigger value="aranzman" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><CalendarPlus className="size-4 sm:size-5" />Aranžman</TabsTrigger>
-          <TabsTrigger value="obracun" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><Receipt className="size-4 sm:size-5" />Obračun</TabsTrigger>
           <TabsTrigger value="prevoz" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><Bus className="size-4 sm:size-5" />Prevoz</TabsTrigger>
+          <TabsTrigger value="obracun" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><Receipt className="size-4 sm:size-5" />Obračun</TabsTrigger>
           <TabsTrigger value="uplate" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><Wallet className="size-4 sm:size-5" />Uplate</TabsTrigger>
+          <TabsTrigger value="zaduzenje" className="gap-1.5 px-2 py-3 text-sm text-muted-foreground hover:text-foreground sm:px-4 sm:text-base md:px-6 data-[state=active]:bg-blue-600 data-[state=active]:font-semibold data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:text-white"><Handshake className="size-4 sm:size-5" />Zaduženje partner</TabsTrigger>
         </TabsList>
 
         {/* ════════════════ TAB: ARANŽMAN ════════════════ */}
@@ -1471,7 +1516,7 @@ export default function RezervacijePage() {
                     />
                     {(pretragaUcitava || izborUcitava) && <Loader2 className="absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
                     {pretragaOtvorena && pretraga.trim().length >= 3 && pretraga.trim() !== izabraniUgovor && (
-                      <div id="rezervacije-ugovori-rezultati" className="absolute left-0 right-0 top-full z-20 mt-1 max-h-80 overflow-auto rounded-md border bg-popover shadow-lg">
+                      <div id="rezervacije-ugovori-rezultati" ref={pretragaListaRef} className="absolute left-0 right-0 top-full z-20 mt-1 max-h-80 overflow-auto rounded-md border bg-popover shadow-lg">
                         {pretragaUcitava ? <p className="px-3 py-3 text-sm text-muted-foreground">Pretraga ugovora…</p> : pretragaRezultati.length ? (
                           <>
                             {pretragaRezultati.map((r) => (
@@ -1481,7 +1526,12 @@ export default function RezervacijePage() {
                                 <span className="text-xs text-muted-foreground">{r.mesto || ""}</span>
                               </button>
                             ))}
-                            {pretragaUkupno > pretragaRezultati.length && <p className="px-3 py-2 text-xs text-muted-foreground">Prvih {pretragaRezultati.length} od {pretragaUkupno} rezultata. Sužite pretragu.</p>}
+                            {pretragaUkupno > pretragaRezultati.length && (
+                              <div ref={pretragaCuvarRef} className="flex items-center justify-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                                {pretragaDopunjava && <Loader2 className="size-3.5 animate-spin" />}
+                                {pretragaDopunjava ? "Učitavanje…" : `Skrolujte za još ${pretragaUkupno - pretragaRezultati.length} od ${pretragaUkupno}`}
+                              </div>
+                            )}
                           </>
                         ) : <p className="px-3 py-3 text-sm text-muted-foreground">Nema rezultata za „{pretraga.trim()}”.</p>}
                       </div>
@@ -1735,6 +1785,18 @@ export default function RezervacijePage() {
             <CardHeader className={KOMPAKT_HEADER}>
               <CardTitle className="text-sm flex items-center gap-2">
                 <BedDouble className="w-4 h-4 text-primary" />Boravak i smeštaj
+                {!zakljucano && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto h-7 gap-1.5 px-2 text-xs"
+                    onClick={() => setBoravakOtkljucan((v) => !v)}
+                  >
+                    {boravakOtkljucan ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
+                    {boravakOtkljucan ? "Zaključaj" : "Otključaj"}
+                  </Button>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent className={KOMPAKT_CONTENT}>
@@ -1743,19 +1805,19 @@ export default function RezervacijePage() {
                   label="Datum od"
                   value={boravak.datumOd}
                   onChange={(v) => setBoravak({ ...boravak, datumOd: v })}
-                  disabled={zakljucano || boravakFiksan}
+                  disabled={boravakZakljucan}
                 />
                 <DatumField
                   label="Datum do"
                   value={boravak.datumDo}
                   onChange={(v) => setBoravak({ ...boravak, datumDo: v })}
-                  disabled={zakljucano || boravakFiksan}
+                  disabled={boravakZakljucan}
                 />
                 <Fld label="Smeštaj">
                   <Select
                     value={boravak.smestaj}
                     onValueChange={(v) => { if (v !== CUVAR) setSmestajSacuvan(null); setBoravak({ ...boravak, smestaj: v, soba: "" }); }}
-                    disabled={zakljucano || boravakFiksan}
+                    disabled={boravakZakljucan}
                   >
                     <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite smeštaj" /></SelectTrigger>
                     <SelectContent>
@@ -1770,7 +1832,7 @@ export default function RezervacijePage() {
                   <Select
                     value={boravak.soba}
                     onValueChange={(v) => { if (v !== CUVAR) setSobaSacuvana(null); setBoravak({ ...boravak, soba: v }); }}
-                    disabled={zakljucano || boravakFiksan || !boravak.smestaj || boravak.smestaj === CUVAR}
+                    disabled={boravakZakljucan || !boravak.smestaj || boravak.smestaj === CUVAR}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder={boravak.smestaj ? "Izaberite sobu" : "Prvo izaberite smeštaj"} />
@@ -1786,7 +1848,7 @@ export default function RezervacijePage() {
                   </Select>
                 </Fld>
                 <Fld label="Mesto">
-                  <Select value={boravak.mesto} onValueChange={(v) => { if (v !== CUVAR) setMestoSacuvano(null); setBoravak({ ...boravak, mesto: v }); }} disabled={zakljucano || boravakFiksan}>
+                  <Select value={boravak.mesto} onValueChange={(v) => { if (v !== CUVAR) setMestoSacuvano(null); setBoravak({ ...boravak, mesto: v }); }} disabled={boravakZakljucan}>
                     <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite mesto" /></SelectTrigger>
                     <SelectContent>
                       {mestoSacuvano && <SelectItem value={CUVAR}>{mestoSacuvano} (sačuvano)</SelectItem>}
@@ -1801,7 +1863,7 @@ export default function RezervacijePage() {
                     value={boravak.struktura}
                     onChange={(e) => setBoravak({ ...boravak, struktura: e.target.value })}
                     placeholder="npr. 1/2 + 1/2"
-                    disabled={zakljucano || boravakFiksan}
+                    disabled={boravakZakljucan}
                   />
                 </Fld>
                 <Fld label="Promena strukture" className="md:col-span-2 xl:col-span-5">
@@ -1821,7 +1883,7 @@ export default function RezervacijePage() {
                     <span className="text-muted-foreground">Viza</span>
                   </label>
                 </Fld>
-                <Fld label="Napomena" className="md:col-span-3">
+                <Fld label="Napomena (interna)" className="md:col-span-3">
                   <Textarea
                     rows={2}
                     className="min-h-0"
@@ -1830,7 +1892,7 @@ export default function RezervacijePage() {
                     disabled={zakljucano}
                   />
                 </Fld>
-                <Fld label="Napomena interna" className="md:col-span-3">
+                <Fld label="Napomena (prikazuje se na prijavi)" className="md:col-span-3">
                   <Textarea
                     rows={2}
                     className="min-h-0"
@@ -2477,6 +2539,10 @@ export default function RezervacijePage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="zaduzenje" className="mt-4">
+          <ZaduzenjePartnerTab kljuc={izabraniUgovor} zakljucano={zakljucano} />
         </TabsContent>
       </Tabs>
 

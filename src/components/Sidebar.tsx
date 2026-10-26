@@ -4,6 +4,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "@/components/BrandMark";
 import { useAuth } from "../context/AuthContext";
+import { useAgencijaPrviNaziv } from "../hooks/useAgencijaPrviNaziv";
 import {
   LayoutDashboard, Users, UserPlus,
   ChevronLeft, ChevronRight, ChevronDown, LogOut, ShieldCheck, Settings,
@@ -79,6 +80,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
 }) {
   // Tip "prodaja" vidi samo sekciju Prodaja
   const jeProdaja = !!user && !user.is_superadmin && user.user_type_slug === "prodaja";
+  const prviNaziv = useAgencijaPrviNaziv();
   return (
     <>
       {/* Header */}
@@ -87,7 +89,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
         {!collapsed && (
           <div className="overflow-hidden">
             <p className="text-sm font-bold text-foreground leading-tight truncate">TuristPlus</p>
-            <p className="text-xs text-muted-foreground truncate">Admin Panel</p>
+            <p className="text-xs text-muted-foreground truncate">{prviNaziv || "Admin Panel"}</p>
           </div>
         )}
       </div>
@@ -378,13 +380,47 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
 
 export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [agencijaOpen, setAgencijaOpen] = useState(false);
-  const [prodajaOpen, setProdajaOpen] = useState(false);
-  const [knjigovodstvoOpen, setKnjigovodstvoOpen] = useState(false);
-  const [preglediOpen, setPreglediOpen] = useState(false);
+  const [settingsOpen, settingsOpenRaw] = useState(false);
+  const [agencijaOpen, agencijaOpenRaw] = useState(false);
+  const [prodajaOpen, prodajaOpenRaw] = useState(false);
+  const [knjigovodstvoOpen, knjigovodstvoOpenRaw] = useState(false);
+  const [preglediOpen, preglediOpenRaw] = useState(false);
   const [dnevniOpen, setDnevniOpen] = useState(true);
   const { user, logout } = useAuth();
+
+  // Glavne sekcije su međusobno isključive: otvaranje jedne zatvara ostale.
+  // Dnevni izveštaji su podsekcija unutar Pregledi pa su van ove grupe.
+  const stanjaSekcija = {
+    settings: settingsOpen,
+    agencija: agencijaOpen,
+    prodaja: prodajaOpen,
+    knjigovodstvo: knjigovodstvoOpen,
+    pregledi: preglediOpen,
+  };
+  const postavkeSekcija = {
+    settings: settingsOpenRaw,
+    agencija: agencijaOpenRaw,
+    prodaja: prodajaOpenRaw,
+    knjigovodstvo: knjigovodstvoOpenRaw,
+    pregledi: preglediOpenRaw,
+  };
+  function jedinstvena(kljuc: keyof typeof postavkeSekcija): Dispatch<SetStateAction<boolean>> {
+    return (akcija) => {
+      const sledece = typeof akcija === "function" ? akcija(stanjaSekcija[kljuc]) : akcija;
+      if (sledece) {
+        (Object.keys(postavkeSekcija) as (keyof typeof postavkeSekcija)[])
+          .filter((k) => k !== kljuc)
+          .forEach((k) => postavkeSekcija[k](false));
+      }
+      postavkeSekcija[kljuc](sledece);
+    };
+  }
+  const setSettingsOpen = jedinstvena("settings");
+  const setAgencijaOpen = jedinstvena("agencija");
+  const setProdajaOpen = jedinstvena("prodaja");
+  const setKnjigovodstvoOpen = jedinstvena("knjigovodstvo");
+  const setPreglediOpen = jedinstvena("pregledi");
+  const prviNaziv = useAgencijaPrviNaziv();
   const navigate = useNavigate();
 
   // Tip "prodaja" vidi samo sekciju Prodaja
@@ -460,7 +496,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <BrandMark className="w-9 h-9" />
                 <div className="overflow-hidden">
                   <p className="text-sm font-bold text-foreground leading-tight truncate">TuristPlus</p>
-                  <p className="text-xs text-muted-foreground truncate">Admin Panel</p>
+                  <p className="text-xs text-muted-foreground truncate">{prviNaziv || "Admin Panel"}</p>
                 </div>
               </div>
               <button onClick={closeMobile} className="p-1 rounded-md hover:bg-accent transition-colors">

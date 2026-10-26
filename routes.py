@@ -25,6 +25,7 @@ from kurs_service import ensure_kurs_table, get_eur_rate
 from grafik_boje import kategorija_grafika
 from cenovnici_api import init_cenovnici, register_cenovnici
 from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
+from zaduzenje_api import init_zaduzenje, register_zaduzenje
 from notifikacije_api import init_notifikacije, register_notifikacije
 from profil_api import init_profil, register_profil
 from dashboard_api import register_dashboard
@@ -1335,6 +1336,7 @@ def create_app(static_dir: str) -> FastAPI:
     init_db(engine)
     init_cenovnici(engine)
     init_koeficijenti(engine)
+    init_zaduzenje(engine)
     init_notifikacije(engine)
     init_rezervacija_log(engine)
     init_profil(engine)
@@ -1342,6 +1344,7 @@ def create_app(static_dir: str) -> FastAPI:
     api = APIRouter()
     register_cenovnici(api, engine, get_current_user)
     register_koeficijenti(api, engine, get_current_user)
+    register_zaduzenje(api, engine, get_current_user)
     register_notifikacije(api, engine, get_current_user)
     register_rezervacija_log(api, engine, get_current_user)
     register_profil(api, engine, get_current_user, hash_password, verify_password)
@@ -2007,10 +2010,12 @@ def create_app(static_dir: str) -> FastAPI:
             rows = conn.execute(text(f"""
                 SELECT b.id, b.veza_id_smestaj, b.broj_sobe, b.opis, b.tip,
                        b.status, b.opis_dodatno, b.veliki_opis,
-                       s.naziv AS smestaj_naziv, m.naziv AS mesto_naziv
+                       s.naziv AS smestaj_naziv, m.naziv AS mesto_naziv,
+                       pg.naziv AS grupa_datuma_naziv
                 FROM sobe b
                 LEFT JOIN smestaj s ON b.veza_id_smestaj = s.id
                 LEFT JOIN mesto m ON m.id = s.mesto
+                LEFT JOIN period_grupa pg ON pg.id = s.grupa_datuma
                 {where}
                 ORDER BY s.naziv, b.broj_sobe
                 LIMIT 2000
@@ -2026,6 +2031,7 @@ def create_app(static_dir: str) -> FastAPI:
             "status": r.status, "opis_dodatno": r.opis_dodatno,
             "veliki_opis": r.veliki_opis, "smestaj_naziv": r.smestaj_naziv,
             "mesto_naziv": r.mesto_naziv,
+            "grupa_datuma_naziv": r.grupa_datuma_naziv,
             # nazivi koeficijenata: osnovni (po tipu sobe) + dodatni definisani
             "koeficijenti": ([(r.tip or "").strip()] if (r.tip or "").strip() else [])
                 + dodati_po_sobi.get(r.id, []),

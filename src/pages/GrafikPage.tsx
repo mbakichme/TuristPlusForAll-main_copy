@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
-import type { ReactNode, MouseEvent as ReactMouseEvent, RefObject } from "react";
+import type { CSSProperties, ReactNode, MouseEvent as ReactMouseEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import type { Mesto, Smestaj, PeriodGrupa, UgovorDetail } from "../types";
@@ -138,6 +138,52 @@ function PfRow({ label, value, mono }: { label: string; value: ReactNode; mono?:
       <span className="text-muted-foreground text-xs shrink-0">{label}</span>
       <span className={cn("text-sm font-medium text-right", mono && "font-mono")}>{value}</span>
     </div>
+  );
+}
+
+/** Broj ugovora na traci: tooltip ostaje otvoren dok kursor ide sa broja na sam tooltip. */
+function UgovorBroj({ u, broj, className, style, onClick }: {
+  u: GrafikUgovor;
+  broj: string;
+  className: string;
+  style: CSSProperties;
+  onClick: () => void;
+}) {
+  const [otvoren, setOtvoren] = useState(false);
+  const tajmer = useRef<number | null>(null);
+
+  const otkazi = () => {
+    if (tajmer.current !== null) {
+      window.clearTimeout(tajmer.current);
+      tajmer.current = null;
+    }
+  };
+  const otvori = () => {
+    otkazi();
+    setOtvoren(true);
+  };
+  const zakazi = () => {
+    otkazi();
+    tajmer.current = window.setTimeout(() => setOtvoren(false), 200);
+  };
+  useEffect(() => () => otkazi(), []);
+
+  return (
+    <Tooltip open={otvoren} onOpenChange={() => { /* zatvaranje samo preko tajmera */ }}>
+      <TooltipTrigger asChild>
+        <span className={className} style={style} onClick={onClick} onPointerEnter={otvori} onPointerLeave={zakazi}>
+          {broj}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent
+        side="top"
+        className="bg-slate-900/95 text-white border-slate-700 shadow-lg"
+        onPointerEnter={otvori}
+        onPointerLeave={zakazi}
+      >
+        <UgovorTooltip u={u} />
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -584,20 +630,14 @@ function GrafikTabela({ sec, onRez, onUgovor }: {
                   const ui = ugovorPoKljucu.get(b.kljuc);
                   if (!ui) return null;
                   return (
-                    <Tooltip key={b.kljuc}>
-                      <TooltipTrigger asChild>
-                        <span
-                          className={cn("absolute top-1/2 -bottom-0.5 z-30 flex cursor-pointer items-center justify-start pl-1 hover:underline", stilBoje(ui.boja).tekst)}
-                          style={{ left: `${b.leftPct}%`, right: `${b.rightPct}%` }}
-                          onClick={() => onUgovor(b.kljuc)}
-                        >
-                          {b.kljuc.split("/")[0]}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="bg-slate-900/95 text-white border-slate-700 shadow-lg">
-                        <UgovorTooltip u={ui} />
-                      </TooltipContent>
-                    </Tooltip>
+                    <UgovorBroj
+                      key={b.kljuc}
+                      u={ui}
+                      broj={b.kljuc.split("/")[0]}
+                      className={cn("absolute top-1/2 -bottom-0.5 z-30 flex cursor-pointer items-center justify-start pl-1 hover:underline", stilBoje(ui.boja).tekst)}
+                      style={{ left: `${b.leftPct}%`, right: `${b.rightPct}%` }}
+                      onClick={() => onUgovor(b.kljuc)}
+                    />
                   );
                 })}
               </td>
