@@ -3613,7 +3613,8 @@ def create_app(static_dir: str) -> FastAPI:
             brojnum = int(broj)
         except ValueError:
             brojnum = None
-        sql = "SELECT * FROM uplate WHERE COALESCE(faktura, '') = :broj"
+        sql = ("SELECT *, (SELECT COUNT(*) FROM cekovi c WHERE c.uplata_kljuc = uplate.kljuc) AS broj_cekova "
+               "FROM uplate WHERE COALESCE(faktura, '') = :broj")
         bind = {"broj": broj}
         if brojnum is not None:
             sql += " OR id = :brojnum"

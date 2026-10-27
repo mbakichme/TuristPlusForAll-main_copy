@@ -284,6 +284,7 @@ export interface UplataRow {
   tip_kartice: string | null;
   broj_kartice: string | null;
   broj_odobrenja: string | null;
+  broj_cekova?: number;
 }
 
 /** Podaci kartice uz uplatu (način plaćanja = Kartica). */

@@ -44,6 +44,13 @@ const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minut
 const SMER_OPCIJE = ["Polazak", "Povratak"];
 const NACIN_PLACANJA = ["Gotovina", "Kartica", "Ček", "Virman", "IPC", "Vaučer", "Ostalo"];
 const SVRHA_UPLATE = ["Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček", "Povraćaj"];
+
+/** Boja ikonice: zelena ako postoji bar jedan podatak, inače crvena. */
+const STATUS_IKONA_PUNO = "text-emerald-600 hover:text-emerald-700";
+const STATUS_IKONA_PRAZNO = "text-red-600 hover:text-red-700";
+function karticaImaPodatke(u: UplataRow): boolean {
+  return [u.broj_potvrde, u.tip_kartice, u.broj_kartice, u.broj_odobrenja].some((v) => (v ?? "").trim() !== "");
+}
 const MESTO_SEDENJA = ["DONJA PLATFORMA", "GORNJA PLATFORMA", "DOLE ZA STOLOM", "DOLE ZADNJI RED", "GORE IZLOG", "GORE STO", "ŠARAGE"];
 
 const nf = new Intl.NumberFormat("sr-RS", { maximumFractionDigits: 2 });
@@ -2604,8 +2611,8 @@ export default function RezervacijePage() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="size-7"
-                                    title="Podaci kartice"
+                                    className={cn("size-7", karticaImaPodatke(u) ? STATUS_IKONA_PUNO : STATUS_IKONA_PRAZNO)}
+                                    title={karticaImaPodatke(u) ? "Podaci kartice (uneti)" : "Podaci kartice (nisu uneti)"}
                                     aria-label={`Podaci kartice — uplata ${u.kljuc}`}
                                     onClick={() => setKarticaPopup({
                                       kljuc: u.kljuc as number,
@@ -2626,8 +2633,8 @@ export default function RezervacijePage() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="size-7"
-                                    title="Čekovi uplate"
+                                    className={cn("size-7", (u.broj_cekova ?? 0) > 0 ? STATUS_IKONA_PUNO : STATUS_IKONA_PRAZNO)}
+                                    title={(u.broj_cekova ?? 0) > 0 ? `Čekovi uplate (${u.broj_cekova} uneto)` : "Čekovi uplate (nisu uneti)"}
                                     aria-label={`Čekovi — uplata ${u.kljuc}`}
                                     disabled={cekUcitavaKljuc === u.kljuc}
                                     onClick={() => void otvoriCekove(u)}
