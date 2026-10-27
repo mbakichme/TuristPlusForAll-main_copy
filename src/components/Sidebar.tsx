@@ -209,7 +209,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[528px] opacity-100"
+              !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[560px] opacity-100"
             )}
           >
             <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={collapsed} onClick={onNavClick} />
@@ -223,6 +223,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             <NavItem to="/knjigovodstvo/dok-povecanju" icon={FilePlus} label="Dok. o povećanju" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/dobavljaci" icon={Store} label="Dobavljači" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/banke" icon={Landmark} label="Banke" collapsed={collapsed} onClick={onNavClick} />
           </div>
         </div>
         </>
@@ -607,7 +608,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[528px] opacity-100"
+                    !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[560px] opacity-100"
                   )}
                 >
                   <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={false} onClick={closeMobile} />
@@ -621,6 +622,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/knjigovodstvo/dok-povecanju" icon={FilePlus} label="Dok. o povećanju" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/dobavljaci" icon={Store} label="Dobavljači" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/banke" icon={Landmark} label="Banke" collapsed={false} onClick={closeMobile} />
                 </div>
               </div>
               </>

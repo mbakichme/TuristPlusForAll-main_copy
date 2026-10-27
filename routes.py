@@ -27,6 +27,7 @@ from cenovnici_api import init_cenovnici, register_cenovnici
 from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
 from zaduzenje_api import init_zaduzenje, register_zaduzenje
 from dobavljaci_api import init_dobavljaci, register_dobavljaci
+from banke_api import init_banke, register_banke
 from notifikacije_api import init_notifikacije, register_notifikacije
 from profil_api import init_profil, register_profil
 from dashboard_api import register_dashboard
@@ -58,7 +59,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 # ─── Uplate: dozvoljene vrednosti ───────────────────────────────────────────
-NACINI_UPLATE = ("Gotovina", "Kartica", "Virman", "Knjiženje na račun")
+NACINI_UPLATE = ("Gotovina", "Kartica", "Ček", "Virman", "IPC", "Vaučer", "Ostalo")
+TIPOVI_KARTICA_SEED = ("Visa", "Mastercard", "Dina", "Maestro", "American Express", "Diners Club")
 SVRHE_UPLATE = ("Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček")
 
 # ─── Ugovor: promena smeštaja (soba + termin) ───────────────────────────────
@@ -483,6 +485,40 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS napomena_prevoz VARCHAR(500)"
         ))
+        # Uplata karticom: podaci sa popupa (Način plaćanja = Kartica).
+        for kolona, tip in (
+            ("broj_potvrde", "VARCHAR(100)"),
+            ("tip_kartice", "VARCHAR(50)"),
+            ("broj_kartice", "TEXT"),
+            ("broj_odobrenja", "VARCHAR(100)"),
+        ):
+            conn.execute(text(f"ALTER TABLE uplate ADD COLUMN IF NOT EXISTS {kolona} {tip}"))
+        # broj kartice bez ograničenja dužine (ranije VARCHAR(30))
+        conn.execute(text("ALTER TABLE uplate ALTER COLUMN broj_kartice TYPE TEXT"))
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS tipovi_kartica ("
+            " id SERIAL PRIMARY KEY, naziv VARCHAR(50) NOT NULL UNIQUE)"
+        ))
+        for naziv in TIPOVI_KARTICA_SEED:
+            conn.execute(text(
+                "INSERT INTO tipovi_kartica (naziv) VALUES (:n) ON CONFLICT (naziv) DO NOTHING"
+            ), {"n": naziv})
+        # Čekovi uplate: jedna uplata (način Ček) = više čekova; faktura = broj ugovora (kao uplate.faktura)
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS cekovi ("
+            " id SERIAL PRIMARY KEY,"
+            " uplata_kljuc INTEGER NOT NULL REFERENCES uplate(kljuc) ON DELETE CASCADE,"
+            " faktura VARCHAR(300) DEFAULT '',"
+            " redni INTEGER NOT NULL,"
+            " datum DATE NOT NULL,"
+            " iznos NUMERIC(14,2) NOT NULL,"
+            " banka VARCHAR(200) DEFAULT '',"
+            " broj_racuna_banke VARCHAR(50) DEFAULT '',"
+            " broj_racuna_klijenta VARCHAR(50) DEFAULT '',"
+            " serijski_broj VARCHAR(50) DEFAULT '')"
+        ))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS cekovi_uplata_idx ON cekovi (uplata_kljuc)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS cekovi_faktura_idx ON cekovi (faktura)"))
         # Veza ugovora na konkretni smeštaj (instanca = mesto + grupa termina).
         # Naziv/soba u aranzman-u su nazivi pa se smeštaji istog naziva u različitim
         # grupama ne mogu razlučiti — smestaj_id čuva tačan izbor sa forme/grafika.
@@ -1003,6 +1039,73 @@ class PredracunUpdate(BaseModel):
     napomena: Optional[str] = None
 
 
+class KarticaPodaci(BaseModel):
+    brojPotvrde: Optional[str] = ""
+    tipKartice: Optional[str] = ""
+    brojKartice: Optional[str] = ""
+    brojOdobrenja: Optional[str] = ""
+
+
+class CekStavka(BaseModel):
+    redni: int
+    datum: str  # YYYY-MM-DD
+    iznos: float
+    banka: str = ""
+    brojRacunaBanke: str = ""
+    brojRacunaKlijenta: str = ""
+    serijskiBroj: Optional[str] = ""
+
+
+class CekoviPodaci(BaseModel):
+    cekovi: list[CekStavka] = []
+
+
+MAX_CEKOVA = 60
+
+
+def _cekovi_cisto(lista: "list[CekStavka] | None", din: float) -> list[dict]:
+    """Validira čekove uplate: 1..60 stavki, pozitivni iznosi (max 2 decimale),
+    zbir TAČNO jednak iznosu uplate (u centima). Vraća listu sortiranu i renumerisanu 1..n."""
+    if not lista:
+        raise HTTPException(status_code=400, detail="Unesite čekove")
+    if len(lista) > MAX_CEKOVA:
+        raise HTTPException(status_code=400, detail=f"Najviše {MAX_CEKOVA} čekova po uplati")
+    from datetime import date as _date
+
+    cisto = []
+    for c in sorted(lista, key=lambda x: x.redni):
+        try:
+            _date.fromisoformat(c.datum)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Neispravan datum čeka")
+        cents = round(c.iznos * 100)
+        if cents <= 0 or abs(c.iznos * 100 - cents) > 1e-6:
+            raise HTTPException(status_code=400, detail="Iznos čeka mora biti pozitivan (najviše 2 decimale)")
+        banka = (c.banka or "").strip()
+        racun_b = (c.brojRacunaBanke or "").strip()
+        racun_k = (c.brojRacunaKlijenta or "").strip()
+        serijski = (c.serijskiBroj or "").strip()
+        if not banka or len(banka) > 200:
+            raise HTTPException(status_code=400, detail="Banka čeka je obavezna (najviše 200 znakova)")
+        if not racun_b or len(racun_b) > 50 or len(racun_k) > 50 or len(serijski) > 50:
+            raise HTTPException(status_code=400, detail="Broj računa i serijski broj mogu imati najviše 50 znakova")
+        cisto.append({
+            "datum": _date.fromisoformat(c.datum), "iznos": cents,
+            "banka": banka, "broj_racuna_banke": racun_b,
+            "broj_racuna_klijenta": racun_k, "serijski_broj": serijski,
+        })
+    zbir = sum(c["iznos"] for c in cisto)
+    if zbir != round(din * 100):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Zbir čekova ({zbir / 100:,.2f}) se ne slaže sa iznosom uplate ({din:,.2f})",
+        )
+    for i, c in enumerate(cisto, start=1):
+        c["redni"] = i
+        c["iznos"] = c["iznos"] / 100
+    return cisto
+
+
 class UplataCreate(BaseModel):
     ugovor: str
     ime: str
@@ -1388,6 +1491,7 @@ def create_app(static_dir: str) -> FastAPI:
     init_koeficijenti(engine)
     init_zaduzenje(engine)
     init_dobavljaci(engine)
+    init_banke(engine)
     init_notifikacije(engine)
     init_rezervacija_log(engine)
     init_profil(engine)
@@ -1397,6 +1501,7 @@ def create_app(static_dir: str) -> FastAPI:
     register_koeficijenti(api, engine, get_current_user)
     register_zaduzenje(api, engine, get_current_user)
     register_dobavljaci(api, engine, get_current_user)
+    register_banke(api, engine, get_current_user)
     register_notifikacije(api, engine, get_current_user)
     register_rezervacija_log(api, engine, get_current_user)
     register_profil(api, engine, get_current_user, hash_password, verify_password)
@@ -3555,6 +3660,144 @@ def create_app(static_dir: str) -> FastAPI:
         )
 
     # ── Knjigovodstvo: unos nove uplate ─────────────────────────────────────
+    def _kartica_cisto(conn, k: "KarticaPodaci | None") -> dict:
+        """Validira podatke kartice (samo kad je način = Kartica) i vraća čist dict."""
+        if k is None:
+            raise HTTPException(status_code=400, detail="Unesite podatke kartice")
+        tip = (k.tipKartice or "").strip()
+        if not tip:
+            raise HTTPException(status_code=400, detail="Izaberite tip kartice")
+        if conn.execute(text("SELECT 1 FROM tipovi_kartica WHERE naziv = :n"), {"n": tip}).fetchone() is None:
+            raise HTTPException(status_code=400, detail="Nepoznat tip kartice")
+        broj_kartice = (k.brojKartice or "").strip()
+        potvrda = (k.brojPotvrde or "").strip()
+        odobrenje = (k.brojOdobrenja or "").strip()
+        if len(potvrda) > 100 or len(odobrenje) > 100:
+            raise HTTPException(status_code=400, detail="Broj potvrde i broj odobrenja mogu imati najviše 100 znakova")
+        return {"broj_potvrde": potvrda or None, "tip_kartice": tip,
+                "broj_kartice": broj_kartice or None, "broj_odobrenja": odobrenje or None}
+
+    @api.get("/tipovi-kartica")
+    def tipovi_kartica(_: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT naziv FROM tipovi_kartica ORDER BY naziv")).fetchall()
+        return [r.naziv for r in rows]
+
+    @api.put("/uplate/{kljuc}/kartica")
+    def izmeni_kartica_uplate(kljuc: int, body: KarticaPodaci, current_user: dict = Depends(get_current_user)):
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+        with engine.begin() as conn:
+            stari = conn.execute(text(
+                "SELECT id, faktura, nacin, broj_potvrde, tip_kartice, broj_kartice, broj_odobrenja "
+                "FROM uplate WHERE kljuc = :k"
+            ), {"k": kljuc}).fetchone()
+            if not stari:
+                raise HTTPException(status_code=404, detail="Uplata nije pronađena")
+            if (stari.nacin or "").strip() != "Kartica":
+                raise HTTPException(status_code=400, detail="Uplata nije evidentirana karticom")
+            novo = _kartica_cisto(conn, body)
+            conn.execute(text(
+                "UPDATE uplate SET broj_potvrde = :broj_potvrde, tip_kartice = :tip_kartice, "
+                "broj_kartice = :broj_kartice, broj_odobrenja = :broj_odobrenja WHERE kljuc = :k"
+            ), {**novo, "k": kljuc})
+            obradio_row = conn.execute(text(
+                "SELECT first_name, last_name FROM users WHERE id = :id"
+            ), {"id": user_id}).fetchone()
+            obradio = f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip() if obradio_row else ""
+            promene = []
+            for polje, labela in (("broj_potvrde", "Broj potvrde"), ("tip_kartice", "Tip kartice"),
+                                  ("broj_kartice", "Broj kartice"), ("broj_odobrenja", "Broj odobrenja")):
+                if (getattr(stari, polje) or None) != novo[polje]:
+                    promene.append({"polje": labela, "stara": getattr(stari, polje), "nova": novo[polje]})
+            if promene:
+                arow = conn.execute(text(
+                    "SELECT kljuc FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
+                    "ORDER BY id DESC LIMIT 1"
+                ), {"b": stari.faktura or ""}).fetchone()
+                zabelezi(conn, arow.kljuc if arow else (stari.faktura or ""), OBLAST_UPLATA,
+                         "uplata_kartica_izmenjena", user_id, obradio, promene)
+        return {"status": "sacuvano", "kljuc": kljuc}
+
+    @api.get("/uplate/{kljuc}/cekovi")
+    def lista_cekova_uplate(kljuc: int, _: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            if not conn.execute(text("SELECT 1 FROM uplate WHERE kljuc = :k"), {"k": kljuc}).fetchone():
+                raise HTTPException(status_code=404, detail="Uplata nije pronađena")
+            rows = conn.execute(text("""
+                SELECT redni, to_char(datum, 'YYYY-MM-DD') AS datum, iznos, banka,
+                       broj_racuna_banke, broj_racuna_klijenta, serijski_broj
+                FROM cekovi WHERE uplata_kljuc = :k ORDER BY redni
+            """), {"k": kljuc}).fetchall()
+        return [
+            {
+                "redni": r.redni, "datum": r.datum, "iznos": float(r.iznos), "banka": r.banka,
+                "brojRacunaBanke": r.broj_racuna_banke, "brojRacunaKlijenta": r.broj_racuna_klijenta,
+                "serijskiBroj": r.serijski_broj or "",
+            }
+            for r in rows
+        ]
+
+    @api.put("/uplate/{kljuc}/cekovi")
+    def izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, current_user: dict = Depends(get_current_user)):
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+        with engine.begin() as conn:
+            stari = conn.execute(text(
+                "SELECT id, faktura, nacin, din FROM uplate WHERE kljuc = :k"
+            ), {"k": kljuc}).fetchone()
+            if not stari:
+                raise HTTPException(status_code=404, detail="Uplata nije pronađena")
+            if (stari.nacin or "").strip() != "Ček":
+                raise HTTPException(status_code=400, detail="Uplata nije evidentirana čekovima")
+            novi = _cekovi_cisto(body.cekovi, float(stari.din))
+            stari_c = {r.redni: r for r in conn.execute(text(
+                "SELECT redni, datum, iznos, serijski_broj FROM cekovi WHERE uplata_kljuc = :k"
+            ), {"k": kljuc}).fetchall()}
+            conn.execute(text("DELETE FROM cekovi WHERE uplata_kljuc = :k"), {"k": kljuc})
+            for c in novi:
+                conn.execute(text("""
+                    INSERT INTO cekovi (uplata_kljuc, faktura, redni, datum, iznos, banka,
+                                        broj_racuna_banke, broj_racuna_klijenta, serijski_broj)
+                    VALUES (:uplata_kljuc, :faktura, :redni, :datum, :iznos, :banka,
+                            :broj_racuna_banke, :broj_racuna_klijenta, :serijski_broj)
+                """), {**c, "uplata_kljuc": kljuc, "faktura": stari.faktura or ""})
+
+            promene = []
+            nova_map = {c["redni"]: c for c in novi}
+            for r, s in sorted(stari_c.items()):
+                n = nova_map.get(r)
+                if n is None:
+                    promene.append({"polje": f"Ček {r}", "stara": float(s.iznos), "nova": "obrisan"})
+                    continue
+                if float(s.iznos) != n["iznos"]:
+                    promene.append({"polje": f"Ček {r} — iznos", "stara": float(s.iznos), "nova": n["iznos"]})
+                if (s.serijski_broj or "") != n["serijski_broj"]:
+                    promene.append({"polje": f"Ček {r} — serijski broj", "stara": s.serijski_broj or None,
+                                    "nova": n["serijski_broj"] or None})
+                if s.datum.isoformat() != n["datum"].isoformat():
+                    promene.append({"polje": f"Ček {r} — datum", "stara": s.datum.isoformat(),
+                                    "nova": n["datum"].isoformat()})
+            for r in sorted(set(nova_map) - set(stari_c)):
+                promene.append({"polje": f"Ček {r}", "stara": None, "nova": nova_map[r]["iznos"]})
+            if promene:
+                obradio_row = conn.execute(text(
+                    "SELECT first_name, last_name FROM users WHERE id = :id"
+                ), {"id": user_id}).fetchone()
+                obradio = (f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip()
+                           if obradio_row else "")
+                arow = conn.execute(text(
+                    "SELECT kljuc FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
+                    "ORDER BY id DESC LIMIT 1"
+                ), {"b": stari.faktura or ""}).fetchone()
+                zabelezi(conn, arow.kljuc if arow else (stari.faktura or ""), OBLAST_UPLATA,
+                         "uplata_cekovi_izmenjeni", user_id, obradio, promene)
+        return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": len(novi)}
+
     @api.post("/uplate", status_code=201)
     def create_uplata(body: UplataCreate, current_user: dict = Depends(get_current_user)):
         ugovor = (body.ugovor or "").strip().strip("/")
@@ -3626,16 +3869,20 @@ def create_app(static_dir: str) -> FastAPI:
 
             obradio = f"{(urow.first_name or '').strip()} {(urow.last_name or '').strip()}".strip()
             uevro = round(din / float(kurs), 2)
+            # kartica i čekovi se dodaju posle unosa uplate (PUT /uplate/{kljuc}/kartica i /cekovi)
+            kartica = {"broj_potvrde": None, "tip_kartice": None, "broj_kartice": None, "broj_odobrenja": None}
 
             new_kljuc = conn.execute(text("""
                 INSERT INTO uplate
                     (id, danas, ime, adresa, nacin, din, evro, uevro, svrha,
                      obradio, vrsta, faktura, destinacija, mesto, subagent,
-                     organizator, poslovnica)
+                     organizator, poslovnica,
+                     broj_potvrde, tip_kartice, broj_kartice, broj_odobrenja)
                 VALUES
                     (:id, :danas, :ime, :adresa, :nacin, :din, :evro, :uevro, :svrha,
                      :obradio, :vrsta, :faktura, :destinacija, :mesto, :subagent,
-                     :organizator, :poslovnica)
+                     :organizator, :poslovnica,
+                     :broj_potvrde, :tip_kartice, :broj_kartice, :broj_odobrenja)
                 RETURNING kljuc
             """), {
                 "id": ugovor_id,
@@ -3655,6 +3902,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "subagent": arow.subagent,
                 "organizator": arow.organizator,
                 "poslovnica": arow.poslovnica,
+                **kartica,
             }).scalar_one()
 
             # broj dokumenta = ključ nove uplate kao string (VARCHAR(10) ograničenje)

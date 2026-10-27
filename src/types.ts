@@ -278,6 +278,38 @@ export interface UplataRow {
   kurs: number | null;
   kurs_datum: string | null;
   suma_eur: number | null;
+  broj_potvrde: string | null;
+  tip_kartice: string | null;
+  broj_kartice: string | null;
+  broj_odobrenja: string | null;
+}
+
+/** Podaci kartice uz uplatu (način plaćanja = Kartica). */
+export interface KarticaPodaci {
+  brojPotvrde: string;
+  tipKartice: string;
+  brojKartice: string;
+  brojOdobrenja: string;
+}
+
+/** Jedan ček uz uplatu (tabela cekovi). Iznos u RSD. */
+export interface CekStavka {
+  redni: number;
+  datum: string; // YYYY-MM-DD
+  iznos: number;
+  banka: string;
+  brojRacunaBanke: string;
+  brojRacunaKlijenta: string;
+  serijskiBroj: string;
+}
+
+/** Red iz tabele banke (GET /banke). */
+export interface BankaRow {
+  id: number;
+  sifra: string;
+  naziv: string;
+  racun: string;
+  mesto: string;
 }
 
 export interface UgovoriResponse {

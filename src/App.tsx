@@ -32,6 +32,7 @@ import IzvodiPage from "./pages/IzvodiPage";
 import KnjizenjePage from "./pages/KnjizenjePage";
 import SubagentiPage from "./pages/SubagentiPage";
 import DobavljaciPage from "./pages/DobavljaciPage";
+import BankePage from "./pages/BankePage";
 import PredracuniPage from "./pages/PredracuniPage";
 import PredracunFormPage from "./pages/PredracunFormPage";
 import PreuzimanjePage from "./pages/PreuzimanjePage";
@@ -118,6 +119,7 @@ function ProtectedLayout() {
             <Route path="/knjigovodstvo/knjizenje" element={<KnjizenjePage />} />
             <Route path="/knjigovodstvo/subagenti" element={<SubagentiPage />} />
             <Route path="/knjigovodstvo/dobavljaci" element={<DobavljaciPage />} />
+            <Route path="/knjigovodstvo/banke" element={<BankePage />} />
             <Route path="/knjigovodstvo/predracuni" element={<PredracuniPage />} />
             <Route path="/knjigovodstvo/predracuni/novi/*" element={<PredracunFormPage />} />
             <Route path="/knjigovodstvo/predracuni/:id/edit" element={<PredracunFormPage />} />

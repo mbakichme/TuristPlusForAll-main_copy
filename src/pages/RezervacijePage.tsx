@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, CreditCard, Download, FilePenLine, Loader2,
-  FilePlus, FileText, Handshake, History, Info, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
+  FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
   Users, Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -31,15 +31,17 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { apiFetch, getToken } from "../lib/api";
-import type { Destinacija, DodatnaStavka, Mesto, Smestaj, Soba, UgovorDetail, UgovorRow, UgovoriResponse, UplataRow } from "../types";
+import type { CekStavka, Destinacija, DodatnaStavka, KarticaPodaci, Mesto, Smestaj, Soba, UgovorDetail, UgovorRow, UgovoriResponse, UplataRow } from "../types";
 import { cn } from "@/lib/utils";
+import { CekPopup } from "@/components/CekPopup";
 import { DodatnaStavkaForma } from "@/components/DodatnaStavkaForma";
+import { KarticaPopup } from "@/components/KarticaPopup";
 import { PageLoader } from "@/components/PageLoader";
 
 // ── konstante ──────────────────────────────────────────────────────────────
 const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minute", "First minute"];
 const SMER_OPCIJE = ["Polazak", "Povratak"];
-const NACIN_PLACANJA = ["Gotovina", "Kartica", "Virman", "Knjiženje na račun"];
+const NACIN_PLACANJA = ["Gotovina", "Kartica", "Ček", "Virman", "IPC", "Vaučer", "Ostalo"];
 const SVRHA_UPLATE = ["Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček"];
 const MESTO_SEDENJA = ["DONJA PLATFORMA", "GORNJA PLATFORMA", "DOLE ZA STOLOM", "DOLE ZADNJI RED", "GORE IZLOG", "GORE STO", "ŠARAGE"];
 
@@ -214,7 +216,6 @@ interface Uplata {
   iznos: string;
   svrha: string;
 }
-
 const prazanNosilac: Nosilac = {
   ime: "", datumRodjenja: "", pasos: "",
   ow: false, rt: false, sp: false, osiguranje: false, smer: "",
@@ -479,6 +480,8 @@ export default function RezervacijePage() {
   const [ucitanUgovor, setUcitanUgovor] = useState<UgovorDetail | null>(null);
   const navigate = useNavigate();
   const aktivniUgovor = useRef<string | null>(null);
+  // sinhronizacija ref-a: async tokovi (potvrda uplate, keptp) proveravaju da li je ugovor još izabran
+  useEffect(() => { aktivniUgovor.current = izabraniUgovor; }, [izabraniUgovor]);
   const [pretragaOtvorena, setPretragaOtvorena] = useState(false);
   const pretragaRequest = useRef(0);
   const izborRequest = useRef(0);
@@ -531,6 +534,14 @@ export default function RezervacijePage() {
   const [polasciGreska, setPolasciGreska] = useState(false);
   const [polasciOsvezi, setPolasciOsvezi] = useState(0);
   const [uplata, setUplata] = useState<Uplata>({ uplatilac: "nosilac", nacin: "", iznos: "", svrha: "" });
+  // popup kartice: uvek za postojeću uplatu (dugme "Kartica" u redu tabele)
+  const [karticaPopup, setKarticaPopup] = useState<{ kljuc: number; vrednost: KarticaPodaci } | null>(null);
+  const [karticaCuva, setKarticaCuva] = useState(false);
+  // popup čekova: uvek za postojeću uplatu (dugme "Čekovi" u redu tabele)
+  const [cekPopup, setCekPopup] = useState<{ kljuc: number; iznos: number; pocetni: CekStavka[] } | null>(null);
+  const [cekCuva, setCekCuva] = useState(false);
+  const [cekUcitavaKljuc, setCekUcitavaKljuc] = useState<number | null>(null);
+  const [tipoviKartica, setTipoviKartica] = useState<string[]>([]);
   const [uplateRedovi, setUplateRedovi] = useState<UplataRow[] | null>(null);
   const [uplateUcitavaju, setUplateUcitavaju] = useState(false);
   const [uplataSeCuva, setUplataSeCuva] = useState(false);
@@ -581,6 +592,7 @@ export default function RezervacijePage() {
       setReferenceSpremne(true);
     }).catch(() => { if (!cancelled) toast.error("Učitavanje podataka za rezervaciju nije uspelo"); });
     apiFetch<{ kurs: number | null; datum: string }>("/kurs").then(setKurs).catch(() => {});
+    apiFetch<string[]>("/tipovi-kartica").then(setTipoviKartica).catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -740,7 +752,6 @@ export default function RezervacijePage() {
       setCene({ cenaSmestaj: brojUString(d.cenaaranz), kolSmestaj: brojUString(d.kolaranz), cenaSmestajRSD: "", kolSmestajRSD: "", popustSmestajPct: "", popustSmestaj: "", popustSmestajRSD: "", cenaPrevoz: "", kolPrevoz: "", cenaPrevozRSD: "", kolPrevozRSD: "", popustPrevozPct: "", popustPrevoz: "", popustPrevozRSD: "", osiguranjeEUR: brojUString(d.osiguranje1), osiguranjeRSD: brojUString(d.osiguranje), provizijaSmestajPct: "", provizijaSmestaj: "", provizijaSmestajRSD: "", provizijaPrevozPct: "", provizijaPrevoz: "", provizijaPrevozRSD: "", uplaceno: brojUString(d.uplacenod) }); // popusti u bazi su procenti, a u formi iznosi — ne mešati jedinice.
       setPrevozRedovi({ nosilac: { mestoUlaska: d.ulazak ?? "", mestoSedenja: d.mesto_sedenja ?? "", placeno: !!d.placeno_prevoz, zelja: !!d.zelja_prevoz }, ...Object.fromEntries(dodati.map((p, i) => [p.uid, { mestoUlaska: dopuna[i].ulazak ?? "", mestoSedenja: dopuna[i].mesto_sedenja ?? "", placeno: !!dopuna[i].placeno_prevoz, zelja: !!dopuna[i].zelja_prevoz }])) });
       setUplata({ uplatilac: "nosilac", nacin: "", iznos: "", svrha: "" });
-      aktivniUgovor.current = d.kljuc;
       setIzabraniUgovor(d.kljuc);
       setUcitanUgovor(d);
       void osveziKeptp(d.kljuc);
@@ -991,6 +1002,52 @@ export default function RezervacijePage() {
     } finally {
       uplataZakljucana.current = false;
       setUplataSeCuva(false);
+    }
+  }
+
+  // popup kartice: PUT na postojeću uplatu
+  async function sacuvajKarticu(k: KarticaPodaci) {
+    if (!karticaPopup) return;
+    setKarticaCuva(true);
+    try {
+      await apiFetch(`/uplate/${karticaPopup.kljuc}/kartica`, { method: "PUT", body: JSON.stringify(k) });
+      toast.success("Podaci kartice su sačuvani", { description: `Uplata ${karticaPopup.kljuc}` });
+      setKarticaPopup(null);
+      setUplateOsvezi((n) => n + 1);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Podaci kartice nisu sačuvani");
+    } finally {
+      setKarticaCuva(false);
+    }
+  }
+
+  // čekovi: PUT na postojeću uplatu (zamenjuje sve čekove te uplate)
+  async function sacuvajCekove(stavke: CekStavka[]) {
+    if (!cekPopup) return;
+    setCekCuva(true);
+    try {
+      await apiFetch(`/uplate/${cekPopup.kljuc}/cekovi`, { method: "PUT", body: JSON.stringify({ cekovi: stavke }) });
+      toast.success("Čekovi su sačuvani", { description: `Uplata ${cekPopup.kljuc}` });
+      setCekPopup(null);
+      setUplateOsvezi((n) => n + 1);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Čekovi nisu sačuvani");
+    } finally {
+      setCekCuva(false);
+    }
+  }
+
+  async function otvoriCekove(u: UplataRow) {
+    if (u.kljuc == null) return;
+    const kljuc = u.kljuc;
+    setCekUcitavaKljuc(kljuc);
+    try {
+      const rows = await apiFetch<CekStavka[]>(`/uplate/${kljuc}/cekovi`);
+      setCekPopup({ kljuc, iznos: u.din ?? 0, pocetni: rows });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Čekovi nisu učitani");
+    } finally {
+      setCekUcitavaKljuc(null);
     }
   }
 
@@ -2434,7 +2491,10 @@ export default function RezervacijePage() {
                   </Select>
                 </Fld>
                 <Fld label="Način plaćanja">
-                  <Select value={uplata.nacin} onValueChange={(v) => setUplata({ ...uplata, nacin: v })}>
+                  <Select
+                    value={uplata.nacin}
+                    onValueChange={(v) => setUplata({ ...uplata, nacin: v })}
+                  >
                     <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite" /></SelectTrigger>
                     <SelectContent>
                       {NACIN_PLACANJA.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
@@ -2503,6 +2563,8 @@ export default function RezervacijePage() {
                             <TableHead>Svrha Uplate</TableHead>
                             <TableHead>Operater</TableHead>
                             <TableHead className="text-right">Ključ</TableHead>
+                            <TableHead className="w-14 text-center">Kartica</TableHead>
+                            <TableHead className="w-14 text-center">Čekovi</TableHead>
                             <TableHead className="w-14 text-center">PDF</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -2521,6 +2583,45 @@ export default function RezervacijePage() {
                               <TableCell>{u.svrha?.trim() || "—"}</TableCell>
                               <TableCell>{u.obradio?.trim() || "—"}</TableCell>
                               <TableCell className="text-right">{u.kljuc ?? "—"}</TableCell>
+                              <TableCell className="text-center">
+                                {u.kljuc != null && u.nacin?.trim() === "Kartica" && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7"
+                                    title="Podaci kartice"
+                                    aria-label={`Podaci kartice — uplata ${u.kljuc}`}
+                                    onClick={() => setKarticaPopup({
+                                      kljuc: u.kljuc as number,
+                                      vrednost: {
+                                        brojPotvrde: u.broj_potvrde ?? "",
+                                        tipKartice: u.tip_kartice ?? "",
+                                        brojKartice: u.broj_kartice ?? "",
+                                        brojOdobrenja: u.broj_odobrenja ?? "",
+                                      },
+                                    })}
+                                  >
+                                    <CreditCard className="size-4" />
+                                  </Button>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-center">
+                                {u.kljuc != null && u.nacin?.trim() === "Ček" && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7"
+                                    title="Čekovi uplate"
+                                    aria-label={`Čekovi — uplata ${u.kljuc}`}
+                                    disabled={cekUcitavaKljuc === u.kljuc}
+                                    onClick={() => void otvoriCekove(u)}
+                                  >
+                                    {cekUcitavaKljuc === u.kljuc
+                                      ? <Loader2 className="size-4 animate-spin" />
+                                      : <Landmark className="size-4" />}
+                                  </Button>
+                                )}
+                              </TableCell>
                               <TableCell className="text-center">
                                 {u.kljuc != null && (
                                   <Button
@@ -2545,7 +2646,7 @@ export default function RezervacijePage() {
                             <TableCell colSpan={2}>Ukupno uplaćeno:</TableCell>
                             <TableCell className="whitespace-nowrap text-right font-semibold">{nf2.format(uplateSumaRSD)} din</TableCell>
                             <TableCell className="whitespace-nowrap text-right font-semibold">{nf2.format(uplateSumaEUR)}€</TableCell>
-                            <TableCell colSpan={4} />
+                            <TableCell colSpan={6} />
                           </TableRow>
                         </TableFooter>
                       </Table>
@@ -2557,6 +2658,28 @@ export default function RezervacijePage() {
               )}
             </CardContent>
           </Card>
+          {karticaPopup && (
+            <KarticaPopup
+              open
+              onOpenChange={(o) => { if (!o && !karticaCuva) setKarticaPopup(null); }}
+              vrednost={karticaPopup.vrednost}
+              tipovi={tipoviKartica}
+              naslov={`Podaci kartice — uplata ${karticaPopup.kljuc}`}
+              opis="Unesite ili izmenite podatke kartice za ovu uplatu."
+              cuva={karticaCuva}
+              onSacuvaj={(k) => void sacuvajKarticu(k)}
+            />
+          )}
+          {cekPopup && (
+            <CekPopup
+              open
+              onOpenChange={(o) => { if (!o && !cekCuva) setCekPopup(null); }}
+              iznos={cekPopup.iznos}
+              pocetni={cekPopup.pocetni}
+              cuva={cekCuva}
+              onSacuvaj={(s) => void sacuvajCekove(s)}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="zaduzenje" className="mt-4">

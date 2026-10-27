@@ -29,6 +29,20 @@ DEFAULT_ARANZMAN = SimpleNamespace(
     poslovnica="Beograd",
 )
 
+KARTICA_OK = {
+    "brojPotvrde": "PT-889",
+    "tipKartice": "Visa",
+    "brojKartice": "4111 1111 1111 1111",
+    "brojOdobrenja": "A1B2C3",
+}
+
+# VALID_BODY.din = 15000 → 3 čeka po 5000
+CEKOVI_OK = [
+    {"redni": r, "datum": d, "iznos": 5000.0, "banka": "Komercijalna banka",
+     "brojRacunaBanke": "160-0000000012-34", "brojRacunaKlijenta": "123-456", "serijskiBroj": ""}
+    for r, d in ((1, "2026-11-27"), (2, "2026-12-27"), (3, "2027-01-27"))
+]
+
 VALID_BODY = {
     "ugovor": "33333/26",
     "ime": "Petar Petrović",
@@ -93,12 +107,31 @@ class FakeConnection:
         if "FROM aranzman" in sql:
             a = self._state["aranzman"]
             return FakeResult(rows=[a] if a else [])
+        if "FROM tipovi_kartica" in sql:
+            naz = [SimpleNamespace(naziv=n) for n in self._state["tipovi"]]
+            if params and "n" in params:
+                naz = [r for r in naz if r.naziv == params["n"]]
+            return FakeResult(rows=naz)
+        if "FROM uplate WHERE kljuc" in sql:
+            s = self._state["uplata_stari"]
+            return FakeResult(rows=[s] if s else [])
         if "INSERT INTO uplate" in sql:
             self._state["insert"] = dict(params or {})
             return FakeResult(scalar=self._state["new_kljuc"])
         if "UPDATE uplate" in sql:
             self._state["update_broj"] = dict(params or {})
             return FakeResult()
+        if "INSERT INTO rezervacija_log" in sql:
+            self._state.setdefault("log", []).append(dict(params or {}))
+            return FakeResult()
+        if "INSERT INTO cekovi" in sql:
+            self._state.setdefault("cekovi", []).append(dict(params or {}))
+            return FakeResult()
+        if "DELETE FROM cekovi" in sql:
+            self._state["cekovi_obrisani"] = True
+            return FakeResult()
+        if "FROM cekovi" in sql:
+            return FakeResult(rows=list(self._state.get("cekovi_stari", [])))
         raise AssertionError(f"Neočekivani SQL: {sql[:120]}")
 
 
@@ -108,6 +141,9 @@ class FakeEngine:
 
     def begin(self):
         self._state["begin_calls"] += 1
+        return _Tx(self._state, FakeConnection(self._state))
+
+    def connect(self):
         return _Tx(self._state, FakeConnection(self._state))
 
 
@@ -124,14 +160,28 @@ class UplataUnosTest(unittest.TestCase):
             "new_kljuc": 55665,
             "insert": None,
             "update_broj": None,
+            "tipovi": ("Visa", "Mastercard", "Dina"),
+            "uplata_stari": SimpleNamespace(
+                id=7, faktura="33333", nacin="Kartica", broj_potvrde=None,
+                tip_kartice="Visa", broj_kartice=None, broj_odobrenja=None,
+            ),
             "begin_calls": 0,
             "rolled_back": False,
             "sql_calls": [],
             "conn": None,
         }
         fake_engine = FakeEngine(self.state)
+        noop = lambda engine: None
         with patch.object(routes, "get_engine", return_value=fake_engine), \
-             patch.object(routes, "init_db", lambda engine: None):
+             patch.object(routes, "init_db", noop), \
+             patch.object(routes, "init_cenovnici", noop), \
+             patch.object(routes, "init_koeficijenti", noop), \
+             patch.object(routes, "init_zaduzenje", noop), \
+             patch.object(routes, "init_dobavljaci", noop), \
+             patch.object(routes, "init_notifikacije", noop), \
+             patch.object(routes, "init_rezervacija_log", noop), \
+             patch.object(routes, "init_profil", noop), \
+             patch.object(routes, "init_banke", noop):
             self.app = create_app("./dist")
         self.token = create_access_token({"sub": "1"})
         self.hdr = {"Authorization": f"Bearer {self.token}"}
@@ -210,13 +260,182 @@ class UplataUnosTest(unittest.TestCase):
 
     def test_svi_nacini_i_svrhe_prihvaceni(self):
         for nacin in routes.NACINI_UPLATE:
-            r = self.post(body={**VALID_BODY, "nacin": nacin})
+            body = {**VALID_BODY, "nacin": nacin}
+            r = self.post(body=body)
             self.assertEqual(r.status_code, 201, nacin)
             self.assertEqual(self.state["insert"]["nacin"], nacin)
         for svrha in routes.SVRHE_UPLATE:
             r = self.post(body={**VALID_BODY, "svrha": svrha})
             self.assertEqual(r.status_code, 201, svrha)
             self.assertEqual(self.state["insert"]["svrha"], svrha)
+
+    # ── kartica: unos uplate ne traži karticu, podaci se dodaju posle (PUT) ─
+    def test_kartica_post_bez_podataka_201(self):
+        r = self.post(body={**VALID_BODY, "nacin": "Kartica"})
+        self.assertEqual(r.status_code, 201)
+        ins = self.state["insert"]
+        self.assertIsNone(ins["tip_kartice"])
+        self.assertIsNone(ins["broj_kartice"])
+
+    def test_kartica_post_ignorise_kartica_polja(self):
+        r = self.post(body={**VALID_BODY, "nacin": "Kartica", "kartica": KARTICA_OK})
+        self.assertEqual(r.status_code, 201)
+        self.assertIsNone(self.state["insert"]["tip_kartice"])
+
+    # ── kartica: izmena posle unosa (PUT) ───────────────────────────────────
+    def kartica_put(self, kartica, nacin="Kartica"):
+        self.state["uplata_stari"] = SimpleNamespace(
+            id=7, faktura="33333", nacin=nacin, broj_potvrde=None,
+            tip_kartice=None, broj_kartice=None, broj_odobrenja=None,
+        )
+        return self.client.put("/api/uplate/7/kartica", json=kartica, headers=self.hdr)
+
+    def test_kartica_put_bez_tipa_400(self):
+        r = self.kartica_put({**KARTICA_OK, "tipKartice": ""})
+        self.assertEqual(r.status_code, 400)
+        self.assertIsNone(self.state["update_broj"])
+
+    def test_kartica_put_nepoznat_tip_400(self):
+        r = self.kartica_put({**KARTICA_OK, "tipKartice": "Amex-fake"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIsNone(self.state["update_broj"])
+
+    def test_kartica_put_broj_bez_ogranicenja_dužine(self):
+        for broj in ("1234", "4111 1111 1111 111a", "1" * 40, "ABC-123/9"):
+            self.state["update_broj"] = None
+            r = self.kartica_put({**KARTICA_OK, "brojKartice": broj})
+            self.assertEqual(r.status_code, 200, broj)
+            self.assertEqual(self.state["update_broj"]["broj_kartice"], broj)
+
+    def test_kartica_put_ispravna_kolone(self):
+        r = self.kartica_put({**KARTICA_OK, "brojKartice": " 4111 1111 1111 1111 "})
+        self.assertEqual(r.status_code, 200)
+        upd = self.state["update_broj"]
+        self.assertEqual(upd["tip_kartice"], "Visa")
+        self.assertEqual(upd["broj_kartice"], "4111 1111 1111 1111")
+        self.assertEqual(upd["broj_potvrde"], "PT-889")
+        self.assertEqual(upd["broj_odobrenja"], "A1B2C3")
+
+    def test_tipovi_kartica_lista(self):
+        r = self.client.get("/api/tipovi-kartica", headers=self.hdr)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), ["Visa", "Mastercard", "Dina"])
+
+    # ── čekovi: unos uplate ne traži čekove; čekovi se dodaju posle (PUT) ───
+    def test_cek_post_bez_cekova_201(self):
+        r = self.post(body={**VALID_BODY, "nacin": "Ček"})
+        self.assertEqual(r.status_code, 201)
+        self.assertFalse(self.state.get("cekovi"))
+
+    def test_cekovi_uz_drugi_nacin_se_ignorisu(self):
+        r = self.post(body={**VALID_BODY, "nacin": "Gotovina", "cekovi": CEKOVI_OK})
+        self.assertEqual(r.status_code, 201)
+        self.assertFalse(self.state.get("cekovi"))
+
+    # ── čekovi: snimanje (PUT) ──────────────────────────────────────────────
+    def cek_put(self, cekovi, din=15000.0):
+        self.state["uplata_stari"] = SimpleNamespace(
+            id=7, faktura="33333", nacin="Ček", din=din, broj_potvrde=None,
+            tip_kartice=None, broj_kartice=None, broj_odobrenja=None,
+        )
+        return self.client.put("/api/uplate/7/cekovi", json={"cekovi": cekovi}, headers=self.hdr)
+
+    def test_cek_prazna_lista_400(self):
+        r = self.cek_put([])
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(self.state.get("cekovi"))
+
+    def test_cek_zbir_razlicit_od_iznosa_400(self):
+        r = self.cek_put(CEKOVI_OK[:2])  # 10000 ≠ 15000
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("ne slaže", r.json()["detail"])
+        self.assertFalse(self.state.get("cekovi"))
+
+    def test_cek_previse_stavki_400(self):
+        lista = [{**CEKOVI_OK[0], "redni": i, "iznos": 1.0} for i in range(1, 62)]
+        r = self.cek_put(lista, din=61.0)
+        self.assertEqual(r.status_code, 400)
+
+    def test_cek_los_iznos_i_datum_400(self):
+        r = self.cek_put([{**CEKOVI_OK[0], "iznos": 7500.123}, {**CEKOVI_OK[1], "iznos": 7499.877}])
+        self.assertEqual(r.status_code, 400)
+        r = self.cek_put([{**c, "datum": "2026-13-45"} for c in CEKOVI_OK])
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(self.state.get("cekovi"))
+
+    def test_cek_ispravan_200_i_renumeracija(self):
+        mesano = [CEKOVI_OK[2], CEKOVI_OK[0], CEKOVI_OK[1]]
+        r = self.cek_put(mesano)
+        self.assertEqual(r.status_code, 200)
+        ins = self.state["cekovi"]
+        self.assertEqual(len(ins), 3)
+        self.assertEqual([c["redni"] for c in ins], [1, 2, 3])
+        self.assertEqual([c["datum"].isoformat() for c in ins], ["2026-11-27", "2026-12-27", "2027-01-27"])
+        self.assertEqual(sum(c["iznos"] for c in ins), 15000.0)
+        self.assertEqual(ins[0]["broj_racuna_klijenta"], "123-456")
+        self.assertEqual({c["uplata_kljuc"] for c in ins}, {7})
+        self.assertEqual({c["faktura"] for c in ins}, {"33333"})
+
+    def test_cek_put_uz_drugi_nacin_400(self):
+        self.state["uplata_stari"] = SimpleNamespace(
+            id=7, faktura="33333", nacin="Gotovina", din=15000.0, broj_potvrde=None,
+            tip_kartice=None, broj_kartice=None, broj_odobrenja=None,
+        )
+        r = self.client.put("/api/uplate/7/cekovi", json={"cekovi": CEKOVI_OK}, headers=self.hdr)
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(self.state.get("cekovi"))
+
+    def test_izmena_cekova_put(self):
+        self.state["uplata_stari"] = SimpleNamespace(
+            id=7, faktura="33333", nacin="Ček", din=15000.0, broj_potvrde=None,
+            tip_kartice=None, broj_kartice=None, broj_odobrenja=None,
+        )
+        self.state["cekovi_stari"] = [
+            SimpleNamespace(redni=i + 1, datum=SimpleNamespace(isoformat=lambda c=c: c["datum"]),
+                            iznos=c["iznos"], serijski_broj="")
+            for i, c in enumerate(CEKOVI_OK)
+        ]
+        izmena = [dict(c) for c in CEKOVI_OK]
+        izmena[1]["serijskiBroj"] = "SB-778811"
+        izmena[2]["iznos"] = 5500.0
+        izmena[0]["iznos"] = 4500.0  # zbir 15000
+        r = self.client.put("/api/uplate/7/cekovi", json={"cekovi": izmena}, headers=self.hdr)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["broj_cekova"], 3)
+        ins = self.state["cekovi"]
+        self.assertEqual(len(ins), 3)
+        self.assertEqual(ins[1]["serijski_broj"], "SB-778811")
+        self.assertEqual(ins[2]["iznos"], 5500.0)
+
+    def test_izmena_cekova_zbir_400(self):
+        self.state["uplata_stari"] = SimpleNamespace(
+            id=7, faktura="33333", nacin="Ček", din=15000.0, broj_potvrde=None,
+            tip_kartice=None, broj_kartice=None, broj_odobrenja=None,
+        )
+        izmena = [dict(c) for c in CEKOVI_OK]
+        izmena[0]["iznos"] = 4000.0
+        r = self.client.put("/api/uplate/7/cekovi", json={"cekovi": izmena}, headers=self.hdr)
+        self.assertEqual(r.status_code, 400)
+        self.assertIsNone(self.state.get("cekovi"))
+
+    def test_izmena_kartice_put(self):
+        r = self.client.put("/api/uplate/7/kartica", json=KARTICA_OK, headers=self.hdr)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.state["update_broj"]["tip_kartice"], "Visa")
+
+    def test_izmena_kartice_nepoznata_uplata_404(self):
+        self.state["uplata_stari"] = None
+        r = self.client.put("/api/uplate/999/kartica", json=KARTICA_OK, headers=self.hdr)
+        self.assertEqual(r.status_code, 404)
+
+    def test_izmena_kartice_nije_kartica_400(self):
+        self.state["uplata_stari"] = SimpleNamespace(
+            id=8, faktura="33333", nacin="Virman", broj_potvrde=None,
+            tip_kartice=None, broj_kartice=None, broj_odobrenja=None,
+        )
+        r = self.client.put("/api/uplate/8/kartica", json=KARTICA_OK, headers=self.hdr)
+        self.assertEqual(r.status_code, 400)
+        self.assertIsNone(self.state["update_broj"])
 
     # ── autentifikacija i korisnik ──────────────────────────────────────────
     def test_bez_tokena_401(self):
