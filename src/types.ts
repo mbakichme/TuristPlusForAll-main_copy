@@ -91,6 +91,7 @@ export interface PutnikDetalj {
   prevozrt?: number | null;
   viza?: number | null;
   ulazak?: string | null;
+  mesto_izlaska?: string | null;
   smer?: string | null;
   mesto_sedenja?: string | null;
   placeno_prevoz?: boolean | null;
@@ -144,6 +145,7 @@ export interface UgovorDetail {
   napomena?: string | null;
   napomena1?: string | null;
   ulazak?: string | null;
+  mesto_izlaska?: string | null;
   cenaaranz?: number | null;
   kolaranz?: number | null;
   popustar?: number | null;

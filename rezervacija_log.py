@@ -22,7 +22,7 @@ OBLAST_SAPUTNICI = "saputnici"
 # kolone aranzman-a po oblasti (sve ostalo ide u "rezervacija")
 PREVOZ_POLJA = {"prevozow", "prevozrt", "smer", "cenaow", "kolow", "cenart",
                 "kolrt", "cenadow", "cenadrt",
-                "mesto_sedenja", "placeno_prevoz", "zelja_prevoz", "datum_ow",
+                "mesto_sedenja", "mesto_izlaska", "placeno_prevoz", "zelja_prevoz", "datum_ow",
                 "destinacija_ow", "datum_polaska", "destinacija_polaska",
                 "datum_povratka", "destinacija_povratka", "napomena_prevoz"}
 OBRACUN_POLJA = {"cenaaranz", "kolaranz", "cenaaranzd", "osiguranje", "osiguranje1",
@@ -40,7 +40,7 @@ LABELE = {
     "smestaj_id": "Smeštaj (ID)", "soba": "Soba", "destinacija": "Destinacija",
     "apartman": "Struktura", "datumod": "Datum od", "datumdo": "Datum do",
     "datumoddo": "Period", "napomena": "Napomena", "napomena1": "Napomena interna",
-    "ulazak": "Ulazak", "cenaaranz": "Smeštaj cena (EUR)",
+    "ulazak": "Ulazak", "mesto_izlaska": "Mesto izlaska", "cenaaranz": "Smeštaj cena (EUR)",
     "kolaranz": "Smeštaj količina (EUR)", "cenaaranzd": "Smeštaj cena (RSD)",
     "cenaow": "Prevoz cena ow (EUR)", "kolow": "Prevoz količina ow",
     "cenart": "Prevoz cena rt (EUR)", "kolrt": "Prevoz količina rt",

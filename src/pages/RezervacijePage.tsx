@@ -200,6 +200,7 @@ interface Cene {
 }
 interface PrevozRed {
   mestoUlaska: string;
+  mestoIzlaska: string;
   mestoSedenja: string;
   placeno: boolean;
   zelja: boolean;
@@ -750,7 +751,7 @@ export default function RezervacijePage() {
       // Osiguranje se učitava iz aranzman.osiguranje (RSD) / osiguranje1 (EUR).
       // RSD cene/količine, popusti i provizije ostaju lokalna polja i resetuju se pri izboru ugovora.
       setCene({ cenaSmestaj: brojUString(d.cenaaranz), kolSmestaj: brojUString(d.kolaranz), cenaSmestajRSD: "", kolSmestajRSD: "", popustSmestajPct: "", popustSmestaj: "", popustSmestajRSD: "", cenaPrevoz: "", kolPrevoz: "", cenaPrevozRSD: "", kolPrevozRSD: "", popustPrevozPct: "", popustPrevoz: "", popustPrevozRSD: "", osiguranjeEUR: brojUString(d.osiguranje1), osiguranjeRSD: brojUString(d.osiguranje), provizijaSmestajPct: "", provizijaSmestaj: "", provizijaSmestajRSD: "", provizijaPrevozPct: "", provizijaPrevoz: "", provizijaPrevozRSD: "", uplaceno: brojUString(d.uplacenod) }); // popusti u bazi su procenti, a u formi iznosi — ne mešati jedinice.
-      setPrevozRedovi({ nosilac: { mestoUlaska: d.ulazak ?? "", mestoSedenja: d.mesto_sedenja ?? "", placeno: !!d.placeno_prevoz, zelja: !!d.zelja_prevoz }, ...Object.fromEntries(dodati.map((p, i) => [p.uid, { mestoUlaska: dopuna[i].ulazak ?? "", mestoSedenja: dopuna[i].mesto_sedenja ?? "", placeno: !!dopuna[i].placeno_prevoz, zelja: !!dopuna[i].zelja_prevoz }])) });
+      setPrevozRedovi({ nosilac: { mestoUlaska: d.ulazak ?? "", mestoIzlaska: d.mesto_izlaska ?? d.ulazak ?? "", mestoSedenja: d.mesto_sedenja ?? "", placeno: !!d.placeno_prevoz, zelja: !!d.zelja_prevoz }, ...Object.fromEntries(dodati.map((p, i) => [p.uid, { mestoUlaska: dopuna[i].ulazak ?? "", mestoIzlaska: dopuna[i].mesto_izlaska ?? dopuna[i].ulazak ?? "", mestoSedenja: dopuna[i].mesto_sedenja ?? "", placeno: !!dopuna[i].placeno_prevoz, zelja: !!dopuna[i].zelja_prevoz }])) });
       setUplata({ uplatilac: "nosilac", nacin: "", iznos: "", svrha: "" });
       setIzabraniUgovor(d.kljuc);
       setUcitanUgovor(d);
@@ -894,7 +895,7 @@ export default function RezervacijePage() {
 
   const setUplatilac = (v: string) => setUplata((u) => ({ ...u, uplatilac: v }));
   const updPrevoz = (uid: string, patch: Partial<PrevozRed>) =>
-    setPrevozRedovi((prev) => ({ ...prev, [uid]: { mestoUlaska: "", mestoSedenja: "", placeno: false, zelja: false, ...(prev[uid] as Partial<PrevozRed>), ...patch } }));
+    setPrevozRedovi((prev) => ({ ...prev, [uid]: { mestoUlaska: "", mestoIzlaska: "", mestoSedenja: "", placeno: false, zelja: false, ...(prev[uid] as Partial<PrevozRed>), ...patch } }));
 
   // Ažuriranje cena: dok je procenat aktivan, iznosi prate promene bruto subtotale (ista valuta);
   // direktna izmena iznosa briše procenat (pozivalac šalje i prazan procenat) — nema dvostrukog računanja.
@@ -1231,6 +1232,7 @@ export default function RezervacijePage() {
         pasos: s.pasos.trim(), ow: s.ow, rt: s.rt, sp: s.sp, smer: s.smer,
         adresa: s.adresa.trim(), telefon: s.telefon.trim(), email: s.email.trim(),
         ulazak: prevozRedovi[s.uid]?.mestoUlaska ?? "",
+        mestoIzlaska: prevozRedovi[s.uid]?.mestoIzlaska ?? "",
         ...prevozPolja(s, prevozRedovi[s.uid]),
       })),
       boravak: {
@@ -1243,6 +1245,7 @@ export default function RezervacijePage() {
       },
       destinacijaId: idIliNull(destinacijaZaSve), destinacijaNaziv,
       ulazak: prevozRedovi["nosilac"]?.mestoUlaska ?? "",
+      izlazak: prevozRedovi["nosilac"]?.mestoIzlaska ?? "",
       napomenaPrevoz: boravak.napomenaPrevoz,
       cene: {
         cenaSmestajEUR: num(cene.cenaSmestaj), kolSmestajEUR: qty(cene.kolSmestaj),
@@ -2357,7 +2360,7 @@ export default function RezervacijePage() {
               ) : (
                 <div className="space-y-2">
                   {putnici.map((p) => {
-                    const red = prevozRedovi[p.uid] ?? { mestoUlaska: "", mestoSedenja: "", placeno: false, zelja: false };
+                    const red = prevozRedovi[p.uid] ?? { mestoUlaska: "", mestoIzlaska: "", mestoSedenja: "", placeno: false, zelja: false };
                     const osoba = p.osnovni ? nosilac : saputnici.find((s) => s.uid === p.uid)!;
                     const updOsoba = (patch: Partial<Nosilac>) => {
                       if (patch.rt !== undefined || patch.ow !== undefined || patch.sp !== undefined) {
@@ -2371,10 +2374,11 @@ export default function RezervacijePage() {
                     };
                     // nasleđeno mesto ulaska van spiska ostaje izabrano kroz fallback opciju
                     const stariUlaz = red.mestoUlaska.trim() && !mestaUlaskaOpcije.includes(red.mestoUlaska) ? red.mestoUlaska : "";
+                    const stariIzlaz = red.mestoIzlaska.trim() && !mestaUlaskaOpcije.includes(red.mestoIzlaska) ? red.mestoIzlaska : "";
                     return (
                       <div
                         key={p.uid}
-                        className="grid gap-3 gap-x-3 grid-cols-1 md:grid-cols-[minmax(0,1.3fr)_repeat(3,max-content)_minmax(0,1.2fr)_minmax(0,1.2fr)_repeat(2,max-content)] md:items-center rounded-lg border md:border-0 p-3 md:p-0 md:py-1"
+                        className="grid gap-3 gap-x-3 grid-cols-1 md:grid-cols-[minmax(0,1.3fr)_repeat(3,max-content)_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_repeat(2,max-content)] md:items-center rounded-lg border md:border-0 p-3 md:p-0 md:py-1"
                       >
                         <div className="space-y-1 min-w-0">
                           <div className="text-sm font-medium flex items-center gap-2 min-w-0">
@@ -2400,10 +2404,19 @@ export default function RezervacijePage() {
                         <Chk label="OW" labelClassName="text-xs" checked={osoba.ow} onChange={(v) => updOsoba({ ow: v, rt: v ? false : osoba.rt, sp: v ? false : osoba.sp, smer: v ? osoba.smer : "", datumOw: v ? osoba.datumOw : "", destinacijaOw: v ? osoba.destinacijaOw : "", datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
                         <Chk label="SP" labelClassName="text-xs" checked={osoba.sp} onChange={(v) => updOsoba({ sp: v, ow: v ? false : osoba.ow, rt: v ? false : osoba.rt, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
                         <div className="space-y-1">
-                          <Select value={red.mestoUlaska} onValueChange={(v) => updPrevoz(p.uid, { mestoUlaska: v })} disabled={zakljucano}>
+                          <Select value={red.mestoUlaska} onValueChange={(v) => updPrevoz(p.uid, { mestoUlaska: v, ...(red.mestoIzlaska === "" || red.mestoIzlaska === red.mestoUlaska ? { mestoIzlaska: v } : {}) })} disabled={zakljucano}>
                             <SelectTrigger aria-label={`Mesto ulaska — ${p.ime}`} className="w-full h-8 text-xs"><SelectValue placeholder="Izaberite mesto ulaska" /></SelectTrigger>
                             <SelectContent>
                               {stariUlaz && <SelectItem value={stariUlaz}>{stariUlaz} (sačuvano)</SelectItem>}
+                              {mestaUlaskaOpcije.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Select value={red.mestoIzlaska} onValueChange={(v) => updPrevoz(p.uid, { mestoIzlaska: v })} disabled={zakljucano}>
+                            <SelectTrigger aria-label={`Mesto izlaska — ${p.ime}`} className="w-full h-8 text-xs"><SelectValue placeholder="Izaberite mesto izlaska" /></SelectTrigger>
+                            <SelectContent>
+                              {stariIzlaz && <SelectItem value={stariIzlaz}>{stariIzlaz} (sačuvano)</SelectItem>}
                               {mestaUlaskaOpcije.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
                             </SelectContent>
                           </Select>
@@ -2419,7 +2432,7 @@ export default function RezervacijePage() {
                         <Chk label="Plaćeno" labelClassName="text-xs" checked={red.placeno} onChange={(v) => updPrevoz(p.uid, { placeno: v, zelja: v ? false : red.zelja })} disabled={zakljucano} />
                         <Chk label="Želja" labelClassName="text-xs" checked={red.zelja} onChange={(v) => updPrevoz(p.uid, { zelja: v, placeno: v ? false : red.placeno })} disabled={zakljucano} />
                         {prevozDetaljiOtvoreni[p.uid] && (osoba.ow || osoba.rt) && (
-                          <div id={`prevoz-detalji-${p.uid}`} className="space-y-3 border-t pt-3 md:col-span-8">
+                          <div id={`prevoz-detalji-${p.uid}`} className="space-y-3 border-t pt-3 md:col-span-9">
                             {osoba.ow && (
                               <div className="flex flex-wrap gap-4">
                                 <Fld label="Smer" className="w-full sm:w-48">

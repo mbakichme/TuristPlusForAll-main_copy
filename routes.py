@@ -485,6 +485,12 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS napomena_prevoz VARCHAR(500)"
         ))
+        # Mesto izlaska (tab Prevoz): podrazumevano = mesto ulaska; nosilac u aranzman,
+        # saputnici u aranzman_dopuna.
+        for tabela in ("aranzman", "aranzman_dopuna"):
+            conn.execute(text(
+                f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS mesto_izlaska VARCHAR(200)"
+            ))
         # Uplata karticom: podaci sa popupa (Način plaćanja = Kartica).
         for kolona, tip in (
             ("broj_potvrde", "VARCHAR(100)"),
@@ -1184,6 +1190,7 @@ class RezPutnikIn(BaseModel):
     telefon: str = ""
     email: str = ""
     ulazak: str = ""  # mesto ulaska (saputnici — aranzman_dopuna.ulazak)
+    mestoIzlaska: str = ""  # mesto izlaska (prazno → mesto ulaska)
     # tab Prevoz
     mestoSedenja: str = ""
     placeno: bool = False
@@ -1248,6 +1255,7 @@ class RezervacijaIn(BaseModel):
     destinacijaId: Optional[int] = None
     destinacijaNaziv: Optional[str] = None  # fallback van referentne liste
     ulazak: str = ""  # mesto ulaska nosioca
+    izlazak: str = ""  # mesto izlaska nosioca (prazno → mesto ulaska)
     napomenaPrevoz: str = ""  # polje pored "Izbor destinacije" (tab Prevoz)
     cene: RezCeneIn
 
@@ -4143,6 +4151,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "email": (s.email or "").strip()[:300],
                 "telefon": (s.telefon or "").strip()[:300],
                 "ulazak": _rez_str(s.ulazak, 200),
+                "mesto_izlaska": _rez_str(s.mestoIzlaska, 200) or _rez_str(s.ulazak, 200),
                 **_rez_prevoz_polja(s),
             })
         return out
@@ -4168,11 +4177,11 @@ def create_app(static_dir: str) -> FastAPI:
             conn.execute(text("""
                 INSERT INTO aranzman_dopuna
                     (aranzman_id, saputnik, rodjen, pasos, prevozow, prevozrt, smer,
-                     adresa, email, telefon, ulazak, uzrast, viza,
+                     adresa, email, telefon, ulazak, mesto_izlaska, uzrast, viza,
                      mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
                      datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka)
                 VALUES (:aid, :ime, :rodjen, :pasos, :ow, :rt, :smer,
-                        :adresa, :email, :telefon, :ulazak, :uzrast, :viza,
+                        :adresa, :email, :telefon, :ulazak, :mesto_izlaska, :uzrast, :viza,
                         :mesto_sedenja, :placeno_prevoz, :zelja_prevoz, :datum_ow, :destinacija_ow,
                         :datum_polaska, :destinacija_polaska, :datum_povratka, :destinacija_povratka)
             """), {
@@ -4187,6 +4196,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "email": (s.email or "").strip()[:300],
                 "telefon": (s.telefon or "").strip()[:300],
                 "ulazak": _rez_str(s.ulazak, 200),
+                "mesto_izlaska": _rez_str(s.mestoIzlaska, 200) or _rez_str(s.ulazak, 200),
                 "uzrast": st.uzrast if st else None,
                 "viza": st.viza if st else None,
                 **pv,
@@ -4320,6 +4330,7 @@ def create_app(static_dir: str) -> FastAPI:
             "napomena": (b.napomena or "")[:1024],
             "napomena1": _rez_str(b.napomenaInterna, 255),
             "ulazak": _rez_str(body.ulazak, 200),
+            "mesto_izlaska": _rez_str(body.izlazak, 200) or _rez_str(body.ulazak, 200),
             "viza": 1 if b.viza else 0,
             "cenaaranz": round(c.cenaSmestajEUR, 2),
             "kolaranz": c.kolSmestajEUR,
@@ -4400,7 +4411,7 @@ def create_app(static_dir: str) -> FastAPI:
             ), {"id": arow.id}).mappings().one())
             stari_sap = [dict(r) for r in conn.execute(text(
                 "SELECT saputnik, rodjen, pasos, prevozow, prevozrt, smer, adresa, "
-                "email, telefon, ulazak, mesto_sedenja, placeno_prevoz, zelja_prevoz, "
+                "email, telefon, ulazak, mesto_izlaska, mesto_sedenja, placeno_prevoz, zelja_prevoz, "
                 "datum_ow, destinacija_ow, datum_polaska, destinacija_polaska, "
                 "datum_povratka, destinacija_povratka "
                 "FROM aranzman_dopuna WHERE aranzman_id = :i"
@@ -4655,7 +4666,7 @@ def create_app(static_dir: str) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
             # saputnici iz aranzman_dopuna (red po red)
             dopuni = conn.execute(text("""
-                SELECT saputnik, uzrast, prevozow, prevozrt, viza, ulazak, smer,
+                SELECT saputnik, uzrast, prevozow, prevozrt, viza, ulazak, mesto_izlaska, smer,
                        adresa, email, telefon, rodjen, pasos,
                        mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
                        datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka
@@ -4690,6 +4701,7 @@ def create_app(static_dir: str) -> FastAPI:
             "prevozrt": p.prevozrt,
             "viza": p.viza,
             "ulazak": p.ulazak,
+            "mesto_izlaska": p.mesto_izlaska,
             "smer": p.smer,
             "adresa": (p.adresa or "").strip() or None,
             "email": (p.email or "").strip() or None,
@@ -4743,6 +4755,7 @@ def create_app(static_dir: str) -> FastAPI:
             "napomena": d.get("napomena"),
             "napomena1": d.get("napomena1"),
             "ulazak": d.get("ulazak"),
+            "mesto_izlaska": d.get("mesto_izlaska") or d.get("ulazak"),
             "cenaaranz": d.get("cenaaranz"),
             "kolaranz": d.get("kolaranz"),
             "popustar": d.get("popustar"),
