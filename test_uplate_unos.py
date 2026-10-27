@@ -493,11 +493,13 @@ class UplataUnosTest(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assert_no_insert()
 
-    def test_iznos_nula_i_negativan_400(self):
-        for din in (0, -1, -150.5):
-            r = self.post(body={**VALID_BODY, "din": din})
-            self.assertEqual(r.status_code, 400, din)
+    def test_iznos_nula_400_negativan_dozvoljen(self):
+        r = self.post(body={**VALID_BODY, "din": 0})
+        self.assertEqual(r.status_code, 400)
         self.assert_no_insert()
+        r = self.post(body={**VALID_BODY, "din": -10000})
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(self.state["insert"]["din"], -10000.0)
 
     def test_iznos_tri_decimale_400(self):
         r = self.post(body={**VALID_BODY, "din": 150.999})

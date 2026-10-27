@@ -976,11 +976,11 @@ export default function RezervacijePage() {
     if (uplataZakljucana.current) return;
     if (!izabraniUgovor) { toast.error("Prvo izaberite ugovor"); return; }
     const tekstIznosa = uplata.iznos.trim();
-    if (!/^\d+(?:[.,]\d{1,2})?$/.test(tekstIznosa)) {
+    if (!/^-?\d+(?:[.,]\d{1,2})?$/.test(tekstIznosa)) {
       toast.error("Unesite ispravan iznos sa najviše dve decimale"); return;
     }
     const din = Number(tekstIznosa.replace(",", "."));
-    if (!Number.isFinite(din) || din <= 0) { toast.error("Iznos mora biti veći od nule"); return; }
+    if (!Number.isFinite(din) || din === 0) { toast.error("Iznos mora biti različit od nule"); return; }
     if (!uplata.nacin || !uplata.svrha) { toast.error("Izaberite način plaćanja i svrhu uplate"); return; }
     const platilac = uplata.uplatilac === "nosilac"
       ? nosilac : saputnici.find((p) => p.uid === uplata.uplatilac);

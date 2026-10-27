@@ -3955,8 +3955,8 @@ def create_app(static_dir: str) -> FastAPI:
             din = float(body.din)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Iznos mora biti broj")
-        if not math.isfinite(din) or din <= 0:
-            raise HTTPException(status_code=400, detail="Iznos mora biti pozitivan broj")
+        if not math.isfinite(din) or din == 0:
+            raise HTTPException(status_code=400, detail="Iznos mora biti broj različit od nule")
         if abs(din - round(din, 2)) > 1e-9:
             raise HTTPException(status_code=400, detail="Iznos može imati najviše 2 decimale")
 
