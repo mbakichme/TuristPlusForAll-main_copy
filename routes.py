@@ -3846,11 +3846,11 @@ def create_app(static_dir: str) -> FastAPI:
             broj_stari = (stari.faktura or "").strip() or str(stari.id or "")
             if "/" in ugovor:
                 nov = conn.execute(text(
-                    "SELECT kljuc, napomena1 FROM aranzman WHERE kljuc = :k ORDER BY id DESC LIMIT 1"
+                    "SELECT kljuc, napomena FROM aranzman WHERE kljuc = :k ORDER BY id DESC LIMIT 1"
                 ), {"k": ugovor}).fetchone()
             else:
                 nov = conn.execute(text(
-                    "SELECT kljuc, napomena1 FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
+                    "SELECT kljuc, napomena FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
                     "ORDER BY id DESC LIMIT 1"
                 ), {"b": ugovor}).fetchone()
             if not nov:
@@ -3863,7 +3863,7 @@ def create_app(static_dir: str) -> FastAPI:
             except ValueError:
                 raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
             stari_ar = conn.execute(text(
-                "SELECT kljuc, napomena1 FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
+                "SELECT kljuc, napomena FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
                 "ORDER BY id DESC LIMIT 1"
             ), {"b": broj_stari}).fetchone()
             if not stari_ar:
@@ -3872,19 +3872,19 @@ def create_app(static_dir: str) -> FastAPI:
             iznos = float(stari.din or 0)
             iznos_txt = f"{iznos:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             add_stari = f"Prebačena uplata {iznos_txt} din na novi aranžman {nov.kljuc}"
-            add_novi = f"Prebačena uplata sa starog ugovora {stari_ar.kljuc}"
+            add_novi = f"Prebačena uplata {iznos_txt} din sa starog ugovora {stari_ar.kljuc}"
 
             def _dopuni(staro: str | None, dodatak: str) -> str:
                 tekst = f"{(staro or '').strip()}\n{dodatak}".strip() if (staro or "").strip() else dodatak
-                if len(tekst) > 255:
+                if len(tekst) > 1024:
                     raise HTTPException(status_code=400,
-                                        detail="Napomena interna ugovora je prepunjena — skratite je pa ponovite prebacivanje")
+                                        detail="Napomena ugovora je prepunjena — skratite je pa ponovite prebacivanje")
                 return tekst
 
-            conn.execute(text("UPDATE aranzman SET napomena1 = :n WHERE kljuc = :k"),
-                         {"n": _dopuni(stari_ar.napomena1, add_stari), "k": stari_ar.kljuc})
-            conn.execute(text("UPDATE aranzman SET napomena1 = :n WHERE kljuc = :k"),
-                         {"n": _dopuni(nov.napomena1, add_novi), "k": nov.kljuc})
+            conn.execute(text("UPDATE aranzman SET napomena = :n WHERE kljuc = :k"),
+                         {"n": _dopuni(stari_ar.napomena, add_stari), "k": stari_ar.kljuc})
+            conn.execute(text("UPDATE aranzman SET napomena = :n WHERE kljuc = :k"),
+                         {"n": _dopuni(nov.napomena, add_novi), "k": nov.kljuc})
             sada = _belgrade_now()
             conn.execute(text(
                 "UPDATE uplate SET id = :nid, faktura = :nb, prebaceno_sa = :sb, datum_prebacivanja = :dp "

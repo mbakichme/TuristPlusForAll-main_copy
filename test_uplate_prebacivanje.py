@@ -2,8 +2,8 @@
 
 Provere:
 1. uplata prelazi na novi ugovor (uplate.id + faktura), beleži prebaceno_sa i datum_prebacivanja
-2. napomena interna starog ugovora dobija „Prebačena uplata … na novi aranžman …“
-3. napomena interna novog ugovora dobija „Prebačena uplata sa starog ugovora …“
+2. napomena (aranzman.napomena) starog ugovora dobija „Prebačena uplata {iznos} din na novi aranžman …“
+3. napomena (aranzman.napomena) novog ugovora dobija „Prebačena uplata {iznos} din sa starog ugovora …“
 4. isti ugovor → 400; nepostojeći ugovor → 404; nepoznata uplata → 404
 5. čišćenje test redova
 
@@ -60,7 +60,7 @@ def main():
     with engine.begin() as conn:
         for kljuc, napomena in ((STARI, "Stara napomena"), (NOVI, None)):
             conn.execute(text(
-                "INSERT INTO aranzman (kljuc, naziv, mesto, napomena1) VALUES (:k, 'TEST PREBACI', 'TEST', :n)"
+                "INSERT INTO aranzman (kljuc, naziv, mesto, napomena) VALUES (:k, 'TEST PREBACI', 'TEST', :n)"
             ), {"k": kljuc, "n": napomena})
         kljuc_uplate = conn.execute(text(
             "INSERT INTO uplate (id, danas, ime, nacin, din, svrha, faktura, vrsta) "
@@ -101,13 +101,13 @@ def main():
         provera("red u listi", any(x["uplata_kljuc"] == kljuc_uplate for x in lista), True)
 
         print("2) napomena starog ugovora")
-        n_stari = conn.execute(text("SELECT napomena1 FROM aranzman WHERE kljuc = :k"), {"k": STARI}).scalar()
+        n_stari = conn.execute(text("SELECT napomena FROM aranzman WHERE kljuc = :k"), {"k": STARI}).scalar()
         provera("napomena starog", n_stari,
                 "Stara napomena\nPrebačena uplata 1.234,50 din na novi aranžman 99902/26")
 
         print("3) napomena novog ugovora")
-        n_novi = conn.execute(text("SELECT napomena1 FROM aranzman WHERE kljuc = :k"), {"k": NOVI}).scalar()
-        provera("napomena novog", n_novi, "Prebačena uplata sa starog ugovora 99901/26")
+        n_novi = conn.execute(text("SELECT napomena FROM aranzman WHERE kljuc = :k"), {"k": NOVI}).scalar()
+        provera("napomena novog", n_novi, "Prebačena uplata 1.234,50 din sa starog ugovora 99901/26")
 
     print("4) greške")
     provera("isti ugovor → 400", post(f"/uplate/{kljuc_uplate}/prebaci", {"ugovor": NOVI})[0], 400)
