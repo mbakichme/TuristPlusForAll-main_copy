@@ -49,6 +49,8 @@ def post(path, body):
 
 def ocisti():
     with engine.begin() as conn:
+        conn.execute(text("DELETE FROM prebacivanje WHERE uplata_kljuc IN "
+                          "(SELECT kljuc FROM uplate WHERE svrha = 'TEST PREBACI')"))
         conn.execute(text("DELETE FROM uplate WHERE faktura IN ('99901', '99902') AND svrha = 'TEST PREBACI'"))
         conn.execute(text("DELETE FROM aranzman WHERE kljuc IN (:a, :b)"), {"a": STARI, "b": NOVI})
 
@@ -78,6 +80,19 @@ def main():
         provera("uplate.faktura", u.faktura, "99902")
         provera("prebaceno_sa", u.prebaceno_sa, "99901")
         provera("datum_prebacivanja popunjen", u.datum_prebacivanja is not None, True)
+
+        print("2b) evidencija u tabeli prebacivanje")
+        ev = conn.execute(text(
+            "SELECT datum, uplata_kljuc, iznos, stari_ugovor, novi_ugovor, operater_id, operater "
+            "FROM prebacivanje WHERE uplata_kljuc = :k"
+        ), {"k": kljuc_uplate}).fetchall()
+        provera("broj evidencija", len(ev), 1)
+        if ev:
+            provera("iznos", ev[0].iznos, 1234.5)
+            provera("stari ugovor", ev[0].stari_ugovor, STARI)
+            provera("novi ugovor", ev[0].novi_ugovor, NOVI)
+            provera("operater_id", ev[0].operater_id, 1)
+            provera("datum popunjen", ev[0].datum is not None, True)
 
         print("2) napomena starog ugovora")
         n_stari = conn.execute(text("SELECT napomena1 FROM aranzman WHERE kljuc = :k"), {"k": STARI}).scalar()

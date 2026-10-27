@@ -504,6 +504,19 @@ def init_db(engine):
         # Povraćaj (prebacivanje uplate sa ugovora na ugovor): trag prebacivanja
         conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS prebaceno_sa VARCHAR(20)"))
         conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS datum_prebacivanja TIMESTAMP"))
+        # Evidencija prebacivanja uplata (Povraćaj): jedan red po prebacivanju
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS prebacivanje (
+                id SERIAL PRIMARY KEY,
+                datum TIMESTAMP NOT NULL,
+                uplata_kljuc INTEGER NOT NULL,
+                iznos DOUBLE PRECISION NOT NULL DEFAULT 0,
+                stari_ugovor VARCHAR(20) NOT NULL,
+                novi_ugovor VARCHAR(20) NOT NULL,
+                operater_id INTEGER,
+                operater VARCHAR(300) NOT NULL DEFAULT ''
+            )
+        """))
         conn.execute(text(
             "CREATE TABLE IF NOT EXISTS tipovi_kartica ("
             " id SERIAL PRIMARY KEY, naziv VARCHAR(50) NOT NULL UNIQUE)"
@@ -3872,15 +3885,21 @@ def create_app(static_dir: str) -> FastAPI:
                          {"n": _dopuni(stari_ar.napomena1, add_stari), "k": stari_ar.kljuc})
             conn.execute(text("UPDATE aranzman SET napomena1 = :n WHERE kljuc = :k"),
                          {"n": _dopuni(nov.napomena1, add_novi), "k": nov.kljuc})
+            sada = _belgrade_now()
             conn.execute(text(
                 "UPDATE uplate SET id = :nid, faktura = :nb, prebaceno_sa = :sb, datum_prebacivanja = :dp "
                 "WHERE kljuc = :k"
-            ), {"nid": nid, "nb": broj_novi, "sb": broj_stari, "dp": _belgrade_now(), "k": kljuc})
+            ), {"nid": nid, "nb": broj_novi, "sb": broj_stari, "dp": sada, "k": kljuc})
 
             obradio_row = conn.execute(text(
                 "SELECT first_name, last_name FROM users WHERE id = :id"
             ), {"id": user_id}).fetchone()
             obradio = f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip() if obradio_row else ""
+            conn.execute(text(
+                "INSERT INTO prebacivanje (datum, uplata_kljuc, iznos, stari_ugovor, novi_ugovor, operater_id, operater) "
+                "VALUES (:dp, :uk, :iznos, :stari, :novi, :uid, :op)"
+            ), {"dp": sada, "uk": kljuc, "iznos": iznos, "stari": stari_ar.kljuc,
+                "novi": nov.kljuc, "uid": user_id, "op": obradio})
             zabelezi(conn, stari_ar.kljuc, OBLAST_UPLATA, "uplata_prebacena_odlazna", user_id, obradio, [
                 {"polje": "Prebačena na ugovor", "stara": None, "nova": nov.kljuc},
                 {"polje": "Iznos (DIN)", "stara": norm_vrednost(iznos), "nova": None},
