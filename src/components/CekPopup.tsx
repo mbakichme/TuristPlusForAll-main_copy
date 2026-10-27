@@ -278,7 +278,7 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
         iznos: iznosNovog,
         banka: poslednji.banka,
         brojRacunaBanke: poslednji.brojRacunaBanke,
-        brojRacunaKlijenta: "",
+        brojRacunaKlijenta: poslednji.brojRacunaKlijenta,
         serijskiBroj: "",
       },
       txt: iznosNovog.toFixed(2),
