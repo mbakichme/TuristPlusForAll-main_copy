@@ -40,10 +40,6 @@ function parseIznos(t: string): number {
   return IZNOS_RE.test(s) ? Number(s.replace(",", ".")) : NaN;
 }
 
-function prikazDatuma(iso: string): string {
-  return format(new Date(`${iso}T00:00:00`), "dd.MM.yyyy.");
-}
-
 /** Popup za čekove uplate. Validacija zbira ogleda server (routes.py _cekovi_cisto). */
 export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }: Props) {
   const [datum1, setDatum1] = useState<Date | undefined>(undefined);
@@ -116,6 +112,8 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
   const tabelaValidna =
     imaTabelu &&
     parsirano.every((v) => Number.isFinite(v) && v > 0) &&
+    (tabela ?? []).every((r) =>
+      r.s.banka.trim() !== "" && r.s.brojRacunaBanke.trim() !== "" && /^\d{4}-\d{2}-\d{2}$/.test(r.s.datum)) &&
     zbirCentiTabele === iznosCenti;
 
   function potvrdiFormu() {
@@ -187,7 +185,7 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
           </DialogTitle>
           <DialogDescription className="text-xs">
             {imaTabelu
-              ? "Unesite serijske brojeve, po potrebi korigujte iznos ili obrišite red. Zbir mora biti jednak iznosu uplate."
+              ? "Unesite serijske brojeve, po potrebi korigujte banku, račune, datum, iznos ili obrišite red. Zbir mora biti jednak iznosu uplate."
               : "Unesite iznos čeka i banku, pa potvrdite za generisanje čekova."}
           </DialogDescription>
         </DialogHeader>
@@ -331,9 +329,36 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
                     const neispravan = !(Number.isFinite(v) && v > 0);
                     return (
                       <TableRow key={r.s.redni}>
-                        <TableCell className="whitespace-nowrap px-2 py-1">{r.s.banka}</TableCell>
-                        <TableCell className="px-2 py-1 font-mono">{r.s.brojRacunaBanke || "—"}</TableCell>
-                        <TableCell className="px-2 py-1 font-mono">{r.s.brojRacunaKlijenta || "—"}</TableCell>
+                        <TableCell className="px-2 py-1">
+                          <Input
+                            className="h-7 w-36 text-xs"
+                            maxLength={150}
+                            value={r.s.banka}
+                            placeholder="Naziv banke"
+                            aria-label={`Banka čeka ${r.s.redni}`}
+                            onChange={(e) => postaviRed(i, { banka: e.target.value })}
+                          />
+                        </TableCell>
+                        <TableCell className="px-2 py-1">
+                          <Input
+                            className="h-7 w-32 font-mono text-xs"
+                            maxLength={50}
+                            value={r.s.brojRacunaBanke}
+                            placeholder="—"
+                            aria-label={`Račun banke čeka ${r.s.redni}`}
+                            onChange={(e) => postaviRed(i, { brojRacunaBanke: e.target.value })}
+                          />
+                        </TableCell>
+                        <TableCell className="px-2 py-1">
+                          <Input
+                            className="h-7 w-36 font-mono text-xs"
+                            maxLength={50}
+                            value={r.s.brojRacunaKlijenta}
+                            placeholder="—"
+                            aria-label={`Račun klijenta čeka ${r.s.redni}`}
+                            onChange={(e) => postaviRed(i, { brojRacunaKlijenta: e.target.value })}
+                          />
+                        </TableCell>
                         <TableCell className="px-2 py-1">
                           <Input
                             className="h-7 w-32 font-mono text-xs"
@@ -344,7 +369,15 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
                             onChange={(e) => postaviRed(i, { serijskiBroj: e.target.value })}
                           />
                         </TableCell>
-                        <TableCell className="whitespace-nowrap px-2 py-1">{prikazDatuma(r.s.datum)}</TableCell>
+                        <TableCell className="px-2 py-1">
+                          <Input
+                            type="date"
+                            className="h-7 w-36 text-xs"
+                            value={r.s.datum}
+                            aria-label={`Datum čeka ${r.s.redni}`}
+                            onChange={(e) => postaviRed(i, { datum: e.target.value })}
+                          />
+                        </TableCell>
                         <TableCell className="px-2 py-1 text-right">
                           <Input
                             className={cn("ml-auto h-7 w-24 text-right text-xs tabular-nums", neispravan && "border-destructive")}
