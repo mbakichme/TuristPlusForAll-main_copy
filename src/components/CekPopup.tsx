@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { format } from "date-fns";
+import { format, addMonths } from "date-fns";
 import { srLatn } from "date-fns/locale";
-import { CalendarDays, Check, ChevronDown, Landmark, Trash2 } from "lucide-react";
+import { CalendarDays, Check, ChevronDown, Landmark, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -48,24 +48,25 @@ function BankaPicker({ naziv, label, onIzbor }: { naziv: string; label: string; 
   const [ucitava, setUcitava] = useState(false);
 
   useEffect(() => {
-    const t = q.trim();
-    if (!otvoreno || t.length < 3) {
+    if (!otvoreno) {
       setRez([]);
       setUcitava(false);
       return;
     }
+    const t = q.trim();
+    let aktivan = true;
     const h = setTimeout(async () => {
       setUcitava(true);
       try {
         const r = await apiFetch<{ rows: BankaRow[] }>(`/banke?q=${encodeURIComponent(t)}`);
-        setRez(r.rows);
+        if (aktivan) setRez(r.rows);
       } catch {
-        setRez([]);
+        if (aktivan) setRez([]);
       } finally {
-        setUcitava(false);
+        if (aktivan) setUcitava(false);
       }
-    }, 250);
-    return () => clearTimeout(h);
+    }, 200);
+    return () => { aktivan = false; clearTimeout(h); };
   }, [q, otvoreno]);
 
   return (
@@ -78,12 +79,10 @@ function BankaPicker({ naziv, label, onIzbor }: { naziv: string; label: string; 
       </PopoverTrigger>
       <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-card" align="start">
         <Command shouldFilter={false}>
-          <CommandInput placeholder="Pretraga (min. 3 karaktera)…" value={q} onValueChange={setQ} />
+          <CommandInput placeholder="Pretraga banke…" value={q} onValueChange={setQ} />
           <CommandList>
-            {q.trim().length < 3 ? (
-              <div className="py-4 text-center text-xs text-muted-foreground">Unesite najmanje 3 karaktera</div>
-            ) : ucitava ? (
-              <div className="py-4 text-center text-xs text-muted-foreground">Pretraga…</div>
+            {ucitava && rez.length === 0 ? (
+              <div className="py-4 text-center text-xs text-muted-foreground">Učitavanje…</div>
             ) : (
               <CommandEmpty>Nema banke za zadatu pretragu.</CommandEmpty>
             )}
@@ -264,6 +263,26 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
   function obrisiRed(i: number) {
     // redni se preračunava posle brisanja da ostane 1..N
     setTabela((t) => (t ? t.filter((_, j) => j !== i).map((r, j) => ({ ...r, s: { ...r.s, redni: j + 1 } })) : t));
+  }
+
+  function dodajRed() {
+    if (!tabela || tabela.length === 0 || tabela.length >= MAX_CEKOVA) return;
+    const poslednji = tabela[tabela.length - 1].s;
+    const preostalo = Math.max(0, iznosCenti - zbirCentiTabele);
+    const iznosNovog = preostalo / 100;
+    const datum = format(addMonths(new Date(`${poslednji.datum}T00:00:00`), 1), "yyyy-MM-dd");
+    setTabela((t) => (t ? [...t, {
+      s: {
+        redni: t.length + 1,
+        datum,
+        iznos: iznosNovog,
+        banka: poslednji.banka,
+        brojRacunaBanke: poslednji.brojRacunaBanke,
+        brojRacunaKlijenta: "",
+        serijskiBroj: "",
+      },
+      txt: iznosNovog.toFixed(2),
+    }] : t));
   }
 
   return (
@@ -502,6 +521,19 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
                 </TableFooter>
               </Table>
             </div>
+          </div>
+        )}
+        {imaTabelu && (
+          <div className="flex justify-start">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={dodajRed}
+              disabled={cuva || tabela!.length >= MAX_CEKOVA}
+            >
+              <Plus className="size-3.5 mr-1" />Dodaj ček / ratu
+            </Button>
           </div>
         )}
         {imaTabelu && !tabelaValidna && (
