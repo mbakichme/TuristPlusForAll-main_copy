@@ -2588,7 +2588,7 @@ export default function RezervacijePage() {
                             <TableHead className="w-14 text-center">Kartica</TableHead>
                             <TableHead className="w-14 text-center">Čekovi</TableHead>
                             <TableHead className="w-14 text-center">PDF</TableHead>
-                            <TableHead className="w-14 text-center">Povraćaj</TableHead>
+                            <TableHead className="w-14 text-center">Prebacivanje</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
