@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, CreditCard, Download, FilePenLine, Loader2,
   FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
-  Users, Wallet,
+  Users, Wallet, ArrowRightLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -37,12 +37,13 @@ import { CekPopup } from "@/components/CekPopup";
 import { DodatnaStavkaForma } from "@/components/DodatnaStavkaForma";
 import { KarticaPopup } from "@/components/KarticaPopup";
 import { PageLoader } from "@/components/PageLoader";
+import { PrebacivanjeUplatePopup } from "@/components/PrebacivanjeUplatePopup";
 
 // ── konstante ──────────────────────────────────────────────────────────────
 const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minute", "First minute"];
 const SMER_OPCIJE = ["Polazak", "Povratak"];
 const NACIN_PLACANJA = ["Gotovina", "Kartica", "Ček", "Virman", "IPC", "Vaučer", "Ostalo"];
-const SVRHA_UPLATE = ["Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček"];
+const SVRHA_UPLATE = ["Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček", "Povraćaj"];
 const MESTO_SEDENJA = ["DONJA PLATFORMA", "GORNJA PLATFORMA", "DOLE ZA STOLOM", "DOLE ZADNJI RED", "GORE IZLOG", "GORE STO", "ŠARAGE"];
 
 const nf = new Intl.NumberFormat("sr-RS", { maximumFractionDigits: 2 });
@@ -544,6 +545,7 @@ export default function RezervacijePage() {
   const [cekUcitavaKljuc, setCekUcitavaKljuc] = useState<number | null>(null);
   const [tipoviKartica, setTipoviKartica] = useState<string[]>([]);
   const [uplateRedovi, setUplateRedovi] = useState<UplataRow[] | null>(null);
+  const [prebacivanjeUplata, setPrebacivanjeUplata] = useState<UplataRow | null>(null);
   const [uplateUcitavaju, setUplateUcitavaju] = useState(false);
   const [uplataSeCuva, setUplataSeCuva] = useState(false);
   const uplataZakljucana = useRef(false);
@@ -2579,6 +2581,7 @@ export default function RezervacijePage() {
                             <TableHead className="w-14 text-center">Kartica</TableHead>
                             <TableHead className="w-14 text-center">Čekovi</TableHead>
                             <TableHead className="w-14 text-center">PDF</TableHead>
+                            <TableHead className="w-14 text-center">Povraćaj</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -2651,6 +2654,20 @@ export default function RezervacijePage() {
                                   </Button>
                                 )}
                               </TableCell>
+                              <TableCell className="text-center">
+                                {u.kljuc != null && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7"
+                                    title="Povraćaj — prebaci uplatu na drugi ugovor"
+                                    aria-label={`Prebaci uplatu ${u.kljuc}`}
+                                    onClick={() => setPrebacivanjeUplata(u)}
+                                  >
+                                    <ArrowRightLeft className="size-4" />
+                                  </Button>
+                                )}
+                              </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -2659,7 +2676,7 @@ export default function RezervacijePage() {
                             <TableCell colSpan={2}>Ukupno uplaćeno:</TableCell>
                             <TableCell className="whitespace-nowrap text-right font-semibold">{nf2.format(uplateSumaRSD)} din</TableCell>
                             <TableCell className="whitespace-nowrap text-right font-semibold">{nf2.format(uplateSumaEUR)}€</TableCell>
-                            <TableCell colSpan={6} />
+                            <TableCell colSpan={7} />
                           </TableRow>
                         </TableFooter>
                       </Table>
@@ -2691,6 +2708,19 @@ export default function RezervacijePage() {
               pocetni={cekPopup.pocetni}
               cuva={cekCuva}
               onSacuvaj={(s) => void sacuvajCekove(s)}
+            />
+          )}
+          {prebacivanjeUplata && izabraniUgovor && (
+            <PrebacivanjeUplatePopup
+              open
+              onOpenChange={(o) => { if (!o) setPrebacivanjeUplata(null); }}
+              uplata={{ kljuc: prebacivanjeUplata.kljuc as number, din: prebacivanjeUplata.din, danas: prebacivanjeUplata.danas }}
+              izvorUgovor={izabraniUgovor}
+              onPrebaceno={() => {
+                // napomena interna izvornog ugovora se promenila na serveru → osveži formu i listu uplata
+                setUplateOsvezi((n) => n + 1);
+                void izaberiUgovor(izabraniUgovor);
+              }}
             />
           )}
         </TabsContent>

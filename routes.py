@@ -61,7 +61,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 # ─── Uplate: dozvoljene vrednosti ───────────────────────────────────────────
 NACINI_UPLATE = ("Gotovina", "Kartica", "Ček", "Virman", "IPC", "Vaučer", "Ostalo")
 TIPOVI_KARTICA_SEED = ("Visa", "Mastercard", "Dina", "Maestro", "American Express", "Diners Club")
-SVRHE_UPLATE = ("Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček")
+SVRHE_UPLATE = ("Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček", "Povraćaj")
 
 # ─── Ugovor: promena smeštaja (soba + termin) ───────────────────────────────
 # Advisory lock prostor za zauzeće soba (base + soba.id) — izdvojeno od drugih
@@ -501,6 +501,9 @@ def init_db(engine):
             conn.execute(text(f"ALTER TABLE uplate ADD COLUMN IF NOT EXISTS {kolona} {tip}"))
         # broj kartice bez ograničenja dužine (ranije VARCHAR(30))
         conn.execute(text("ALTER TABLE uplate ALTER COLUMN broj_kartice TYPE TEXT"))
+        # Povraćaj (prebacivanje uplate sa ugovora na ugovor): trag prebacivanja
+        conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS prebaceno_sa VARCHAR(20)"))
+        conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS datum_prebacivanja TIMESTAMP"))
         conn.execute(text(
             "CREATE TABLE IF NOT EXISTS tipovi_kartica ("
             " id SERIAL PRIMARY KEY, naziv VARCHAR(50) NOT NULL UNIQUE)"
@@ -3805,6 +3808,88 @@ def create_app(static_dir: str) -> FastAPI:
                 zabelezi(conn, arow.kljuc if arow else (stari.faktura or ""), OBLAST_UPLATA,
                          "uplata_cekovi_izmenjeni", user_id, obradio, promene)
         return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": len(novi)}
+
+    class PrebacivanjeUplate(BaseModel):
+        ugovor: str
+
+    @api.post("/uplate/{kljuc}/prebaci")
+    def prebaci_uplatu(kljuc: int, body: PrebacivanjeUplate, current_user: dict = Depends(get_current_user)):
+        """Povraćaj: prebacuje uplatu sa trenutnog ugovora na drugi ugovor.
+        uplate.id / uplate.faktura → novi ugovor; napomene interne oba ugovora se dopunjuju;
+        datum prebacivanja = danas."""
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+        ugovor = (body.ugovor or "").strip().strip("/")
+        if not ugovor:
+            raise HTTPException(status_code=400, detail="Izaberite ugovor na koji se uplata prebacuje")
+        with engine.begin() as conn:
+            stari = conn.execute(text(
+                "SELECT kljuc, id, faktura, din, nacin FROM uplate WHERE kljuc = :k"
+            ), {"k": kljuc}).fetchone()
+            if not stari:
+                raise HTTPException(status_code=404, detail="Uplata nije pronađena")
+            broj_stari = (stari.faktura or "").strip() or str(stari.id or "")
+            if "/" in ugovor:
+                nov = conn.execute(text(
+                    "SELECT kljuc, napomena1 FROM aranzman WHERE kljuc = :k ORDER BY id DESC LIMIT 1"
+                ), {"k": ugovor}).fetchone()
+            else:
+                nov = conn.execute(text(
+                    "SELECT kljuc, napomena1 FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
+                    "ORDER BY id DESC LIMIT 1"
+                ), {"b": ugovor}).fetchone()
+            if not nov:
+                raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            broj_novi = (nov.kljuc or "").split("/")[0].strip()
+            if broj_novi == broj_stari:
+                raise HTTPException(status_code=400, detail="Uplata je već na tom ugovoru")
+            try:
+                nid = int(broj_novi)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
+            stari_ar = conn.execute(text(
+                "SELECT kljuc, napomena1 FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
+                "ORDER BY id DESC LIMIT 1"
+            ), {"b": broj_stari}).fetchone()
+            if not stari_ar:
+                raise HTTPException(status_code=404, detail="Polazni ugovor nije pronađen")
+
+            iznos = float(stari.din or 0)
+            iznos_txt = f"{iznos:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            add_stari = f"Prebačena uplata {iznos_txt} din na novi aranžman {nov.kljuc}"
+            add_novi = f"Prebačena uplata sa starog ugovora {stari_ar.kljuc}"
+
+            def _dopuni(staro: str | None, dodatak: str) -> str:
+                tekst = f"{(staro or '').strip()}\n{dodatak}".strip() if (staro or "").strip() else dodatak
+                if len(tekst) > 255:
+                    raise HTTPException(status_code=400,
+                                        detail="Napomena interna ugovora je prepunjena — skratite je pa ponovite prebacivanje")
+                return tekst
+
+            conn.execute(text("UPDATE aranzman SET napomena1 = :n WHERE kljuc = :k"),
+                         {"n": _dopuni(stari_ar.napomena1, add_stari), "k": stari_ar.kljuc})
+            conn.execute(text("UPDATE aranzman SET napomena1 = :n WHERE kljuc = :k"),
+                         {"n": _dopuni(nov.napomena1, add_novi), "k": nov.kljuc})
+            conn.execute(text(
+                "UPDATE uplate SET id = :nid, faktura = :nb, prebaceno_sa = :sb, datum_prebacivanja = :dp "
+                "WHERE kljuc = :k"
+            ), {"nid": nid, "nb": broj_novi, "sb": broj_stari, "dp": _belgrade_now(), "k": kljuc})
+
+            obradio_row = conn.execute(text(
+                "SELECT first_name, last_name FROM users WHERE id = :id"
+            ), {"id": user_id}).fetchone()
+            obradio = f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip() if obradio_row else ""
+            zabelezi(conn, stari_ar.kljuc, OBLAST_UPLATA, "uplata_prebacena_odlazna", user_id, obradio, [
+                {"polje": "Prebačena na ugovor", "stara": None, "nova": nov.kljuc},
+                {"polje": "Iznos (DIN)", "stara": norm_vrednost(iznos), "nova": None},
+            ])
+            zabelezi(conn, nov.kljuc, OBLAST_UPLATA, "uplata_prebacena_dolazna", user_id, obradio, [
+                {"polje": "Prebačena sa ugovora", "stara": None, "nova": stari_ar.kljuc},
+                {"polje": "Iznos (DIN)", "stara": None, "nova": norm_vrednost(iznos)},
+            ])
+        return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov.kljuc}
 
     @api.post("/uplate", status_code=201)
     def create_uplata(body: UplataCreate, current_user: dict = Depends(get_current_user)):
