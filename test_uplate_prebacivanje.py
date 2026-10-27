@@ -94,6 +94,12 @@ def main():
             provera("operater_id", ev[0].operater_id, 1)
             provera("datum popunjen", ev[0].datum is not None, True)
 
+        print("2c) GET /prebacivanja vraća red")
+        r = urllib.request.Request(f"{BASE}/prebacivanja?q={STARI}", headers=hdr)
+        with urllib.request.urlopen(r, timeout=30) as resp:
+            lista = json.load(resp)["rows"]
+        provera("red u listi", any(x["uplata_kljuc"] == kljuc_uplate for x in lista), True)
+
         print("2) napomena starog ugovora")
         n_stari = conn.execute(text("SELECT napomena1 FROM aranzman WHERE kljuc = :k"), {"k": STARI}).scalar()
         provera("napomena starog", n_stari,

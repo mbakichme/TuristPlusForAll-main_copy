@@ -3910,6 +3910,28 @@ def create_app(static_dir: str) -> FastAPI:
             ])
         return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov.kljuc}
 
+    @api.get("/prebacivanja")
+    def lista_prebacivanja(q: str = "", limit: int = 500, _: dict = Depends(get_current_user)):
+        """Evidencija prebačenih uplata (tabela prebacivanje), najnovije prve."""
+        limit = max(1, min(int(limit), 2000))
+        sql = ("SELECT id, datum, uplata_kljuc, iznos, stari_ugovor, novi_ugovor, operater_id, operater "
+               "FROM prebacivanje")
+        bind: dict = {"lim": limit}
+        pojam = (q or "").strip()
+        if pojam:
+            sql += (" WHERE stari_ugovor ILIKE :q OR novi_ugovor ILIKE :q OR operater ILIKE :q"
+                    " OR CAST(uplata_kljuc AS TEXT) ILIKE :q")
+            bind["q"] = f"%{pojam}%"
+        sql += " ORDER BY datum DESC, id DESC LIMIT :lim"
+        with engine.connect() as conn:
+            rows = conn.execute(text(sql), bind).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r._mapping)
+            d["datum"] = d["datum"].isoformat() if d.get("datum") else None
+            out.append(d)
+        return {"rows": out, "total": len(out)}
+
     @api.post("/uplate", status_code=201)
     def create_uplata(body: UplataCreate, current_user: dict = Depends(get_current_user)):
         ugovor = (body.ugovor or "").strip().strip("/")
