@@ -40,6 +40,97 @@ function parseIznos(t: string): number {
   return IZNOS_RE.test(s) ? Number(s.replace(",", ".")) : NaN;
 }
 
+/** Izbor banke u redu tabele: pretraga po nazivu/šifri (min 3 karaktera). */
+function BankaPicker({ naziv, label, onIzbor }: { naziv: string; label: string; onIzbor: (b: BankaRow) => void }) {
+  const [otvoreno, setOtvoreno] = useState(false);
+  const [q, setQ] = useState("");
+  const [rez, setRez] = useState<BankaRow[]>([]);
+  const [ucitava, setUcitava] = useState(false);
+
+  useEffect(() => {
+    const t = q.trim();
+    if (!otvoreno || t.length < 3) {
+      setRez([]);
+      setUcitava(false);
+      return;
+    }
+    const h = setTimeout(async () => {
+      setUcitava(true);
+      try {
+        const r = await apiFetch<{ rows: BankaRow[] }>(`/banke?q=${encodeURIComponent(t)}`);
+        setRez(r.rows);
+      } catch {
+        setRez([]);
+      } finally {
+        setUcitava(false);
+      }
+    }, 250);
+    return () => clearTimeout(h);
+  }, [q, otvoreno]);
+
+  return (
+    <Popover open={otvoreno} onOpenChange={(o) => { setOtvoreno(o); if (!o) setQ(""); }}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-7 w-44 justify-between font-normal text-xs" aria-label={label}>
+          <span className="truncate">{naziv || "Izaberite banku"}</span>
+          <ChevronDown className="size-3.5 opacity-50 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-card" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput placeholder="Pretraga (min. 3 karaktera)…" value={q} onValueChange={setQ} />
+          <CommandList>
+            {q.trim().length < 3 ? (
+              <div className="py-4 text-center text-xs text-muted-foreground">Unesite najmanje 3 karaktera</div>
+            ) : ucitava ? (
+              <div className="py-4 text-center text-xs text-muted-foreground">Pretraga…</div>
+            ) : (
+              <CommandEmpty>Nema banke za zadatu pretragu.</CommandEmpty>
+            )}
+            <CommandGroup>
+              {rez.map((b) => (
+                <CommandItem
+                  key={b.id}
+                  value={String(b.id)}
+                  onSelect={() => { onIzbor(b); setOtvoreno(false); setQ(""); }}
+                >
+                  <span className="font-medium">{b.naziv}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{b.sifra} · {b.mesto}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Datum čeka u redu tabele: kalendar u popover-u (srpski, ponedeljak prvi). */
+function DatumPicker({ iso, label, onIzbor }: { iso: string; label: string; onIzbor: (iso: string) => void }) {
+  const [otvoreno, setOtvoreno] = useState(false);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(`${iso}T00:00:00`) : undefined;
+  return (
+    <Popover open={otvoreno} onOpenChange={setOtvoreno}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-7 w-32 justify-start font-normal text-xs tabular-nums" aria-label={label}>
+          <CalendarDays className="size-3.5 mr-1.5 text-muted-foreground" />
+          {d ? format(d, "dd.MM.yyyy.") : "Izaberite"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0 bg-card" align="start">
+        <Calendar
+          mode="single"
+          selected={d}
+          onSelect={(x) => { if (x) onIzbor(format(x, "yyyy-MM-dd")); setOtvoreno(false); }}
+          locale={srLatn}
+          weekStartsOn={1}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /** Popup za čekove uplate. Validacija zbira ogleda server (routes.py _cekovi_cisto). */
 export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }: Props) {
   const [datum1, setDatum1] = useState<Date | undefined>(undefined);
@@ -330,13 +421,10 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
                     return (
                       <TableRow key={r.s.redni}>
                         <TableCell className="px-2 py-1">
-                          <Input
-                            className="h-7 w-36 text-xs"
-                            maxLength={150}
-                            value={r.s.banka}
-                            placeholder="Naziv banke"
-                            aria-label={`Banka čeka ${r.s.redni}`}
-                            onChange={(e) => postaviRed(i, { banka: e.target.value })}
+                          <BankaPicker
+                            naziv={r.s.banka}
+                            label={`Banka čeka ${r.s.redni}`}
+                            onIzbor={(b) => postaviRed(i, { banka: b.naziv, brojRacunaBanke: b.racun })}
                           />
                         </TableCell>
                         <TableCell className="px-2 py-1">
@@ -370,12 +458,10 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
                           />
                         </TableCell>
                         <TableCell className="px-2 py-1">
-                          <Input
-                            type="date"
-                            className="h-7 w-36 text-xs"
-                            value={r.s.datum}
-                            aria-label={`Datum čeka ${r.s.redni}`}
-                            onChange={(e) => postaviRed(i, { datum: e.target.value })}
+                          <DatumPicker
+                            iso={r.s.datum}
+                            label={`Datum čeka ${r.s.redni}`}
+                            onIzbor={(iso) => postaviRed(i, { datum: iso })}
                           />
                         </TableCell>
                         <TableCell className="px-2 py-1 text-right">
