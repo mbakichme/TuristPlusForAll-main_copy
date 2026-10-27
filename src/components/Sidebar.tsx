@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, LogOut, ShieldCheck, Settings,
   Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus,
   FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage,
-  Eye, ShoppingBag, Banknote, Palette, Sigma, Bell
+  Eye, ShoppingBag, Banknote, Palette, Sigma, Bell, Store
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -209,7 +209,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[480px] opacity-100"
+              !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[528px] opacity-100"
             )}
           >
             <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={collapsed} onClick={onNavClick} />
@@ -222,6 +222,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             <NavItem to="/knjigovodstvo/dok-smanjenju-avansnih" icon={FileX} label="Dok. o smanjenju avansnih" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/dok-povecanju" icon={FilePlus} label="Dok. o povećanju" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/dobavljaci" icon={Store} label="Dobavljači" collapsed={collapsed} onClick={onNavClick} />
           </div>
         </div>
         </>
@@ -606,7 +607,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[480px] opacity-100"
+                    !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[528px] opacity-100"
                   )}
                 >
                   <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={false} onClick={closeMobile} />
@@ -619,6 +620,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/knjigovodstvo/dok-smanjenju-avansnih" icon={FileX} label="Dok. o smanjenju avansnih" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/dok-povecanju" icon={FilePlus} label="Dok. o povećanju" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/dobavljaci" icon={Store} label="Dobavljači" collapsed={false} onClick={closeMobile} />
                 </div>
               </div>
               </>

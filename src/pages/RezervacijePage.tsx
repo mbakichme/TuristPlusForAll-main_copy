@@ -118,6 +118,7 @@ interface Nosilac {
   osiguranje: boolean;
   smer: string;
   datumOw: string;
+  destinacijaOw: string;
   datumPolaska: string;
   datumPovratka: string;
   destinacijaPolaska: string;
@@ -141,6 +142,7 @@ interface Saputnik {
   osiguranje: boolean;
   smer: string;
   datumOw: string;
+  destinacijaOw: string;
   datumPolaska: string;
   datumPovratka: string;
   destinacijaPolaska: string;
@@ -167,6 +169,7 @@ interface Boravak {
   viza: boolean;
   napomena: string;
   napomenaInterna: string;
+  napomenaPrevoz: string;
 }
 interface Cene {
   cenaSmestaj: string;
@@ -215,7 +218,7 @@ interface Uplata {
 const prazanNosilac: Nosilac = {
   ime: "", datumRodjenja: "", pasos: "",
   ow: false, rt: false, sp: false, osiguranje: false, smer: "",
-  datumOw: "", datumPolaska: "", datumPovratka: "",
+  datumOw: "", destinacijaOw: "", datumPolaska: "", datumPovratka: "",
   destinacijaPolaska: "", destinacijaPovratka: "",
   adresa: "", telefon: "", email: "",
 };
@@ -223,7 +226,7 @@ const prazanSaputnik = (uid: string): Saputnik => ({
   uid, ime: "", datumRodjenja: "", pasos: "",
   adresa: "", email: "", telefon: "", kopiranKontakt: false,
   ow: false, rt: false, sp: false, osiguranje: false, smer: "",
-  datumOw: "", datumPolaska: "", datumPovratka: "",
+  datumOw: "", destinacijaOw: "", datumPolaska: "", datumPovratka: "",
   destinacijaPolaska: "", destinacijaPovratka: "",
 });
 
@@ -491,7 +494,7 @@ export default function RezervacijePage() {
 
   const [boravak, setBoravak] = useState<Boravak>({
     datumOd: "", datumDo: "", smestaj: "", soba: "", mesto: "",
-    struktura: "", promenaStrukture: "", viza: false, napomena: "", napomenaInterna: "",
+    struktura: "", promenaStrukture: "", viza: false, napomena: "", napomenaInterna: "", napomenaPrevoz: "",
   });
   const [cene, setCene] = useState<Cene>({
     cenaSmestaj: "", kolSmestaj: "", cenaSmestajRSD: "", kolSmestajRSD: "",
@@ -716,12 +719,12 @@ export default function RezervacijePage() {
       setTimeLimitSat(tl ? tl[4] : "12");
       setPrevozDetaljiOtvoreni({});
       const nosilacOw = !!d.prevozow;
-      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", adresa: d.adresa ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "" });
+      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", adresa: d.adresa ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: d.destinacija_ow ?? "", datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: d.destinacija_polaska ?? "", destinacijaPovratka: d.destinacija_povratka ?? "" });
       const dopuna = (d.putnici_detalji ?? []).filter((p) => !!p.saputnik?.trim());
       const dodati = dopuna.map((p) => {
         const uid = `s${++uidRef.current}`;
         const ow = !!p.prevozow;
-        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", adresa: p.adresa ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "" };
+        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", adresa: p.adresa ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: p.destinacija_ow ?? "", datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: p.destinacija_polaska ?? "", destinacijaPovratka: p.destinacija_povratka ?? "" };
       });
       setSaputnici(dodati);
       setDodatneStavke(d.dodatne ?? []);
@@ -729,13 +732,13 @@ export default function RezervacijePage() {
       dodatneSesija.current += 1; // nova sesija liste dodatnih stavki
       const novoMesto = mestoId ? String(mestoId) : (d.mesto ?? "").trim() ? CUVAR : "";
       mestoUgovoraRef.current = novoMesto || null; // destinacija se ne veže ponovo dok se mesto ne promeni
-      setBoravak({ datumOd: datumZaInput(d.datumod), datumDo: datumZaInput(d.datumdo), smestaj: smestajId ? String(smestajId) : (d.naziv ?? "").trim() ? CUVAR : "", soba: sobaId ? String(sobaId) : (d.soba ?? "").trim() ? CUVAR : "", mesto: novoMesto, struktura: d.apartman ?? "", promenaStrukture: "", viza: Number(d.viza) === 1, napomena: d.napomena ?? "", napomenaInterna: d.napomena1 ?? "" });
+      setBoravak({ datumOd: datumZaInput(d.datumod), datumDo: datumZaInput(d.datumdo), smestaj: smestajId ? String(smestajId) : (d.naziv ?? "").trim() ? CUVAR : "", soba: sobaId ? String(sobaId) : (d.soba ?? "").trim() ? CUVAR : "", mesto: novoMesto, struktura: d.apartman ?? "", promenaStrukture: "", viza: Number(d.viza) === 1, napomena: d.napomena ?? "", napomenaInterna: d.napomena1 ?? "", napomenaPrevoz: d.napomena_prevoz ?? "" });
       // Cena smeštaja i uplaćeno dolaze iz ugovora; dodatne stavke (i njihove sume) iz d.dodatne —
       // cenadod se ne upisuje u formu da se sa dodatenSume ne bi sabiralo dvostruko.
       // Osiguranje se učitava iz aranzman.osiguranje (RSD) / osiguranje1 (EUR).
       // RSD cene/količine, popusti i provizije ostaju lokalna polja i resetuju se pri izboru ugovora.
       setCene({ cenaSmestaj: brojUString(d.cenaaranz), kolSmestaj: brojUString(d.kolaranz), cenaSmestajRSD: "", kolSmestajRSD: "", popustSmestajPct: "", popustSmestaj: "", popustSmestajRSD: "", cenaPrevoz: "", kolPrevoz: "", cenaPrevozRSD: "", kolPrevozRSD: "", popustPrevozPct: "", popustPrevoz: "", popustPrevozRSD: "", osiguranjeEUR: brojUString(d.osiguranje1), osiguranjeRSD: brojUString(d.osiguranje), provizijaSmestajPct: "", provizijaSmestaj: "", provizijaSmestajRSD: "", provizijaPrevozPct: "", provizijaPrevoz: "", provizijaPrevozRSD: "", uplaceno: brojUString(d.uplacenod) }); // popusti u bazi su procenti, a u formi iznosi — ne mešati jedinice.
-      setPrevozRedovi({ nosilac: { mestoUlaska: d.ulazak ?? "", mestoSedenja: "", placeno: false, zelja: false }, ...Object.fromEntries(dodati.map((p, i) => [p.uid, { mestoUlaska: dopuna[i].ulazak ?? "", mestoSedenja: "", placeno: false, zelja: false }])) });
+      setPrevozRedovi({ nosilac: { mestoUlaska: d.ulazak ?? "", mestoSedenja: d.mesto_sedenja ?? "", placeno: !!d.placeno_prevoz, zelja: !!d.zelja_prevoz }, ...Object.fromEntries(dodati.map((p, i) => [p.uid, { mestoUlaska: dopuna[i].ulazak ?? "", mestoSedenja: dopuna[i].mesto_sedenja ?? "", placeno: !!dopuna[i].placeno_prevoz, zelja: !!dopuna[i].zelja_prevoz }])) });
       setUplata({ uplatilac: "nosilac", nacin: "", iznos: "", svrha: "" });
       aktivniUgovor.current = d.kljuc;
       setIzabraniUgovor(d.kljuc);
@@ -1141,6 +1144,18 @@ export default function RezervacijePage() {
       if (rsd.trim()) return { rsd: num(rsd) };
       return {};
     };
+    // polja taba Prevoz po putniku; datumi/destinacije samo za uključeni smer (OW/RT)
+    const prevozPolja = (o: Nosilac | Saputnik, red: PrevozRed | undefined) => ({
+      mestoSedenja: red?.mestoSedenja ?? "",
+      placeno: !!red?.placeno,
+      zelja: !!red?.zelja,
+      datumOw: o.ow ? o.datumOw : "",
+      destinacijaOw: o.ow ? o.destinacijaOw : "",
+      datumPolaska: o.rt ? o.datumPolaska : "",
+      destinacijaPolaska: o.rt ? o.destinacijaPolaska : "",
+      datumPovratka: o.rt ? o.datumPovratka : "",
+      destinacijaPovratka: o.rt ? o.destinacijaPovratka : "",
+    });
     const payload = {
       tiprezervacije: tipRezervacije,
       subagent: subagent.trim(),
@@ -1152,12 +1167,14 @@ export default function RezervacijePage() {
         pasos: nosilac.pasos.trim(), ow: nosilac.ow, rt: nosilac.rt, sp: nosilac.sp,
         smer: nosilac.smer, adresa: nosilac.adresa.trim(), telefon: nosilac.telefon.trim(),
         email: nosilac.email.trim(),
+        ...prevozPolja(nosilac, prevozRedovi["nosilac"]),
       },
       saputnici: saputnici.filter((s) => s.ime.trim()).map((s) => ({
         ime: s.ime.trim(), datumRodjenja: datumRodjenjaIso(s.datumRodjenja),
         pasos: s.pasos.trim(), ow: s.ow, rt: s.rt, sp: s.sp, smer: s.smer,
         adresa: s.adresa.trim(), telefon: s.telefon.trim(), email: s.email.trim(),
         ulazak: prevozRedovi[s.uid]?.mestoUlaska ?? "",
+        ...prevozPolja(s, prevozRedovi[s.uid]),
       })),
       boravak: {
         datumOd: boravak.datumOd || null, datumDo: boravak.datumDo || null,
@@ -1169,6 +1186,7 @@ export default function RezervacijePage() {
       },
       destinacijaId: idIliNull(destinacijaZaSve), destinacijaNaziv,
       ulazak: prevozRedovi["nosilac"]?.mestoUlaska ?? "",
+      napomenaPrevoz: boravak.napomenaPrevoz,
       cene: {
         cenaSmestajEUR: num(cene.cenaSmestaj), kolSmestajEUR: qty(cene.kolSmestaj),
         cenaSmestajRSD: num(cene.cenaSmestajRSD), kolSmestajRSD: qty(cene.kolSmestajRSD),
@@ -2245,17 +2263,28 @@ export default function RezervacijePage() {
               <CardDescription>Destinacija, mesta ulaska i sedišta po putniku</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <Fld label="Izbor destinacije" className="max-w-sm">
-                <Select value={destinacijaZaSve} onValueChange={(v) => { if (v !== CUVAR) setDestinacijaSacuvana(null); setDestinacijaZaSve(v); }} disabled={zakljucano}>
-                  <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite destinaciju" /></SelectTrigger>
-                  <SelectContent>
-                    {destinacijaSacuvana && <SelectItem value={CUVAR}>{destinacijaSacuvana} (sačuvano)</SelectItem>}
-                    {destinacije.map((d) => (
-                      <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Fld>
+              <div className="grid gap-4 md:grid-cols-2 items-start">
+                <Fld label="Izbor destinacije">
+                  <Select value={destinacijaZaSve} onValueChange={(v) => { if (v !== CUVAR) setDestinacijaSacuvana(null); setDestinacijaZaSve(v); }} disabled={zakljucano}>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite destinaciju" /></SelectTrigger>
+                    <SelectContent>
+                      {destinacijaSacuvana && <SelectItem value={CUVAR}>{destinacijaSacuvana} (sačuvano)</SelectItem>}
+                      {destinacije.map((d) => (
+                        <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Fld>
+                <Fld label="Napomena prevoz">
+                  <Input
+                    value={boravak.napomenaPrevoz}
+                    onChange={(e) => setBoravak({ ...boravak, napomenaPrevoz: e.target.value })}
+                    maxLength={500}
+                    disabled={zakljucano}
+                    aria-label="Napomena prevoz"
+                  />
+                </Fld>
+              </div>
 
               {polasciGreska && (
                 <div className="flex flex-wrap items-center gap-2 text-sm text-destructive">
@@ -2310,9 +2339,9 @@ export default function RezervacijePage() {
                             {p.osnovni && <Badge variant="secondary">Nosilac</Badge>}
                           </div>
                         </div>
-                        <Chk label="RT" labelClassName="text-xs" checked={osoba.rt} onChange={(v) => updOsoba({ rt: v, ow: v ? false : osoba.ow, sp: v ? false : osoba.sp, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, datumPolaska: v ? osoba.datumPolaska : "", datumPovratka: v ? osoba.datumPovratka : "", destinacijaPolaska: v ? osoba.destinacijaPolaska : "", destinacijaPovratka: v ? osoba.destinacijaPovratka : "" })} disabled={zakljucano} />
-                        <Chk label="OW" labelClassName="text-xs" checked={osoba.ow} onChange={(v) => updOsoba({ ow: v, rt: v ? false : osoba.rt, sp: v ? false : osoba.sp, smer: v ? osoba.smer : "", datumOw: v ? osoba.datumOw : "", datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
-                        <Chk label="SP" labelClassName="text-xs" checked={osoba.sp} onChange={(v) => updOsoba({ sp: v, ow: v ? false : osoba.ow, rt: v ? false : osoba.rt, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
+                        <Chk label="RT" labelClassName="text-xs" checked={osoba.rt} onChange={(v) => updOsoba({ rt: v, ow: v ? false : osoba.ow, sp: v ? false : osoba.sp, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? osoba.datumPolaska : "", datumPovratka: v ? osoba.datumPovratka : "", destinacijaPolaska: v ? osoba.destinacijaPolaska : "", destinacijaPovratka: v ? osoba.destinacijaPovratka : "" })} disabled={zakljucano} />
+                        <Chk label="OW" labelClassName="text-xs" checked={osoba.ow} onChange={(v) => updOsoba({ ow: v, rt: v ? false : osoba.rt, sp: v ? false : osoba.sp, smer: v ? osoba.smer : "", datumOw: v ? osoba.datumOw : "", destinacijaOw: v ? osoba.destinacijaOw : "", datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
+                        <Chk label="SP" labelClassName="text-xs" checked={osoba.sp} onChange={(v) => updOsoba({ sp: v, ow: v ? false : osoba.ow, rt: v ? false : osoba.rt, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
                         <div className="space-y-1">
                           <Select value={red.mestoUlaska} onValueChange={(v) => updPrevoz(p.uid, { mestoUlaska: v })} disabled={zakljucano}>
                             <SelectTrigger aria-label={`Mesto ulaska — ${p.ime}`} className="w-full h-8 text-xs"><SelectValue placeholder="Izaberite mesto ulaska" /></SelectTrigger>
@@ -2340,25 +2369,14 @@ export default function RezervacijePage() {
                                   <SmerSelect value={osoba.smer} onChange={(v) => updOsoba({ smer: v })} disabled={zakljucano} />
                                 </Fld>
                                 <DatumField label="Datum OW" className="w-full sm:w-40" value={osoba.datumOw} onChange={(v) => updOsoba({ datumOw: v })} disabled={zakljucano} />
-                                {osoba.smer === "Povratak" ? (
-                                  <Fld label="Destinacija povratka" className="w-full sm:w-64">
-                                    <Select value={osoba.destinacijaPovratka} onValueChange={(v) => updOsoba({ destinacijaPovratka: v })} disabled={zakljucano}>
-                                      <SelectTrigger className="w-full" aria-label={`Destinacija povratka — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju povratka" /></SelectTrigger>
-                                      <SelectContent>
-                                        {destinacije.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>)}
-                                      </SelectContent>
-                                    </Select>
-                                  </Fld>
-                                ) : (
-                                  <Fld label="Destinacija polaska" className="w-full sm:w-64">
-                                    <Select value={osoba.destinacijaPolaska} onValueChange={(v) => updOsoba({ destinacijaPolaska: v })} disabled={zakljucano}>
-                                      <SelectTrigger className="w-full" aria-label={`Destinacija polaska — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju polaska" /></SelectTrigger>
-                                      <SelectContent>
-                                        {destinacije.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>)}
-                                      </SelectContent>
-                                    </Select>
-                                  </Fld>
-                                )}
+                                <Fld label="Destinacija OW" className="w-full sm:w-64">
+                                  <Select value={osoba.destinacijaOw} onValueChange={(v) => updOsoba({ destinacijaOw: v })} disabled={zakljucano}>
+                                    <SelectTrigger className="w-full" aria-label={`Destinacija OW — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju OW" /></SelectTrigger>
+                                    <SelectContent>
+                                      {destinacije.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
+                                    </SelectContent>
+                                  </Select>
+                                </Fld>
                               </div>
                             )}
                             {osoba.rt && (
@@ -2368,7 +2386,7 @@ export default function RezervacijePage() {
                                   <Select value={osoba.destinacijaPolaska} onValueChange={(v) => updOsoba({ destinacijaPolaska: v })} disabled={zakljucano}>
                                     <SelectTrigger className="w-full" aria-label={`Destinacija polaska — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju polaska" /></SelectTrigger>
                                     <SelectContent>
-                                      {destinacije.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>)}
+                                      {destinacije.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
                                     </SelectContent>
                                   </Select>
                                 </Fld>
@@ -2377,7 +2395,7 @@ export default function RezervacijePage() {
                                   <Select value={osoba.destinacijaPovratka} onValueChange={(v) => updOsoba({ destinacijaPovratka: v })} disabled={zakljucano}>
                                     <SelectTrigger className="w-full" aria-label={`Destinacija povratka — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju povratka" /></SelectTrigger>
                                     <SelectContent>
-                                      {destinacije.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>)}
+                                      {destinacije.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
                                     </SelectContent>
                                   </Select>
                                 </Fld>

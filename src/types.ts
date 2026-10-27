@@ -92,6 +92,15 @@ export interface PutnikDetalj {
   viza?: number | null;
   ulazak?: string | null;
   smer?: string | null;
+  mesto_sedenja?: string | null;
+  placeno_prevoz?: boolean | null;
+  zelja_prevoz?: boolean | null;
+  datum_ow?: string | null;
+  destinacija_ow?: string | null;
+  datum_polaska?: string | null;
+  destinacija_polaska?: string | null;
+  datum_povratka?: string | null;
+  destinacija_povratka?: string | null;
 }
 
 export interface DodatnaStavka {
@@ -118,6 +127,16 @@ export interface UgovorDetail {
   refno?: string | null;
   prevozow?: number | null;
   prevozrt?: number | null;
+  mesto_sedenja?: string | null;
+  placeno_prevoz?: boolean | null;
+  zelja_prevoz?: boolean | null;
+  datum_ow?: string | null;
+  destinacija_ow?: string | null;
+  datum_polaska?: string | null;
+  destinacija_polaska?: string | null;
+  datum_povratka?: string | null;
+  destinacija_povratka?: string | null;
+  napomena_prevoz?: string | null;
   osiguranje?: number | null; // RSD
   osiguranje1?: number | null; // EUR
   soba?: string | null;

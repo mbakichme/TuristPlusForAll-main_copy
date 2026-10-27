@@ -21,12 +21,15 @@ OBLAST_SAPUTNICI = "saputnici"
 
 # kolone aranzman-a po oblasti (sve ostalo ide u "rezervacija")
 PREVOZ_POLJA = {"prevozow", "prevozrt", "smer", "cenaow", "kolow", "cenart",
-                "kolrt", "cenadow", "cenadrt"}
+                "kolrt", "cenadow", "cenadrt",
+                "mesto_sedenja", "placeno_prevoz", "zelja_prevoz", "datum_ow",
+                "destinacija_ow", "datum_polaska", "destinacija_polaska",
+                "datum_povratka", "destinacija_povratka", "napomena_prevoz"}
 OBRACUN_POLJA = {"cenaaranz", "kolaranz", "cenaaranzd", "osiguranje", "osiguranje1",
                  "popustar", "popustpr", "procenatar", "procenatpr"}
 # kolone koje se ne loguju (tehnička polja, menjaju se pri svakom snimanju)
 IGNORISANA_POLJA = {"kljuc", "danas", "obradio"}
-BOOL_POLJA = {"prevozow", "prevozrt"}
+BOOL_POLJA = {"prevozow", "prevozrt", "placeno_prevoz", "zelja_prevoz"}
 
 LABELE = {
     "putnik": "Nosilac", "rodjen": "Datum rođenja nosioca", "pasos": "Pasoš",
@@ -45,6 +48,11 @@ LABELE = {
     "osiguranje": "Osiguranje (RSD)", "osiguranje1": "Osiguranje (EUR)",
     "popustar": "Popust smeštaj", "popustpr": "Popust prevoz",
     "procenatar": "Provizija smeštaj", "procenatpr": "Provizija prevoz",
+    "mesto_sedenja": "Mesto za sedenje", "placeno_prevoz": "Plaćeno (prevoz)",
+    "zelja_prevoz": "Želja (prevoz)", "datum_ow": "Datum OW",
+    "destinacija_ow": "Destinacija OW", "datum_polaska": "Datum polaska RT",
+    "destinacija_polaska": "Destinacija polaska RT", "datum_povratka": "Datum povratka RT",
+    "destinacija_povratka": "Destinacija povratka RT", "napomena_prevoz": "Napomena prevoz",
     "usluga": "Usluga", "eur": "EUR", "din": "DIN", "platilac": "Platilac",
     "nacin": "Način plaćanja", "svrha": "Svrha", "iznos": "Iznos (DIN)",
 }
@@ -53,6 +61,10 @@ SAPUTNIK_POLJA = {
     "rodjen": "datum rođenja", "pasos": "pasoš", "prevozow": "prevoz ow",
     "prevozrt": "prevoz rt", "smer": "smer", "adresa": "adresa",
     "email": "email", "telefon": "telefon", "ulazak": "ulazak",
+    "mesto_sedenja": "mesto za sedenje", "placeno_prevoz": "plaćeno",
+    "zelja_prevoz": "želja", "datum_ow": "datum OW", "destinacija_ow": "destinacija OW",
+    "datum_polaska": "datum polaska RT", "destinacija_polaska": "destinacija polaska RT",
+    "datum_povratka": "datum povratka RT", "destinacija_povratka": "destinacija povratka RT",
 }
 
 _ISO_DATUM = re.compile(r"\d{4}-\d{2}-\d{2}")
