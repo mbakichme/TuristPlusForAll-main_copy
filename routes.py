@@ -6,6 +6,7 @@ import math
 import base64
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from datetime import date as SubDate
 from decimal import Decimal
 from typing import Optional, List
 from urllib.parse import quote
@@ -496,6 +497,11 @@ def init_db(engine):
             conn.execute(text(
                 f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS mesto_izlaska VARCHAR(200)"
             ))
+        # Grad (uz adresu): nosilac u aranzman, saputnici u aranzman_dopuna
+        for tabela in ("aranzman", "aranzman_dopuna"):
+            conn.execute(text(
+                f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS grad VARCHAR(100)"
+            ))
         # Uplata karticom: podaci sa popupa (Način plaćanja = Kartica).
         for kolona, tip in (
             ("broj_potvrde", "VARCHAR(100)"),
@@ -618,6 +624,9 @@ def init_db(engine):
         conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS pib VARCHAR(30) DEFAULT ''"))
         conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS matbroj VARCHAR(20) DEFAULT ''"))
         conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS email VARCHAR(200) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS ugovor_broj VARCHAR(50) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS ugovor_datumod DATE"))
+        conn.execute(text("ALTER TABLE subagenti ADD COLUMN IF NOT EXISTS ugovor_datumdo DATE"))
 
         # Knjigovodstvo — predracuni
         conn.execute(text("""
@@ -1030,6 +1039,10 @@ class SubagentCreate(BaseModel):
     pib: Optional[str] = ""
     matbroj: Optional[str] = ""
     email: Optional[str] = ""
+    ugovor_broj: Optional[str] = ""
+    ugovor_datumod: Optional[SubDate] = None
+    ugovor_datumdo: Optional[SubDate] = None
+    ta: bool = True
 
 
 class SubagentUpdate(BaseModel):
@@ -1051,6 +1064,10 @@ class SubagentUpdate(BaseModel):
     pib: Optional[str] = None
     matbroj: Optional[str] = None
     email: Optional[str] = None
+    ugovor_broj: Optional[str] = None
+    ugovor_datumod: Optional[SubDate] = None
+    ugovor_datumdo: Optional[SubDate] = None
+    ta: Optional[bool] = None
 
 
 class PredracunCreate(BaseModel):
@@ -1209,6 +1226,7 @@ class RezPutnikIn(BaseModel):
     sp: bool = False
     smer: str = ""
     adresa: str = ""
+    grad: str = ""
     telefon: str = ""
     email: str = ""
     ulazak: str = ""  # mesto ulaska (saputnici — aranzman_dopuna.ulazak)
@@ -3865,15 +3883,17 @@ def create_app(static_dir: str) -> FastAPI:
             broj_stari = (stari.faktura or "").strip() or str(stari.id or "")
             if "/" in ugovor:
                 nov = conn.execute(text(
-                    "SELECT kljuc, napomena FROM aranzman WHERE kljuc = :k ORDER BY id DESC LIMIT 1"
+                    "SELECT kljuc, napomena, tiprezervacije FROM aranzman WHERE kljuc = :k ORDER BY id DESC LIMIT 1"
                 ), {"k": ugovor}).fetchone()
             else:
                 nov = conn.execute(text(
-                    "SELECT kljuc, napomena FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
+                    "SELECT kljuc, napomena, tiprezervacije FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
                     "ORDER BY id DESC LIMIT 1"
                 ), {"b": ugovor}).fetchone()
             if not nov:
                 raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            if (nov.tiprezervacije or "").strip().upper() == "STORNO":
+                raise HTTPException(status_code=400, detail="Uplata se ne može prebaciti na ugovor tipa STORNO")
             broj_novi = (nov.kljuc or "").split("/")[0].strip()
             if broj_novi == broj_stari:
                 raise HTTPException(status_code=400, detail="Uplata je već na tom ugovoru")
@@ -4296,6 +4316,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "prevozrt": 1 if s.rt else 0,
                 "smer": _rez_str(s.smer, 50) if s.ow else None,
                 "adresa": (s.adresa or "").strip()[:300],
+                "grad": _rez_str(s.grad, 100),
                 "email": (s.email or "").strip()[:300],
                 "telefon": (s.telefon or "").strip()[:300],
                 "ulazak": _rez_str(s.ulazak, 200),
@@ -4325,11 +4346,11 @@ def create_app(static_dir: str) -> FastAPI:
             conn.execute(text("""
                 INSERT INTO aranzman_dopuna
                     (aranzman_id, saputnik, rodjen, pasos, prevozow, prevozrt, smer,
-                     adresa, email, telefon, ulazak, mesto_izlaska, uzrast, viza,
+                     adresa, grad, email, telefon, ulazak, mesto_izlaska, uzrast, viza,
                      mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
                      datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka)
                 VALUES (:aid, :ime, :rodjen, :pasos, :ow, :rt, :smer,
-                        :adresa, :email, :telefon, :ulazak, :mesto_izlaska, :uzrast, :viza,
+                        :adresa, :grad, :email, :telefon, :ulazak, :mesto_izlaska, :uzrast, :viza,
                         :mesto_sedenja, :placeno_prevoz, :zelja_prevoz, :datum_ow, :destinacija_ow,
                         :datum_polaska, :destinacija_polaska, :datum_povratka, :destinacija_povratka)
             """), {
@@ -4341,6 +4362,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "rt": 1 if s.rt else 0,
                 "smer": _rez_str(s.smer, 50) if s.ow else None,
                 "adresa": (s.adresa or "").strip()[:300],
+                "grad": _rez_str(s.grad, 100),
                 "email": (s.email or "").strip()[:300],
                 "telefon": (s.telefon or "").strip()[:300],
                 "ulazak": _rez_str(s.ulazak, 200),
@@ -4398,6 +4420,11 @@ def create_app(static_dir: str) -> FastAPI:
             raise HTTPException(status_code=400, detail="Datum do mora biti posle Datuma od")
         if not n.ime.strip():
             raise HTTPException(status_code=400, detail="Ime nosioca aranžmana je obavezno")
+        if n.uzrast.strip() not in ("ADL", "CHD", "INF"):
+            raise HTTPException(status_code=400, detail="Uzrast nosioca je obavezan (ADL / CHD / INF)")
+        for i, s in enumerate(body.saputnici, start=1):
+            if s.ime.strip() and s.uzrast.strip() not in ("ADL", "CHD", "INF"):
+                raise HTTPException(status_code=400, detail=f"Uzrast saputnika {i} je obavezan (ADL / CHD / INF)")
 
         def naziv_po_id(tabela: str, idv, kolona: str = "naziv"):
             if idv is None:
@@ -4459,6 +4486,7 @@ def create_app(static_dir: str) -> FastAPI:
             "pasos": _rez_str(n.pasos, 50),
             "uzrast": _rez_str(n.uzrast, 20),
             "adresa": (n.adresa or "").strip()[:200],
+            "grad": _rez_str(n.grad, 100),
             "telefon": (n.telefon or "").strip()[:200],
             "refno": _rez_str(n.email, 200),  # refno = email (isti maping kao pri učitavanju)
             "prevozow": 1 if ow else 0,
@@ -4559,7 +4587,7 @@ def create_app(static_dir: str) -> FastAPI:
                 f"SELECT {cols_sql} FROM aranzman WHERE id = :id"
             ), {"id": arow.id}).mappings().one())
             stari_sap = [dict(r) for r in conn.execute(text(
-                "SELECT saputnik, rodjen, pasos, uzrast, prevozow, prevozrt, smer, adresa, "
+                "SELECT saputnik, rodjen, pasos, uzrast, prevozow, prevozrt, smer, adresa, grad, "
                 "email, telefon, ulazak, mesto_izlaska, mesto_sedenja, placeno_prevoz, zelja_prevoz, "
                 "datum_ow, destinacija_ow, datum_polaska, destinacija_polaska, "
                 "datum_povratka, destinacija_povratka "
@@ -4816,7 +4844,7 @@ def create_app(static_dir: str) -> FastAPI:
             # saputnici iz aranzman_dopuna (red po red)
             dopuni = conn.execute(text("""
                 SELECT saputnik, uzrast, prevozow, prevozrt, viza, ulazak, mesto_izlaska, smer,
-                       adresa, email, telefon, rodjen, pasos,
+                       adresa, grad, email, telefon, rodjen, pasos,
                        mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
                        datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka
                 FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id
@@ -4853,6 +4881,7 @@ def create_app(static_dir: str) -> FastAPI:
             "mesto_izlaska": p.mesto_izlaska,
             "smer": p.smer,
             "adresa": (p.adresa or "").strip() or None,
+            "grad": (p.grad or "").strip() or None,
             "email": (p.email or "").strip() or None,
             "telefon": (p.telefon or "").strip() or None,
             "mesto_sedenja": p.mesto_sedenja,
@@ -4884,6 +4913,7 @@ def create_app(static_dir: str) -> FastAPI:
             "subagent": d.get("subagent") or "",
             "timelimit": d["timelimit"].strftime("%d.%m.%Y %H:%M") if d.get("timelimit") else None,
             "adresa": d.get("adresa"),
+            "grad": d.get("grad"),
             "telefon": d.get("telefon"),
             "refno": d.get("refno"),
             "prevozow": d.get("prevozow"),
@@ -5033,6 +5063,7 @@ def create_app(static_dir: str) -> FastAPI:
     SUBAGENTI_SEARCH_COLS = [
         "s.naziv", "s.adresa", "s.mesto", "s.osoba", "s.tel", "s.tel1",
         "s.tel2", "s.racun", "s.punnaziv", "s.kontakt", "s.fax",
+        "s.pib", "s.matbroj", "s.email", "s.ugovor_broj",
     ]
 
     @api.get("/subagenti")
@@ -5071,6 +5102,7 @@ def create_app(static_dir: str) -> FastAPI:
                 )
                 SELECT s.id, s.naziv, s.adresa, s.mesto, s.osoba, s.tel, s.tel1,
                        s.tel2, s.fax, s.racun, s.provizija, s.punnaziv, s.kontakt,
+                       s.pib, s.matbroj, s.email, s.ugovor_broj, s.ugovor_datumod, s.ugovor_datumdo, s.ta,
                        COALESCE(cnt.c, 0) AS broj_ugovora
                 FROM subagenti s
                 LEFT JOIN cnt ON cnt.subagent = s.naziv AND s.naziv <> ''
@@ -5101,19 +5133,20 @@ def create_app(static_dir: str) -> FastAPI:
             row = conn.execute(text("""
                 INSERT INTO subagenti (naziv, adresa, mesto, osoba, tel, tel1, tel2,
                                        fax, racun, provizija, provizija1, provizija1a,
-                                       provizija2, punnaziv, kontakt, pib, matbroj, email)
+                                       provizija2, punnaziv, kontakt, pib, matbroj, email,
+                                       ugovor_broj, ugovor_datumod, ugovor_datumdo, ta)
                 VALUES (:naziv, :adresa, :mesto, :osoba, :tel, :tel1, :tel2,
                         :fax, :racun, :provizija, :provizija1, :provizija1a,
                         :provizija2, :punnaziv, :kontakt, COALESCE(:pib, ''),
-                        COALESCE(:matbroj, ''), COALESCE(:email, ''))
+                        COALESCE(:matbroj, ''), COALESCE(:email, ''),
+                        COALESCE(:ugovor_broj, ''), :ugovor_datumod, :ugovor_datumdo, COALESCE(:ta, true))
                 RETURNING id
             """), body.model_dump()).fetchone()
         return {"id": row.id}
 
     @api.put("/subagenti/{item_id}")
     def update_subagent(item_id: int, body: SubagentUpdate, _: dict = Depends(get_current_user)):
-        fields = {k: v for k, v in body.model_dump().items() if v is not None or k in ("naziv",)}
-        fields = {k: v for k, v in fields.items() if v is not None}
+        fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if not (k == "naziv" and v is None)}
         if not fields:
             raise HTTPException(status_code=400, detail="Nema podataka za ažuriranje")
         set_clause = ", ".join(f"{k} = :{k}" for k in fields)

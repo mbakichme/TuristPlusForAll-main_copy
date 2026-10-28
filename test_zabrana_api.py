@@ -35,7 +35,7 @@ def main() -> None:
         )).scalar()
     ok(kljuc is not None, f"postoji ugovor za test ({kljuc})")
 
-    subs = client.get("/subagenti-izbor").json()
+    subs = client.get("/subagenti-izbor", params={"ta": "false"}).json()
     ok(len(subs) > 0, "postoji subagent")
     sub = subs[0]
 

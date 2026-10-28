@@ -52,6 +52,15 @@ const STATUS_IKONA_PRAZNO = "text-red-600 hover:text-red-700";
 function karticaImaPodatke(u: UplataRow): boolean {
   return [u.broj_potvrde, u.tip_kartice, u.broj_kartice, u.broj_odobrenja].some((v) => (v ?? "").trim() !== "");
 }
+/** Crveni toast (gore desno) da podaci kartice nisu uneti; ostaje dok se ne zatvori ili ne sačuvaju podaci. */
+const karticaToastId = (kljuc: number) => `kartica-${kljuc}`;
+function prikaziKarticaNeunetu(kljuc: number, ugovor: string) {
+  toast.error("Podaci kartice nisu uneti", {
+    id: karticaToastId(kljuc),
+    description: `Uplata ${kljuc} · Ugovor: ${ugovor}`,
+    duration: Infinity,
+  });
+}
 const MESTO_SEDENJA = ["DONJA PLATFORMA", "GORNJA PLATFORMA", "DOLE ZA STOLOM", "DOLE ZADNJI RED", "GORE IZLOG", "GORE STO", "ŠARAGE"];
 
 const nf = new Intl.NumberFormat("sr-RS", { maximumFractionDigits: 2 });
@@ -136,11 +145,13 @@ interface Nosilac {
   destinacijaPolaska: string;
   destinacijaPovratka: string;
   adresa: string;
+  grad: string;
   telefon: string;
   email: string;
 }
 interface Saputnik {
   adresa: string;
+  grad: string;
   email: string;
   telefon: string;
   kopiranKontakt: boolean;
@@ -233,11 +244,11 @@ const prazanNosilac: Nosilac = {
   ow: false, rt: false, sp: false, osiguranje: false, smer: "",
   datumOw: "", destinacijaOw: "", datumPolaska: "", datumPovratka: "",
   destinacijaPolaska: "", destinacijaPovratka: "",
-  adresa: "", telefon: "", email: "",
+  adresa: "", grad: "", telefon: "", email: "",
 };
 const prazanSaputnik = (uid: string): Saputnik => ({
   uid, ime: "", datumRodjenja: "", pasos: "", uzrast: "",
-  adresa: "", email: "", telefon: "", kopiranKontakt: false,
+  adresa: "", grad: "", email: "", telefon: "", kopiranKontakt: false,
   ow: false, rt: false, sp: false, osiguranje: false, smer: "",
   datumOw: "", destinacijaOw: "", datumPolaska: "", datumPovratka: "",
   destinacijaPolaska: "", destinacijaPovratka: "",
@@ -596,6 +607,7 @@ export default function RezervacijePage() {
   const [istorijaUcitava, setIstorijaUcitava] = useState(false);
   const [istorijaOtvorena, setIstorijaOtvorena] = useState(false);
   const uplateRequest = useRef(0);
+  const karticaToastIds = useRef<number[]>([]);
 
   // Sačuvaj / Izmeni — snimanje u bazu i zaključavanje forme
   const [izmena, setIzmena] = useState(false);
@@ -774,12 +786,12 @@ export default function RezervacijePage() {
       setTimeLimitSat(tl ? tl[4] : "12");
       setPrevozDetaljiOtvoreni({});
       const nosilacOw = !!d.prevozow;
-      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", uzrast: d.uzrast ?? "", adresa: d.adresa ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: d.destinacija_ow ?? "", datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: d.destinacija_polaska ?? "", destinacijaPovratka: d.destinacija_povratka ?? "" });
+      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", uzrast: d.uzrast ?? "", adresa: d.adresa ?? "", grad: d.grad ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: d.destinacija_ow ?? "", datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: d.destinacija_polaska ?? "", destinacijaPovratka: d.destinacija_povratka ?? "" });
       const dopuna = (d.putnici_detalji ?? []).filter((p) => !!p.saputnik?.trim());
       const dodati = dopuna.map((p) => {
         const uid = `s${++uidRef.current}`;
         const ow = !!p.prevozow;
-        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", uzrast: p.uzrast ?? "", adresa: p.adresa ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: p.destinacija_ow ?? "", datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: p.destinacija_polaska ?? "", destinacijaPovratka: p.destinacija_povratka ?? "" };
+        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", uzrast: p.uzrast ?? "", adresa: p.adresa ?? "", grad: p.grad ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: p.destinacija_ow ?? "", datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: p.destinacija_polaska ?? "", destinacijaPovratka: p.destinacija_povratka ?? "" };
       });
       setSaputnici(dodati);
       setDodatneStavke(d.dodatne ?? []);
@@ -999,6 +1011,24 @@ export default function RezervacijePage() {
       .finally(() => { if (request === uplateRequest.current) setUplateUcitavaju(false); });
   }, [izabraniUgovor, uplateOsvezi]);
 
+  // Pri promeni ugovora zatvori toaste kartica prethodnog ugovora
+  useEffect(() => {
+    karticaToastIds.current.forEach((kljuc) => toast.dismiss(karticaToastId(kljuc)));
+    karticaToastIds.current = [];
+  }, [izabraniUgovor]);
+
+  // Pri učitavanju uplata: uplate kartice bez podataka → crveni toast (izabraniUgovor je tu već novi,
+  // a uplateRedovi su sveži jer se efekat okida samo na promenu redova)
+  useEffect(() => {
+    if (!uplateRedovi || !izabraniUgovor) return;
+    for (const u of uplateRedovi) {
+      if (u.kljuc != null && u.nacin?.trim() === "Kartica" && !karticaImaPodatke(u)) {
+        prikaziKarticaNeunetu(u.kljuc, izabraniUgovor);
+        karticaToastIds.current.push(u.kljuc);
+      }
+    }
+  }, [uplateRedovi]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Istorija promena (rezervacija_log) izabranog ugovora; osvežava se pri izboru, snimanju i uplati
   useEffect(() => {
     if (!izabraniUgovor) {
@@ -1039,6 +1069,10 @@ export default function RezervacijePage() {
           nacin: uplata.nacin, din, svrha: uplata.svrha }),
       });
       toast.success("Uplata je uspešno uneta", { description: `Broj uplate: ${result.kljuc} · Ugovor: ${ugovor}` });
+      if (uplata.nacin.trim() === "Kartica" && ugovor === aktivniUgovor.current) {
+        prikaziKarticaNeunetu(result.kljuc, ugovor);
+        karticaToastIds.current.push(result.kljuc);
+      }
       if (ugovor === aktivniUgovor.current) {
         setUplata((u) => ({ ...u, iznos: "" }));
         setUplateOsvezi((n) => n + 1);
@@ -1058,6 +1092,7 @@ export default function RezervacijePage() {
     try {
       await apiFetch(`/uplate/${karticaPopup.kljuc}/kartica`, { method: "PUT", body: JSON.stringify(k) });
       toast.success("Podaci kartice su sačuvani", { description: `Uplata ${karticaPopup.kljuc}` });
+      toast.dismiss(karticaToastId(karticaPopup.kljuc));
       setKarticaPopup(null);
       setUplateOsvezi((n) => n + 1);
     } catch (error) {
@@ -1230,6 +1265,9 @@ export default function RezervacijePage() {
     // zaključan ugovor → dugme je „Izmeni“: samo otključava formu
     if (izabraniUgovor && !izmena) { setIzmena(true); return; }
     if (!nosilac.ime.trim()) { toast.error("Unesite ime nosioca aranžmana"); return; }
+    if (!UZRASTI.includes(nosilac.uzrast as (typeof UZRASTI)[number])) { toast.error("Izaberite uzrast nosioca (ADL / CHD / INF)"); return; }
+    const saputnikBezUzrasta = saputnici.findIndex((s) => s.ime.trim() && !UZRASTI.includes(s.uzrast as (typeof UZRASTI)[number]));
+    if (saputnikBezUzrasta !== -1) { toast.error(`Izaberite uzrast saputnika ${saputnikBezUzrasta + 1} (ADL / CHD / INF)`); return; }
     if (!boravak.datumOd || !boravak.datumDo) { toast.error("Unesite datum od i datum do boravka"); return; }
     if (boravak.datumDo <= boravak.datumOd) { toast.error("Datum do mora biti posle Datuma od"); return; }
 
@@ -1268,14 +1306,14 @@ export default function RezervacijePage() {
       nosilac: {
         ime: nosilac.ime.trim(), datumRodjenja: datumRodjenjaIso(nosilac.datumRodjenja),
         pasos: nosilac.pasos.trim(), uzrast: nosilac.uzrast, ow: nosilac.ow, rt: nosilac.rt, sp: nosilac.sp,
-        smer: nosilac.smer, adresa: nosilac.adresa.trim(), telefon: nosilac.telefon.trim(),
+        smer: nosilac.smer, adresa: nosilac.adresa.trim(), grad: nosilac.grad.trim(), telefon: nosilac.telefon.trim(),
         email: nosilac.email.trim(),
         ...prevozPolja(nosilac, prevozRedovi["nosilac"]),
       },
       saputnici: saputnici.filter((s) => s.ime.trim()).map((s) => ({
         ime: s.ime.trim(), datumRodjenja: datumRodjenjaIso(s.datumRodjenja),
         pasos: s.pasos.trim(), uzrast: s.uzrast, ow: s.ow, rt: s.rt, sp: s.sp, smer: s.smer,
-        adresa: s.adresa.trim(), telefon: s.telefon.trim(), email: s.email.trim(),
+        adresa: s.adresa.trim(), grad: s.grad.trim(), telefon: s.telefon.trim(), email: s.email.trim(),
         ulazak: prevozRedovi[s.uid]?.mestoUlaska ?? "",
         mestoIzlaska: prevozRedovi[s.uid]?.mestoIzlaska ?? "",
         ...prevozPolja(s, prevozRedovi[s.uid]),
@@ -1810,6 +1848,9 @@ export default function RezervacijePage() {
                   <Fld label="Adresa">
                     <Input value={nosilac.adresa} onChange={(e) => setNosilac({ ...nosilac, adresa: e.target.value })} disabled={zakljucano} />
                   </Fld>
+                  <Fld label="Grad">
+                    <Input value={nosilac.grad} onChange={(e) => setNosilac({ ...nosilac, grad: e.target.value })} disabled={zakljucano} />
+                  </Fld>
                   <Fld label="Telefon">
                     <Input value={nosilac.telefon} onChange={(e) => setNosilac({ ...nosilac, telefon: e.target.value })} disabled={zakljucano} />
                   </Fld>
@@ -1841,7 +1882,7 @@ export default function RezervacijePage() {
                       <div className="flex items-center gap-3">
                         <Chk label="Kopiraj kontakt nosioca" labelClassName="text-xs" checked={s.kopiranKontakt} disabled={zakljucano}
                           onChange={(checked) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid
-                            ? { ...p, kopiranKontakt: checked, ...(checked ? { adresa: nosilac.adresa, email: nosilac.email, telefon: nosilac.telefon } : {}) } : p))} />
+                            ? { ...p, kopiranKontakt: checked, ...(checked ? { adresa: nosilac.adresa, grad: nosilac.grad, email: nosilac.email, telefon: nosilac.telefon } : {}) } : p))} />
                         <Button
                           variant="ghost" size="icon"
                           className="h-7 w-7 text-muted-foreground hover:text-destructive"
@@ -1888,6 +1929,9 @@ export default function RezervacijePage() {
                       </Fld>
                       <Fld label="Adresa">
                         <Input value={s.adresa} onChange={(e) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, adresa: e.target.value, kopiranKontakt: false } : p))} disabled={zakljucano} />
+                      </Fld>
+                      <Fld label="Grad">
+                        <Input value={s.grad} onChange={(e) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, grad: e.target.value, kopiranKontakt: false } : p))} disabled={zakljucano} />
                       </Fld>
                       <Fld label="Telefon">
                         <Input type="tel" value={s.telefon} onChange={(e) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, telefon: e.target.value, kopiranKontakt: false } : p))} disabled={zakljucano} />

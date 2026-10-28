@@ -94,11 +94,15 @@ try:
     print("2. PUT")
     proveri(kljuc, "INF", "CHD", "ADL", "PUT")
 
-    # 3. PUT: nosilac poništen (prazno → NULL)
-    req("/rezervacije/" + urllib.parse.quote(kljuc, safe=""), "PUT",
-        payload("", "CHD", "ADL"))
-    print("3. PUT prazan uzrast nosioca")
-    proveri(kljuc, None, "CHD", "ADL", "PRAZAN")
+    # 3. PUT: prazan uzrast nosioca → 400 (obavezno polje), baza ostaje INF
+    try:
+        req("/rezervacije/" + urllib.parse.quote(kljuc, safe=""), "PUT",
+            payload("", "CHD", "ADL"))
+        ok = False
+        print("  FAIL PUT prazan uzrast nosioca: očekivan 400, dobijen 200")
+    except urllib.error.HTTPError as he:
+        provera("PUT prazan uzrast nosioca → status", he.code, 400)
+    proveri(kljuc, "INF", "CHD", "ADL", "POSLE 400")
 except Exception as e:
     ok = False
     print("  FAIL:", repr(e))

@@ -42,16 +42,16 @@ function SubagentPicker({ izabrani, opcije, onIzbor }: {
   return (
     <Popover open={otvoreno} onOpenChange={setOtvoreno}>
       <PopoverTrigger asChild>
-        <Button variant="outline" className="h-9 w-full justify-between font-normal" aria-label="Subagent">
-          <span className="truncate">{izabrani?.naziv ?? "Izaberite subagenta"}</span>
+        <Button variant="outline" className="h-9 w-full justify-between font-normal" aria-label="Firma">
+          <span className="truncate">{izabrani?.naziv ?? "Izaberite firmu"}</span>
           <ChevronDown className="size-4 opacity-50 shrink-0" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-card" align="start">
         <Command>
-          <CommandInput placeholder="Pretraga subagenta…" />
+          <CommandInput placeholder="Pretraga firme…" />
           <CommandList>
-            <CommandEmpty>Nema subagenta za zadatu pretragu.</CommandEmpty>
+            <CommandEmpty>Nema firme za zadatu pretragu.</CommandEmpty>
             <CommandGroup>
               {opcije.map((s) => (
                 <CommandItem
@@ -98,7 +98,7 @@ export function AdministrativnaZabranaPopup({ open, onOpenChange, kljuc }: Props
     setBrojRataTxt("12");
     Promise.all([
       apiFetch<Predlog>(`/zabrane/predlog?kljuc=${encodeURIComponent(kljuc)}`),
-      apiFetch<SubagentOpcija[]>("/subagenti-izbor"),
+      apiFetch<SubagentOpcija[]>("/subagenti-izbor?ta=false"),
     ])
       .then(([p, s]) => {
         if (!aktivan) return;
@@ -141,7 +141,7 @@ export function AdministrativnaZabranaPopup({ open, onOpenChange, kljuc }: Props
   })();
 
   async function kreiraj() {
-    if (!subagent) { toast.error("Izaberite subagenta"); return; }
+    if (!subagent) { toast.error("Izaberite firmu"); return; }
     if (broj.trim() === "") { toast.error("Unesite broj zabrane"); return; }
     if (!Number.isFinite(iznos) || iznos <= 0) { toast.error("Iznos mora biti pozitivan broj sa najviše dve decimale"); return; }
     if (!brojRataOk) { toast.error("Broj rata mora biti ceo broj od 1 do 120"); return; }
@@ -187,7 +187,7 @@ export function AdministrativnaZabranaPopup({ open, onOpenChange, kljuc }: Props
         ) : (
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 [&_label]:block">
             <div className="col-span-2 space-y-1.5">
-              <label className="text-sm font-medium">Subagent</label>
+              <label className="text-sm font-medium">Firma</label>
               <SubagentPicker izabrani={subagent} opcije={subagenti} onIzbor={setSubagent} />
             </div>
 

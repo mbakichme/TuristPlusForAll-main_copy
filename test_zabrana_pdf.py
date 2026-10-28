@@ -77,7 +77,7 @@ def api() -> int:
             "SELECT kljuc FROM aranzman WHERE kljuc LIKE '%/26' AND COALESCE(kljuc,'') <> '' "
             "ORDER BY id DESC LIMIT 1"
         )).scalar()
-    sub = client.get("/subagenti-izbor").json()[0]
+    sub = client.get("/subagenti-izbor", params={"ta": "false"}).json()[0]
     broj = f"TST{uuid.uuid4().hex[:8]}/1"
     try:
         r = client.post("/zabrane", json={

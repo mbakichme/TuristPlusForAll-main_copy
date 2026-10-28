@@ -99,11 +99,12 @@ def _f(v) -> float:
 def register_zaduzenje(api, engine, get_current_user):
 
     @api.get("/subagenti-izbor")
-    def subagenti_izbor(_: dict = Depends(get_current_user)):
+    def subagenti_izbor(ta: Optional[bool] = None, _: dict = Depends(get_current_user)):
+        uslov = "" if ta is None else " AND ta = :ta"
         with engine.connect() as conn:
             rows = conn.execute(text(
-                "SELECT id, naziv FROM subagenti WHERE naziv <> '' ORDER BY naziv"
-            )).fetchall()
+                f"SELECT id, naziv FROM subagenti WHERE naziv <> ''{uslov} ORDER BY naziv"
+            ), {} if ta is None else {"ta": ta}).fetchall()
         return [{"id": r.id, "naziv": r.naziv} for r in rows]
 
     @api.get("/zaduzenje/{kljuc:path}")

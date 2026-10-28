@@ -4,6 +4,11 @@ import { apiFetch } from "../lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format } from "date-fns";
+import { srLatn } from "date-fns/locale";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
@@ -16,14 +21,51 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
 } from "@/components/ui/alert-dialog";
 import {
-  Loader2, Search, ChevronUp, ChevronDown, RefreshCw, Plus, Pencil, Trash2, Handshake
+  Loader2, Search, ChevronUp, ChevronDown, RefreshCw, Plus, Pencil, Trash2, Handshake, CalendarDays
 } from "lucide-react";
 import { toast } from "sonner";
+
+/** Datum u formi: dugme sa kalendarom u popover-u (srpski, ponedeljak prvi), prazno = bez datuma. */
+function DatumPolje({ value, onChange, label }: { value: string; onChange: (iso: string) => void; label: string }) {
+  const [otvoreno, setOtvoreno] = useState(false);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : undefined;
+  return (
+    <Popover open={otvoreno} onOpenChange={setOtvoreno}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 w-full justify-start font-normal text-xs tabular-nums" aria-label={label}>
+          <CalendarDays className="size-3.5 mr-1.5 text-muted-foreground" />
+          {d ? format(d, "dd.MM.yyyy.") : "Izaberite"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0 bg-card" align="start">
+        <Calendar
+          mode="single"
+          selected={d}
+          onSelect={(x) => { if (x) onChange(format(x, "yyyy-MM-dd")); setOtvoreno(false); }}
+          locale={srLatn}
+          weekStartsOn={1}
+        />
+        {value && (
+          <div className="border-t p-2">
+            <Button variant="ghost" size="sm" className="w-full text-xs" onClick={() => { onChange(""); setOtvoreno(false); }}>
+              Obriši datum
+            </Button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: "naziv", label: "Naziv", sortable: true },
   { key: "mesto", label: "Mesto", sortable: true },
-  { key: "osoba", label: "PIB/Osoba", sortable: false },
+  { key: "pib", label: "PIB", sortable: true },
+  { key: "matbroj", label: "MB", sortable: true },
+  { key: "ta", label: "TA", sortable: false },
+  { key: "ugovor_broj", label: "Broj ugovora", sortable: false },
+  { key: "ugovor_datumod", label: "Datum od", sortable: false },
+  { key: "ugovor_datumdo", label: "Datum do", sortable: false },
   { key: "tel", label: "Telefon", sortable: false },
   { key: "tel2", label: "Email", sortable: false },
   { key: "racun", label: "Račun", sortable: false },
@@ -33,8 +75,14 @@ const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
 
 const BATCH_SIZE = 100;
 
+function fmtDatum(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}.${m}.${y}.`;
+}
+
 const EMPTY_FORM = {
-  naziv: "", adresa: "", mesto: "", osoba: "", tel: "", tel1: "", tel2: "",
+  naziv: "", adresa: "", mesto: "", pib: "", matbroj: "", ta: "true", ugovor_broj: "", ugovor_datumod: "", ugovor_datumdo: "", tel: "", tel1: "", tel2: "",
   fax: "", racun: "", provizija: "0", provizija1: "0", provizija1a: "0",
   provizija2: "0", punnaziv: "", kontakt: "",
 };
@@ -130,7 +178,9 @@ export default function SubagentiPage() {
     setEditId(s.id);
     setForm({
       naziv: s.naziv || "", adresa: s.adresa || "", mesto: s.mesto || "",
-      osoba: s.osoba || "", tel: s.tel || "", tel1: s.tel1 || "", tel2: s.tel2 || "",
+      pib: s.pib || "", matbroj: s.matbroj || "", ta: s.ta === false ? "false" : "true", ugovor_broj: s.ugovor_broj || "",
+      ugovor_datumod: s.ugovor_datumod || "", ugovor_datumdo: s.ugovor_datumdo || "",
+      tel: s.tel || "", tel1: s.tel1 || "", tel2: s.tel2 || "",
       fax: s.fax || "", racun: s.racun || "",
       provizija: String(s.provizija ?? 0), provizija1: String(s.provizija1 ?? 0),
       provizija1a: String(s.provizija1a ?? 0), provizija2: String(s.provizija2 ?? 0),
@@ -147,6 +197,9 @@ export default function SubagentiPage() {
     setSaving(true);
     const payload = {
       ...form,
+      ugovor_datumod: form.ugovor_datumod || null,
+      ugovor_datumdo: form.ugovor_datumdo || null,
+      ta: form.ta === "true",
       provizija: parseFloat(form.provizija) || 0,
       provizija1: parseFloat(form.provizija1) || 0,
       provizija1a: parseFloat(form.provizija1a) || 0,
@@ -233,8 +286,9 @@ export default function SubagentiPage() {
         </CardHeader>
         <CardContent>
           <div className="rounded-md border">
-            <Table>
+            <Table className="text-xs [&_td]:px-1.5 [&_th]:px-1.5">
               <TableHeader>
+
                 <TableRow>
                   {COLUMNS.map((c) => (
                     <TableHead key={c.key} className="whitespace-nowrap">
@@ -263,13 +317,13 @@ export default function SubagentiPage() {
               <TableBody>
                 {loading && rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-10">
+                    <TableCell colSpan={14} className="text-center py-10">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" />
                     </TableCell>
                   </TableRow>
                 ) : rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={14} className="text-center text-muted-foreground py-10">
                       {search ? "Nema rezultata za pretragu" : "Nema subagenata"}
                     </TableCell>
                   </TableRow>
@@ -278,7 +332,12 @@ export default function SubagentiPage() {
                     <TableRow key={s.id}>
                       <TableCell className="font-medium">{s.naziv || "—"}</TableCell>
                       <TableCell>{s.mesto || "—"}</TableCell>
-                      <TableCell className="text-muted-foreground">{s.osoba || "—"}</TableCell>
+                      <TableCell className="font-mono text-xs whitespace-nowrap">{s.pib || "—"}</TableCell>
+                      <TableCell className="font-mono text-xs whitespace-nowrap">{s.matbroj || "—"}</TableCell>
+                      <TableCell>{s.ta === false ? <span className="text-muted-foreground">Ne</span> : <span className="font-medium">Da</span>}</TableCell>
+                      <TableCell className="font-mono text-xs whitespace-nowrap">{s.ugovor_broj || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap">{fmtDatum(s.ugovor_datumod)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{fmtDatum(s.ugovor_datumdo)}</TableCell>
                       <TableCell className="whitespace-nowrap">{s.tel || "—"}</TableCell>
                       <TableCell className="max-w-40 truncate" title={s.tel2 || ""}>{s.tel2 || "—"}</TableCell>
                       <TableCell className="font-mono text-xs">{s.racun || "—"}</TableCell>
@@ -349,8 +408,30 @@ export default function SubagentiPage() {
               <Input value={form.mesto} onChange={(e) => setField("mesto", e.target.value)} className="h-8 text-xs" />
             </div>
             <div>
-              <Label className="text-[11px]">PIB / Osoba</Label>
-              <Input value={form.osoba} onChange={(e) => setField("osoba", e.target.value)} className="h-8 text-xs" />
+              <Label className="text-[11px]">PIB</Label>
+              <Input value={form.pib} onChange={(e) => setField("pib", e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div>
+              <Label className="text-[11px]">MB (matični broj)</Label>
+              <Input value={form.matbroj} onChange={(e) => setField("matbroj", e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div className="flex items-end pb-1.5">
+              <div className="flex items-center gap-2">
+                <Switch id="sub-ta" checked={form.ta === "true"} onCheckedChange={(v) => setField("ta", v ? "true" : "false")} />
+                <Label htmlFor="sub-ta" className="text-[11px]">TA (true/false)</Label>
+              </div>
+            </div>
+            <div>
+              <Label className="text-[11px]">Broj ugovora</Label>
+              <Input value={form.ugovor_broj} onChange={(e) => setField("ugovor_broj", e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div>
+              <Label className="text-[11px]">Datum od</Label>
+              <DatumPolje label="Datum od" value={form.ugovor_datumod} onChange={(v) => setField("ugovor_datumod", v)} />
+            </div>
+            <div>
+              <Label className="text-[11px]">Datum do</Label>
+              <DatumPolje label="Datum do" value={form.ugovor_datumdo} onChange={(v) => setField("ugovor_datumdo", v)} />
             </div>
             <div>
               <Label className="text-[11px]">Kontakt osoba</Label>

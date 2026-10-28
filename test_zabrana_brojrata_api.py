@@ -34,7 +34,7 @@ def main() -> None:
             "ORDER BY id DESC LIMIT 1"
         )).scalar()
     ok(kljuc is not None, f"postoji ugovor za test ({kljuc})")
-    sub = client.get("/subagenti-izbor").json()[0]
+    sub = client.get("/subagenti-izbor", params={"ta": "false"}).json()[0]
 
     broj = f"TST{uuid.uuid4().hex[:8]}/1"
     telo = {

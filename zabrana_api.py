@@ -286,10 +286,10 @@ def register_zabrana(api, engine, get_current_user, get_kurs: Callable[[], float
 
             ar = _aranzman(conn, body.kljuc)
             subagent = conn.execute(text(
-                "SELECT naziv FROM subagenti WHERE id = :s AND naziv <> ''"
+                "SELECT naziv FROM subagenti WHERE id = :s AND naziv <> '' AND ta = false"
             ), {"s": body.subagent_id}).fetchone()
             if not subagent:
-                raise HTTPException(status_code=400, detail="Izaberite subagenta")
+                raise HTTPException(status_code=400, detail="Izaberite firmu")
 
             if conn.execute(text("SELECT 1 FROM zabrana WHERE brojzabrane = :b"),
                             {"b": body.broj_zabrane}).fetchone():

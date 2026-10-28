@@ -84,6 +84,7 @@ export interface PutnikDetalj {
   rodjen?: string | null;
   pasos?: string | null;
   adresa?: string | null;
+  grad?: string | null;
   email?: string | null;
   telefon?: string | null;
   uzrast?: string | null;
@@ -125,6 +126,7 @@ export interface UgovorDetail {
   tiprezervacije?: string | null;
   timelimit?: string | null;
   adresa?: string | null;
+  grad?: string | null;
   telefon?: string | null;
   refno?: string | null;
   prevozow?: number | null;
@@ -189,6 +191,13 @@ export interface Subagent {
   adresa: string | null;
   mesto: string | null;
   osoba: string | null;
+  pib: string | null;
+  matbroj: string | null;
+  email: string | null;
+  ugovor_broj: string | null;
+  ugovor_datumod: string | null;
+  ugovor_datumdo: string | null;
+  ta: boolean | null;
   tel: string | null;
   tel1: string | null;
   tel2: string | null;

@@ -26,6 +26,7 @@ hdr = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
 
 STARI = "99901/26"
 NOVI = "99902/26"
+STORNO = "99903/26"
 ok = True
 
 
@@ -52,7 +53,7 @@ def ocisti():
         conn.execute(text("DELETE FROM prebacivanje WHERE uplata_kljuc IN "
                           "(SELECT kljuc FROM uplate WHERE svrha = 'TEST PREBACI')"))
         conn.execute(text("DELETE FROM uplate WHERE faktura IN ('99901', '99902') AND svrha = 'TEST PREBACI'"))
-        conn.execute(text("DELETE FROM aranzman WHERE kljuc IN (:a, :b)"), {"a": STARI, "b": NOVI})
+        conn.execute(text("DELETE FROM aranzman WHERE kljuc IN (:a, :b, :c)"), {"a": STARI, "b": NOVI, "c": STORNO})
 
 
 def main():
@@ -113,6 +114,21 @@ def main():
     provera("isti ugovor → 400", post(f"/uplate/{kljuc_uplate}/prebaci", {"ugovor": NOVI})[0], 400)
     provera("nepostojeći ugovor → 404", post(f"/uplate/{kljuc_uplate}/prebaci", {"ugovor": "88888888/26"})[0], 404)
     provera("nepoznata uplata → 404", post("/uplate/999999999/prebaci", {"ugovor": STARI})[0], 404)
+
+    print("4b) zabrana prebacivanja na STORNO ugovor")
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO aranzman (kljuc, naziv, mesto, napomena, tiprezervacije) "
+            "VALUES (:k, 'TEST PREBACI', 'TEST', NULL, 'STORNO')"
+        ), {"k": STORNO})
+    status, odg = post(f"/uplate/{kljuc_uplate}/prebaci", {"ugovor": STORNO})
+    provera("STORNO ugovor → 400", status, 400)
+    with engine.begin() as conn:
+        f = conn.execute(text("SELECT faktura FROM uplate WHERE kljuc = :k"), {"k": kljuc_uplate}).scalar()
+        provera("uplata ostaje na NOVI (ne prebacuje se)", f, "99902")
+        n_st = conn.execute(text("SELECT napomena FROM aranzman WHERE kljuc = :k"), {"k": STORNO}).scalar()
+        provera("napomena STORNO ugovora netaknuta", n_st, None)
+        conn.execute(text("DELETE FROM aranzman WHERE kljuc = :k"), {"k": STORNO})
 
     print("5) čišćenje")
     ocisti()
