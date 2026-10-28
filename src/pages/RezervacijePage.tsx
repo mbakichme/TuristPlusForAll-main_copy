@@ -34,6 +34,7 @@ import { apiFetch, getToken } from "../lib/api";
 import type { CekStavka, Destinacija, DodatnaStavka, KarticaPodaci, Mesto, Smestaj, Soba, UgovorDetail, UgovorRow, UgovoriResponse, UplataRow } from "../types";
 import { cn } from "@/lib/utils";
 import { CekPopup } from "@/components/CekPopup";
+import { AdministrativnaZabranaPopup } from "@/components/AdministrativnaZabranaPopup";
 import { DodatnaStavkaForma } from "@/components/DodatnaStavkaForma";
 import { KarticaPopup } from "@/components/KarticaPopup";
 import { PageLoader } from "@/components/PageLoader";
@@ -122,6 +123,7 @@ interface Nosilac {
   ime: string;
   datumRodjenja: string;
   pasos: string;
+  uzrast: string;
   ow: boolean;
   rt: boolean;
   sp: boolean;
@@ -146,6 +148,7 @@ interface Saputnik {
   ime: string;
   datumRodjenja: string;
   pasos: string;
+  uzrast: string;
   ow: boolean;
   rt: boolean;
   sp: boolean;
@@ -226,14 +229,14 @@ interface Uplata {
   svrha: string;
 }
 const prazanNosilac: Nosilac = {
-  ime: "", datumRodjenja: "", pasos: "",
+  ime: "", datumRodjenja: "", pasos: "", uzrast: "",
   ow: false, rt: false, sp: false, osiguranje: false, smer: "",
   datumOw: "", destinacijaOw: "", datumPolaska: "", datumPovratka: "",
   destinacijaPolaska: "", destinacijaPovratka: "",
   adresa: "", telefon: "", email: "",
 };
 const prazanSaputnik = (uid: string): Saputnik => ({
-  uid, ime: "", datumRodjenja: "", pasos: "",
+  uid, ime: "", datumRodjenja: "", pasos: "", uzrast: "",
   adresa: "", email: "", telefon: "", kopiranKontakt: false,
   ow: false, rt: false, sp: false, osiguranje: false, smer: "",
   datumOw: "", destinacijaOw: "", datumPolaska: "", datumPovratka: "",
@@ -250,6 +253,34 @@ function EmailInput({ value, onChange, disabled }: { value: string; onChange: (v
         aria-invalid={invalid} className={cn(invalid && "border-destructive")}
         onChange={(e) => onChange(e.target.value)} onBlur={() => setTouched(true)} />
       {invalid && <p role="alert" className="text-xs text-destructive">Unesite ispravnu email adresu (npr. ime@domen.rs).</p>}
+    </div>
+  );
+}
+/** Uzrast putnika: ADL / CHD / INF. Ponovni klik na izabrani uzrast ga poništava (prazno). */
+const UZRASTI = ["ADL", "CHD", "INF"] as const;
+function UzrastIzbor({ value, onChange, disabled, label }: { value: string; onChange: (value: string) => void; disabled?: boolean; label: string }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex h-8 items-center gap-1">
+      {UZRASTI.map((u) => {
+        const aktivan = value === u;
+        return (
+          <button
+            key={u}
+            type="button"
+            role="radio"
+            aria-checked={aktivan}
+            aria-label={`${label} — ${u}`}
+            disabled={disabled}
+            onClick={() => onChange(aktivan ? "" : u)}
+            className={cn(
+              "h-7 flex-1 rounded-md border text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+              aktivan ? "border-blue-600 bg-blue-600 text-white" : "border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            {u}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -546,6 +577,8 @@ export default function RezervacijePage() {
   // popup kartice: uvek za postojeću uplatu (dugme "Kartica" u redu tabele)
   const [karticaPopup, setKarticaPopup] = useState<{ kljuc: number; vrednost: KarticaPodaci } | null>(null);
   const [karticaCuva, setKarticaCuva] = useState(false);
+  // popup administrativne zabrane: za sačuvani ugovor (dugme u zajedničkoj traci)
+  const [zabranaOtvorena, setZabranaOtvorena] = useState(false);
   // popup čekova: uvek za postojeću uplatu (dugme "Čekovi" u redu tabele)
   const [cekPopup, setCekPopup] = useState<{ kljuc: number; iznos: number; pocetni: CekStavka[] } | null>(null);
   const [cekCuva, setCekCuva] = useState(false);
@@ -741,12 +774,12 @@ export default function RezervacijePage() {
       setTimeLimitSat(tl ? tl[4] : "12");
       setPrevozDetaljiOtvoreni({});
       const nosilacOw = !!d.prevozow;
-      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", adresa: d.adresa ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: d.destinacija_ow ?? "", datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: d.destinacija_polaska ?? "", destinacijaPovratka: d.destinacija_povratka ?? "" });
+      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", uzrast: d.uzrast ?? "", adresa: d.adresa ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: d.destinacija_ow ?? "", datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: d.destinacija_polaska ?? "", destinacijaPovratka: d.destinacija_povratka ?? "" });
       const dopuna = (d.putnici_detalji ?? []).filter((p) => !!p.saputnik?.trim());
       const dodati = dopuna.map((p) => {
         const uid = `s${++uidRef.current}`;
         const ow = !!p.prevozow;
-        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", adresa: p.adresa ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: p.destinacija_ow ?? "", datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: p.destinacija_polaska ?? "", destinacijaPovratka: p.destinacija_povratka ?? "" };
+        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", uzrast: p.uzrast ?? "", adresa: p.adresa ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: p.destinacija_ow ?? "", datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: p.destinacija_polaska ?? "", destinacijaPovratka: p.destinacija_povratka ?? "" };
       });
       setSaputnici(dodati);
       setDodatneStavke(d.dodatne ?? []);
@@ -835,19 +868,22 @@ export default function RezervacijePage() {
       mesto: searchParams.get("mesto") || prev.mesto,
       struktura: struktura || prev.struktura,
     }));
+    const odrasli = Number(searchParams.get("odrasli") ?? "");
+    const deca = (searchParams.get("deca") ?? "").split(",").filter((x) => x.trim() !== "").length;
+    // Cena iz pretrage je ukupna cena sobe → rastavlja se po osobama: količina = broj osoba, jedinična = cena / broj osoba.
+    const brojOsoba = Number.isFinite(odrasli) && odrasli >= 1 ? odrasli + deca : 1;
     const cena = searchParams.get("cena");
     if (cena && Number.isFinite(Number(cena))) {
       const popust = searchParams.get("popust");
+      // Popust ostaje ukupan iznos: bruto (jedinična × količina) − popust.
       setCene((prev) => ({
         ...prev,
-        cenaSmestaj: cena,
-        kolSmestaj: "1",
+        cenaSmestaj: (Number(cena) / brojOsoba).toFixed(2),
+        kolSmestaj: String(brojOsoba),
         popustSmestajPct: "",
         popustSmestaj: popust && Number(popust) > 0 ? popust : "",
       }));
     }
-    const odrasli = Number(searchParams.get("odrasli") ?? "");
-    const deca = (searchParams.get("deca") ?? "").split(",").filter((x) => x.trim() !== "").length;
     const prevozParam = searchParams.get("prevoz");
     if (Number.isFinite(odrasli) && odrasli >= 1) {
       const rt = prevozParam === "autobuski";
@@ -1231,14 +1267,14 @@ export default function RezervacijePage() {
         : null,
       nosilac: {
         ime: nosilac.ime.trim(), datumRodjenja: datumRodjenjaIso(nosilac.datumRodjenja),
-        pasos: nosilac.pasos.trim(), ow: nosilac.ow, rt: nosilac.rt, sp: nosilac.sp,
+        pasos: nosilac.pasos.trim(), uzrast: nosilac.uzrast, ow: nosilac.ow, rt: nosilac.rt, sp: nosilac.sp,
         smer: nosilac.smer, adresa: nosilac.adresa.trim(), telefon: nosilac.telefon.trim(),
         email: nosilac.email.trim(),
         ...prevozPolja(nosilac, prevozRedovi["nosilac"]),
       },
       saputnici: saputnici.filter((s) => s.ime.trim()).map((s) => ({
         ime: s.ime.trim(), datumRodjenja: datumRodjenjaIso(s.datumRodjenja),
-        pasos: s.pasos.trim(), ow: s.ow, rt: s.rt, sp: s.sp, smer: s.smer,
+        pasos: s.pasos.trim(), uzrast: s.uzrast, ow: s.ow, rt: s.rt, sp: s.sp, smer: s.smer,
         adresa: s.adresa.trim(), telefon: s.telefon.trim(), email: s.email.trim(),
         ulazak: prevozRedovi[s.uid]?.mestoUlaska ?? "",
         mestoIzlaska: prevozRedovi[s.uid]?.mestoIzlaska ?? "",
@@ -1738,7 +1774,7 @@ export default function RezervacijePage() {
             <CardContent className={cn(KOMPAKT_CONTENT, "space-y-3")}>
               {/* Nosilac */}
               <div className="space-y-2">
-                <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-4 xl:grid-cols-[1.4fr_0.8fr_0.9fr_0.7fr_1.3fr_0.9fr_1.2fr]">
+                <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-4 xl:grid-cols-[1.4fr_0.8fr_0.7fr_0.9fr_1.3fr_0.9fr_1.2fr_0.7fr]">
                   <Fld label="Nosilac aranžmana" labelClassName="text-sm font-semibold text-blue-600">
                     <Input
                       className="font-medium"
@@ -1760,6 +1796,9 @@ export default function RezervacijePage() {
                       disabled={zakljucano}
                     />
                   </Fld>
+                  <Fld label="Uzrast">
+                    <UzrastIzbor label="Uzrast nosioca" value={nosilac.uzrast} onChange={(uzrast) => setNosilac({ ...nosilac, uzrast })} disabled={zakljucano} />
+                  </Fld>
                   <Fld label="Broj pasoša">
                     <Input
                       value={nosilac.pasos}
@@ -1767,11 +1806,6 @@ export default function RezervacijePage() {
                       placeholder="Broj pasoša"
                       disabled={zakljucano}
                     />
-                  </Fld>
-                  <Fld label="Osiguranje">
-                    <div className="flex min-h-8 items-center">
-                      <Chk label="Osiguranje" checked={nosilac.osiguranje} onChange={(v) => setNosilac({ ...nosilac, osiguranje: v })} disabled={zakljucano} />
-                    </div>
                   </Fld>
                   <Fld label="Adresa">
                     <Input value={nosilac.adresa} onChange={(e) => setNosilac({ ...nosilac, adresa: e.target.value })} disabled={zakljucano} />
@@ -1781,6 +1815,11 @@ export default function RezervacijePage() {
                   </Fld>
                   <Fld label="Email">
                     <EmailInput value={nosilac.email} onChange={(email) => setNosilac({ ...nosilac, email })} disabled={zakljucano} />
+                  </Fld>
+                  <Fld label="Osiguranje">
+                    <div className="flex min-h-8 items-center">
+                      <Chk label="Osiguranje" checked={nosilac.osiguranje} onChange={(v) => setNosilac({ ...nosilac, osiguranje: v })} disabled={zakljucano} />
+                    </div>
                   </Fld>
                 </div>
               </div>
@@ -1814,7 +1853,7 @@ export default function RezervacijePage() {
                         </Button>
                       </div>
                     </div>
-                    <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-4 xl:grid-cols-[1.4fr_0.8fr_0.9fr_0.7fr_1.3fr_0.9fr_1.2fr]">
+                    <div className="grid gap-x-3 gap-y-2 grid-cols-1 md:grid-cols-4 xl:grid-cols-[1.4fr_0.8fr_0.7fr_0.9fr_1.3fr_0.9fr_1.2fr_0.7fr]">
                       <Fld label="Ime i prezime">
                         <Input
                           className="font-medium"
@@ -1836,17 +1875,16 @@ export default function RezervacijePage() {
                           disabled={zakljucano}
                         />
                       </Fld>
+                      <Fld label="Uzrast">
+                        <UzrastIzbor label={`Uzrast saputnika ${i + 1}`} value={s.uzrast} disabled={zakljucano}
+                          onChange={(uzrast) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, uzrast } : p))} />
+                      </Fld>
                       <Fld label="Broj pasoša">
                         <Input
                           value={s.pasos}
                           onChange={(e) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, pasos: e.target.value } : p))}
                           disabled={zakljucano}
                         />
-                      </Fld>
-                      <Fld label="Osiguranje">
-                        <div className="flex min-h-8 items-center">
-                          <Chk label="Osiguranje" checked={s.osiguranje} onChange={(v) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, osiguranje: v } : p))} disabled={zakljucano} />
-                        </div>
                       </Fld>
                       <Fld label="Adresa">
                         <Input value={s.adresa} onChange={(e) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, adresa: e.target.value, kopiranKontakt: false } : p))} disabled={zakljucano} />
@@ -1856,6 +1894,11 @@ export default function RezervacijePage() {
                       </Fld>
                       <Fld label="Email">
                         <EmailInput value={s.email} onChange={(email) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, email, kopiranKontakt: false } : p))} disabled={zakljucano} />
+                      </Fld>
+                      <Fld label="Osiguranje">
+                        <div className="flex min-h-8 items-center">
+                          <Chk label="Osiguranje" checked={s.osiguranje} onChange={(v) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid ? { ...p, osiguranje: v } : p))} disabled={zakljucano} />
+                        </div>
                       </Fld>
                     </div>
                   </div>
@@ -2782,6 +2825,14 @@ export default function RezervacijePage() {
         </DialogContent>
       </Dialog>
 
+      {izabraniUgovor && (
+        <AdministrativnaZabranaPopup
+          open={zabranaOtvorena}
+          onOpenChange={setZabranaOtvorena}
+          kljuc={izabraniUgovor}
+        />
+      )}
+
       {/* Zajedničke akcije ostaju dostupne na svim tabovima. */}
       <div className="sticky bottom-0 z-10 -mx-6 flex flex-wrap gap-2 border-t bg-background/95 px-6 py-3 backdrop-blur">
         <Button variant="outline" onClick={akcija("Potvrda")}>
@@ -2817,7 +2868,14 @@ export default function RezervacijePage() {
         >
           <FilePlus className="mr-1.5 size-4" />Predračun
         </Button>
-        <Button variant="outline" onClick={akcija("Administrativna zabrana")}>
+        <Button
+          variant="outline"
+          disabled={!izabraniUgovor}
+          title={izabraniUgovor
+            ? "Kreiraj administrativnu zabranu za sačuvani ugovor"
+            : "Najpre sačuvajte rezervaciju ili izaberite postojeći ugovor"}
+          onClick={() => setZabranaOtvorena(true)}
+        >
           <Ban className="mr-1.5 size-4" />Administrativna zabrana
         </Button>
         <Button variant="outline" onClick={akcija("Najava")}>

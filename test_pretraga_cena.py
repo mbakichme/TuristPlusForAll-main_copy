@@ -38,7 +38,7 @@ def q2(x):
     return float(Decimal(x).quantize(Decimal("0.01")))
 
 def ground_truth(conn, smestaj_id, soba, d_od, d_do, adl, chd, sopstveni):
-    """Očekivana (osnovna, snižena) za sobu ili None ako pravilo 2 ne prolazi."""
+    """Očekivana osnovna cena i sve važeće popust varijante, po rednom broju."""
     danas = date.today()
     koef = {r.struktura.strip(): Decimal(str(r.koeficijent or 0)) for r in reversed(conn.execute(text(
         "SELECT struktura, koeficijent FROM koeficijenti_prodaje WHERE adl=:a AND chd=:c AND inf=0 "
@@ -93,16 +93,25 @@ def ground_truth(conn, smestaj_id, soba, d_od, d_do, adl, chd, sopstveni):
             if sopstveni and opc and opc["popust_sopstveni_prevoz"]:
                 cena -= Decimal(str(opc["popust_sopstveni_prevoz"])) * (adl + chd)
         cena = max(Decimal(0), cena).quantize(Decimal("0.01"))
-        pop = conn.execute(text("SELECT * FROM popust_soba WHERE cenovnik_id=:c AND soba_id=:s AND period_id IN (:p, 0) ORDER BY period_id DESC LIMIT 1"),
-                           {"c": c.id, "s": red["id"], "p": pid}).mappings().first()
-        sniz = None
-        if pop and (pop["vazi_od"] is None or pop["vazi_od"] <= danas) and (pop["vazi_do"] is None or pop["vazi_do"] >= danas):
+        # popusti: svaki važeći red (redni 1..3) je zasebna varijanta, nikad se ne sabiraju
+        pop_redovi = conn.execute(text("SELECT * FROM popust_soba WHERE cenovnik_id=:c AND soba_id=:s AND period_id=:p ORDER BY redni"),
+                                  {"c": c.id, "s": red["id"], "p": pid}).mappings().all()
+        varijante = []
+        for pop in pop_redovi:
+            if not ((pop["vazi_od"] is None or pop["vazi_od"] <= danas) and (pop["vazi_do"] is None or pop["vazi_do"] >= danas)):
+                continue
             um = Decimal(str(pop["umanjenje"]))
             sniz = (cena * (100 - um) / 100 if pop["umanjenje_vrsta"] == "procenat" else max(Decimal(0), cena - um)).quantize(Decimal("0.01"))
-        r = (q2(cena), q2(sniz) if sniz is not None else None)
-        if best is None or (r[1] or r[0]) < (best[1] or best[0]):
+            varijante.append((pop["redni"], q2(sniz)))
+        r = (q2(cena), varijante)
+        if best is None or prvi_iznos(r) < prvi_iznos(best):
             best = r
     return best or ("nema",)
+
+def prvi_iznos(gt):
+    """Prvi važeći snižen iznos (ili osnovna ako nema važećeg popusta) — kriterijum izbora sobe."""
+    osnova, varijante = gt
+    return varijante[0][1] if varijante else osnova
 
 def main():
     token = create_access_token({"sub": "1"})
@@ -141,25 +150,39 @@ def main():
                 if gt == ("nema",):
                     ok = s["cena_osnovna"] is None and s["nema_cene"]
                 else:
-                    ok = (s["cena_osnovna"], s["cena_snizena"]) == gt
+                    osnova, gt_var = gt
+                    api_var = [(v["popust_redni"], v["cena_snizena"]) for v in s["varijante"] if v["cena_snizena"] is not None]
+                    ok = s["cena_osnovna"] == osnova and api_var == gt_var and s["cena_snizena"] == (gt_var[0][1] if gt_var else None)
                 if not ok:
-                    proveri(f"[{tag}] cena sobe {k} == gt", False, f"api={(s['cena_osnovna'], s['cena_snizena'])} gt={gt}")
+                    proveri(f"[{tag}] cena sobe {k} == gt", False, f"api={s['cena_osnovna']} {s['varijante']} gt={gt}")
             proveri(f"[{tag}] sve cene == ground truth ({len(ocek)} soba)", True)
             proveri(f"[{tag}] svaka soba ima obracun tekst", all(s["obracun"] for s in po_sobi.values()))
             for g in rez:
                 proveri(f"[{tag}] {g['smestaj_naziv']} iskljuceno_putnici == {isklj.get(g['smestaj_id'], 0)}",
                         g["iskljuceno_putnici"] == isklj.get(g["smestaj_id"], 0), f"api={g['iskljuceno_putnici']}")
             if adl == 1 and sop:
-                s = next((s for s in po_sobi.values() if s.get("cena_snizena")), None)
+                s = next((s for s in po_sobi.values() if s.get("varijante")), None)
+                ob = s["varijante"][0]["obracun"] if s else []
                 proveri("[sopstveni] obracun pominje umanjenje jednom (ne po terminu)",
-                        s is not None and sum("Sopstveni prevoz" in l for l in s["obracun"]) == 1)
+                        s is not None and sum("Sopstveni prevoz" in l for l in ob) == 1)
                 proveri("[lanac] obracun pokazuje zbir termina",
-                        s is not None and any("lanac od 2 termina" in l for l in s["obracun"]))
+                        s is not None and any("lanac od 2 termina" in l for l in ob))
+            # varijante: jedna po važećem popustu, redni rastući, svaka sa sopstvenom cenom
+            for k, s in po_sobi.items():
+                if s.get("cena_osnovna") is None:
+                    continue
+                vz = [v for v in s["varijante"] if v["cena_snizena"] is not None]
+                proveri(f"[{tag}] soba {k}: varijante ⊇ važeći popusti, redni rastući",
+                        [v["popust_redni"] for v in vz] == sorted(v["popust_redni"] for v in vz)
+                        and all(v["vazi"] for v in vz))
 
     # ── UI ──
     rez = api.get("/slobodne-sobe", params={"mesto_id": 1, "datum_od": OD, "datum_do": DO,
                                             "odrasli": 2, "deca": "", "prevoz": "autobuski"}).json()
-    prva = next((s for g in rez for s in g["sobe"] if s.get("cena_snizena")), None)
+    vazece = lambda s: [v for v in (s.get("varijante") or []) if v["cena_snizena"] is not None]
+    prva_g, prva_soba = next(((g, s) for g in rez for s in g["sobe"] if vazece(s)), (None, None))
+    # UI: jedan Rezerviši po važećem popustu (bez popusta → jedan Rezerviši sa osnovnom cenom)
+    ocekivano_rezervisi = sum(max(1, len(vazece(s))) for g in rez for s in g["sobe"])
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
         ctx = browser.new_context(viewport={"width": 1280, "height": 900})
@@ -192,25 +215,33 @@ def main():
         proveri("klik na + otvara obračun samo te sobe", page.locator("[data-testid=obracun]").count() == 1)
         page.get_by_role("button", name=re.compile(r"^Sakrij obračun")).first.click()
         proveri("klik na − sakriva obračun", page.locator("[data-testid=obracun]").count() == 0)
-        if prva:
+        if prva_g:
             def eur(n): return (str(int(n)) if float(n).is_integer() else f"{n:.2f}") + " €"
-            proveri("snižena cena prikazana", page.get_by_text(eur(prva["cena_snizena"]), exact=True).count() >= 1)
-            proveri("osnovna cena precrtana", page.locator(".line-through", has_text=eur(prva["cena_osnovna"])).count() >= 1)
-        # Rezerviši → forma rezervacije sa prebačenim podacima
-        page.get_by_role("button", name="Rezerviši").first.click()
+            for v in vazece(prva_soba):
+                proveri(f"snižena cena prikazana (popust {v['popust_redni']})",
+                        page.get_by_text(eur(v["cena_snizena"]), exact=True).count() >= 1)
+            proveri("osnovna cena precrtana", page.locator(".line-through", has_text=eur(prva_soba["cena_osnovna"])).count() >= 1)
+            proveri("jedan Rezerviši po važećem popustu (bez popusta: jedan)",
+                    page.get_by_role("button", name="Rezerviši").count() == ocekivano_rezervisi,
+                    f"ui={page.get_by_role('button', name='Rezerviši').count()} očekivano={ocekivano_rezervisi}")
+            proveri("kartica prikazuje oznaku popusta i tip plaćanja",
+                    all(page.get_by_text(f"Popust {v['popust_redni']}", exact=False).count() >= 1 for v in vazece(prva_soba)))
+        # Rezerviši prve sobe sa važećim popustom → forma rezervacije sa prebačenim podacima
+        page.locator("button", has_text="Rezerviši").nth(0).click()
         page.wait_for_url(re.compile(r"/prodaja/rezervacije\?"), timeout=10000)
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(page.url).query)
-        prva_soba = rez[0]["sobe"][0]
+        # klik na prvi Rezerviši → soba iz URL-a; očekivana varijanta = prvi važeći popust te sobe
+        klik_g, prva_soba = next(((g, s) for g in rez for s in g["sobe"] if qs.get("soba") == [str(s["id"])]), (None, None))
+        v0 = vazece(prva_soba)[0] if prva_soba and vazece(prva_soba) else None
         proveri("link rezervacije nosi novi=1, soba, smestaj, mesto, datume",
-                qs.get("novi") == ["1"] and qs.get("soba") == [str(prva_soba["id"])]
-                and qs.get("smestaj") == [str(rez[0]["smestaj_id"])] and qs.get("mesto") == ["1"]
+                prva_soba is not None and qs.get("novi") == ["1"]
+                and qs.get("smestaj") == [str(klik_g["smestaj_id"])] and qs.get("mesto") == ["1"]
                 and qs.get("datumod") == [OD] and qs.get("datumdo") == [DO])
         proveri("link nosi strukturu, cenu, popust, putnike i prevoz",
-                qs.get("struktura") == [prva_soba["struktura"]]
+                prva_soba is not None and qs.get("struktura") == [prva_soba["struktura"]]
                 and float(qs["cena"][0]) == float(prva_soba["cena_osnovna"])
-                and (prva_soba.get("cena_snizena") is None or
-                     abs(float(qs["popust"][0]) - (prva_soba["cena_osnovna"] - prva_soba["cena_snizena"])) < 0.01)
+                and (v0 is None or abs(float(qs["popust"][0]) - (prva_soba["cena_osnovna"] - v0["cena_snizena"])) < 0.01)
                 and qs.get("odrasli") == ["2"] and qs.get("prevoz") == ["autobuski"])
         page.get_by_placeholder("npr. 1/2 + 1/2").wait_for(timeout=15000)
         page.wait_for_timeout(1500)
@@ -221,12 +252,16 @@ def main():
         page.get_by_role("tab", name="Obračun").click()
         cena_inp = page.locator("input[aria-label='Cena smeštaja (EUR)']")
         cena_inp.wait_for(timeout=5000)
-        proveri("forma: cena smeštaja popunjena",
-                float(cena_inp.input_value()) == float(prva_soba["cena_osnovna"]))
-        proveri("forma: količina = 1", page.locator("input[aria-label='Količina za cenu smeštaja (EUR)']").input_value() == "1")
+        # Forma rastavlja ukupnu cenu iz pretrage po osobama: jedinična = cena / broj osoba, količina = broj osoba
+        broj_osoba = int(qs["odrasli"][0]) + len([x for x in (qs.get("deca") or [""])[0].split(",") if x.strip()])
+        proveri("forma: cena smeštaja = osnovna / broj osoba",
+                abs(float(cena_inp.input_value()) - float(prva_soba["cena_osnovna"]) / broj_osoba) < 0.01,
+                f"ui={cena_inp.input_value()} očekivano={float(prva_soba['cena_osnovna']) / broj_osoba}")
+        proveri("forma: količina = broj osoba",
+                page.locator("input[aria-label='Količina za cenu smeštaja (EUR)']").input_value() == str(broj_osoba))
         # Popust card je prvi ProcenatRed sa naslovom Smeštaj (Provizija je drugi) → .first
         pop_inp = page.locator("input[aria-label='Smeštaj — iznos (EUR)']").first
-        ocekivani_popust = prva_soba["cena_osnovna"] - prva_soba["cena_snizena"]
+        ocekivani_popust = (prva_soba["cena_osnovna"] - v0["cena_snizena"]) if v0 else 0
         proveri("forma: popust smeštaja popunjen (iznos EUR)",
                 abs(float(pop_inp.input_value() or 0) - ocekivani_popust) < 0.01)
         ctx.close(); browser.close()

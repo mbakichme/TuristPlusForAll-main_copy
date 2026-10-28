@@ -2,10 +2,10 @@ import db_config
 
 """Cenovnici — opcije/popusti po POLJU (soba × termin): klik na ćeliju cene kad je zaključano.
 
-Endpointi termin-dijela prošireni opcionim ?soba_id= — puni replace SAMO tog polja (jedan zapis).
-GET /cenovnici/{id}/opcije-celije → polja (soba_id, period_id) sa definisanim opcijama ILI
-popustima (union) → svetloplavo obeležavanje ćelija; legacy pid=0 redovi se i dalje šire na sve
-periode, a masovno snimanje piše svako polje eksplicitno.
+Endpointi termin-dijela prošireni opcionim ?soba_id= — puni replace SAMO tog polja. Popusti
+mogu imati do tri zasebna reda po polju (redni 1..3), nikad se ne sabiraju. GET
+/cenovnici/{id}/opcije-celije → polja (soba_id, period_id) sa definisanim opcijama ILI
+popustima (union) → svetloplavo obeležavanje ćelija; masovno snimanje piše svako polje eksplicitno.
 """
 import json
 import re
@@ -90,7 +90,10 @@ check("opcije-celije → TAČNO jedno polje (soba, pid), globalni (0) NE ulazi",
 c.put(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid2}?soba_id={soba18['id']}", headers=H,
       json={"blokirano": True})
 c.put(f"/api/cenovnici/{cid}/popust-soba-termin/{pid2}?soba_id={soba12['id']}", headers=H,
-      json={"umanjenje_vrsta": "iznos", "umanjenje": "5", "tip_popusta": "last_minute"})
+      json={"popusti": [
+          {"umanjenje_vrsta": "iznos", "umanjenje": "5", "tip_popusta": "last_minute"},
+          {"umanjenje_vrsta": "procenat", "umanjenje": "10", "tip_popusta": "first_minute"},
+      ]})
 r = c.get(f"/api/cenovnici/{cid}/opcije-celije", headers=H)
 check("opcije-celije = union opcija i popusta (3 polja)",
       sorted((x["soba_id"], x["period_id"]) for x in r.json()["celije"])
@@ -98,11 +101,15 @@ check("opcije-celije = union opcija i popusta (3 polja)",
 
 # popust po polju
 r = c.get(f"/api/cenovnici/{cid}/popust-soba-termin/{pid2}?soba_id={soba12['id']}", headers=H)
-check("popust cell GET → jedan zapis (iznos 5)",
-      r.json()["postoji"] is True and len(r.json()["zapisi"]) == 1
+check("popust cell GET → 2 zapisa (redni 1,2; iznos 5 pa procenat 10)",
+      r.json()["postoji"] is True and [z["redni"] for z in r.json()["zapisi"]] == [1, 2]
       and float(r.json()["zapisi"][0]["umanjenje"]) == 5.0
-      and len(db_rows("popust_soba", cid, pid2)) == 1)
-check("popust globalni (pid 0) prazan", db_rows("popust_soba", cid, 0) == [])
+      and r.json()["zapisi"][1]["umanjenje_vrsta"] == "procenat"
+      and len(db_rows("popust_soba", cid, pid2)) == 2)
+check("popust PUT polja NE dira ostala polja (samo soba12 × pid2; pid i pid 0 prazni)",
+      [x["soba_id"] for x in db_rows("popust_soba", cid, pid2)] == [soba12["id"]] * 2
+      and db_rows("popust_soba", cid, pid) == []
+      and db_rows("popust_soba", cid, 0) == [])
 
 # brisanje po polju
 r = c.delete(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}?soba_id={soba12['id']}", headers=H)
@@ -114,7 +121,7 @@ check("cell DELETE idempotentno → broj=0",
       c.delete(f"/api/cenovnici/{cid}/opcije-soba-termin/{pid}?soba_id={soba12['id']}",
                headers=H).json()["broj"] == 0)
 r = c.delete(f"/api/cenovnici/{cid}/popust-soba-termin/{pid2}?soba_id={soba12['id']}", headers=H)
-check("popust cell DELETE → broj=1", r.json()["broj"] == 1
+check("popust cell DELETE → broj=2 (oba redni reda)", r.json()["broj"] == 2
       and db_rows("popust_soba", cid, pid2) == [])
 
 # LEGACY pid=0 red (od starih verzija) se i dalje ŠIRI na sve periode u obeležjima
@@ -194,10 +201,10 @@ c.put(f"/api/cenovnici/{ui_cid}/opcije-soba-sve", headers=H,
 
 with sync_playwright() as p:
     b = p.chromium.launch()
-    pg = b.new_page()
+    ctx = b.new_context()
+    ctx.add_init_script(f"localStorage.setItem('ta_token', {json.dumps(tok)});")
+    pg = ctx.new_page()
     BASE = "http://localhost:3058"
-    pg.goto(f"{BASE}/agencija/cenovnici")
-    pg.evaluate("t => localStorage.setItem('ta_token', t)", tok)
     pg.goto(f"{BASE}/agencija/cenovnici")
     pg.wait_for_selector("[role=tablist]")
     pg.get_by_role("tab", name="Izmena kreiranih cenovnika").click()
@@ -249,10 +256,15 @@ with sync_playwright() as p:
         return pg.get_by_label(f"Cena — soba {soba_id}, period {od}–{do}").get_attribute("class") or ""
 
     celija12 = pg.get_by_label(f"Cena — soba 12, period {ui_od}–{ui_do}")
-    expect(celija12).to_have_class(re.compile(r"bg-sky-500/15"), timeout=8000)  # refetch posle zatvaranja
-    check("UI: kliknuto polje SVETLO PLAVO na INPUTU (td bez tinta), susedno bez obeležja",
-          "border-sky-400/70" in input_klasa("12", ui_od, ui_do)
-          and "bg-sky-500/15" not in input_klasa("18", ui_od, ui_do))
+    # blokirano polje: crveno (blokirana ima prednost nad plavim obeležjem opcija)
+    expect(celija12).to_have_class(re.compile(r"border-red-300"), timeout=8000)  # refetch posle zatvaranja
+    check("UI: blokirano polje CRVENO (border-red-300 bg-red-100), nije plavo",
+          "border-red-300" in input_klasa("12", ui_od, ui_do)
+          and "bg-red-100" in input_klasa("12", ui_od, ui_do)
+          and "bg-sky-500/15" not in input_klasa("12", ui_od, ui_do))
+    check("UI: nevezano polje (soba 18) NIJE plavo ni crveno",
+          "bg-sky-500/15" not in input_klasa("18", ui_od, ui_do)
+          and "border-red-300" not in input_klasa("18", ui_od, ui_do))
 
     # ponovo otvori isto polje → prefill iz cell-zapisa, pa Obriši
     pg.get_by_title(polje12, exact=True).click()
@@ -262,12 +274,12 @@ with sync_playwright() as p:
     dijalog.get_by_role("button", name="Obriši opcije").click()
     pg.get_by_text("Opcije su obrisane za polje soba 12", exact=False).wait_for(timeout=8000)
     check("UI: brisanje cell-zapisa", db_rows("opcije_soba", ui_cid, ui_pid) == [])
-    expect(celija12).not_to_have_class(re.compile(r"bg-sky-500/15"), timeout=8000)  # odmah uklonjeno
+    expect(celija12).not_to_have_class(re.compile(r"border-red-300"), timeout=8000)  # odmah uklonjeno
 
     pg.keyboard.press("Escape")
     expect(dijalog).to_have_count(0, timeout=5000)
-    check("UI: posle brisanja polje više nije plavo",
-          "bg-sky-500/15" not in input_klasa("12", ui_od, ui_do))
+    check("UI: posle brisanja polje više nije crveno",
+          "border-red-300" not in input_klasa("12", ui_od, ui_do))
 
     # otključavanje — ćelije se vraćaju na unos cene (bez klik-površine)
     pg.get_by_role("button", name="Izmeni cenovnik", exact=True).click()

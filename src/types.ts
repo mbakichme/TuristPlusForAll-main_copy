@@ -117,6 +117,7 @@ export interface UgovorDetail {
   putnik: string | null;
   rodjen?: string | null;
   pasos?: string | null;
+  uzrast?: string | null;
   putnici?: string[] | null;
   putnici_detalji?: PutnikDetalj[] | null;
   dodatne?: DodatnaStavka[] | null;

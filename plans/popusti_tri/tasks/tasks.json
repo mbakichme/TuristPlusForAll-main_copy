@@ -1,0 +1,27 @@
+[
+  {
+    "content": "[schema-1] popust_soba: kolona redni 1-3, novi unique ključ",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[api-2] cenovnici_api: PUT/GET popusti (PopustiIn, max 3) za soba/termin/sve/polje",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[obracun-3] routes.py obračun: varijante po važećem popustu (bez sabiranja)",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[ui-4] CenovniciPage dijalog: 3 bloka popusta + Dodaj/Ukloni; PretragaPage: kartica po varijanti",
+    "id": "4",
+    "status": "pending"
+  },
+  {
+    "content": "[test-5] Ažurirati testove (popust_soba kao jedan red) + smoke test API-ja",
+    "id": "5",
+    "status": "pending"
+  }
+]

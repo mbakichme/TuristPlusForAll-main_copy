@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import text
 
 
@@ -186,6 +186,13 @@ class PopustSobaIn(BaseModel):
         return self
 
 
+class PopustiIn(BaseModel):
+    """Skup popusta jednog opsega (soba / termin / cenovnik / polje): do 3, svaki zaseban red.
+    Redni se dodeljuje po poziciji (1..3). Prazna lista = nema popusta (briše opseg)."""
+    model_config = ConfigDict(extra="forbid")
+    popusti: list[PopustSobaIn] = Field(default_factory=list, max_length=3)
+
+
 def init_cenovnici(engine):
     with engine.begin() as conn:
         conn.execute(text("""
@@ -260,6 +267,7 @@ def init_cenovnici(engine):
                 cenovnik_id INTEGER NOT NULL REFERENCES cenovnici(id) ON DELETE CASCADE,
                 soba_id INTEGER NOT NULL,
                 period_id INTEGER NOT NULL DEFAULT 0,
+                redni SMALLINT NOT NULL DEFAULT 1,
                 umanjenje_vrsta TEXT NOT NULL CHECK (umanjenje_vrsta IN ('iznos', 'procenat')),
                 umanjenje NUMERIC(14,2) NOT NULL CHECK (umanjenje > 0),
                 tip_popusta TEXT NOT NULL,
@@ -269,7 +277,8 @@ def init_cenovnici(engine):
                 popust_sopstveni_prevoz NUMERIC(14,2),
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                CONSTRAINT popust_soba_unique_csp UNIQUE (cenovnik_id, soba_id, period_id),
+                CONSTRAINT popust_soba_unique_cspr UNIQUE (cenovnik_id, soba_id, period_id, redni),
+                CONSTRAINT popust_soba_redni_chk CHECK (redni BETWEEN 1 AND 3),
                 CHECK (umanjenje_vrsta <> 'procenat' OR umanjenje <= 100),
                 CHECK (vazi_od IS NULL OR vazi_do IS NULL OR vazi_od <= vazi_do)
             )
@@ -280,13 +289,26 @@ def init_cenovnici(engine):
         conn.execute(text(
             "ALTER TABLE popust_soba DROP CONSTRAINT IF EXISTS popust_soba_cenovnik_id_soba_id_key"
         ))
+        # Do 3 popusta po opsegu (soba × termin): redni 1–3, svaki zaseban red.
+        conn.execute(text(
+            "ALTER TABLE popust_soba ADD COLUMN IF NOT EXISTS redni SMALLINT NOT NULL DEFAULT 1"
+        ))
+        conn.execute(text(
+            "ALTER TABLE popust_soba DROP CONSTRAINT IF EXISTS popust_soba_redni_chk"
+        ))
+        conn.execute(text(
+            "ALTER TABLE popust_soba ADD CONSTRAINT popust_soba_redni_chk CHECK (redni BETWEEN 1 AND 3)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE popust_soba DROP CONSTRAINT IF EXISTS popust_soba_unique_csp"
+        ))
         conn.execute(text("""
             DO $$ BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_constraint
-                               WHERE conname = 'popust_soba_unique_csp') THEN
+                               WHERE conname = 'popust_soba_unique_cspr') THEN
                     ALTER TABLE popust_soba
-                        ADD CONSTRAINT popust_soba_unique_csp
-                        UNIQUE (cenovnik_id, soba_id, period_id);
+                        ADD CONSTRAINT popust_soba_unique_cspr
+                        UNIQUE (cenovnik_id, soba_id, period_id, redni);
                 END IF;
             END $$;
         """))
@@ -562,25 +584,43 @@ def register_cenovnici(api, engine, get_current_user):
                "psp": body.popust_sopstveni_prevoz})
 
     def _upsert_popust(conn, item_id: int, soba_id: int, body: PopustSobaIn,
-                       period_id: int = 0) -> None:
+                       period_id: int = 0, redni: int = 1) -> None:
         conn.execute(text("""
-            INSERT INTO popust_soba (cenovnik_id, soba_id, period_id, umanjenje_vrsta, umanjenje,
+            INSERT INTO popust_soba (cenovnik_id, soba_id, period_id, redni, umanjenje_vrsta, umanjenje,
                 tip_popusta, tip_placanja, vazi_od, vazi_do, tip_aranzmana, tip_cene,
                 popust_sopstveni_prevoz)
-            VALUES (:c, :s, :p, :vrsta, :umanjenje, :tp, :tpl, :od, :do, :ta, :tc, :psp)
-            ON CONFLICT (cenovnik_id, soba_id, period_id) DO UPDATE SET
+            VALUES (:c, :s, :p, :r, :vrsta, :umanjenje, :tp, :tpl, :od, :do, :ta, :tc, :psp)
+            ON CONFLICT (cenovnik_id, soba_id, period_id, redni) DO UPDATE SET
                 umanjenje_vrsta = EXCLUDED.umanjenje_vrsta, umanjenje = EXCLUDED.umanjenje,
                 tip_popusta = EXCLUDED.tip_popusta, tip_placanja = EXCLUDED.tip_placanja,
                 vazi_od = EXCLUDED.vazi_od, vazi_do = EXCLUDED.vazi_do,
                 tip_aranzmana = EXCLUDED.tip_aranzmana, tip_cene = EXCLUDED.tip_cene,
                 popust_sopstveni_prevoz = EXCLUDED.popust_sopstveni_prevoz,
                 updated_at = NOW()
-        """), {"c": item_id, "s": soba_id, "p": period_id,
+        """), {"c": item_id, "s": soba_id, "p": period_id, "r": redni,
                "vrsta": body.umanjenje_vrsta,
                "umanjenje": body.umanjenje, "tp": body.tip_popusta,
                "tpl": body.tip_placanja, "od": body.vazi_od, "do": body.vazi_do,
                "ta": body.tip_aranzmana, "tc": body.tip_cene,
                "psp": body.popust_sopstveni_prevoz})
+
+    def _upsert_popusti(conn, item_id: int, soba_id: int, popusti: list[PopustSobaIn],
+                        period_id: int = 0) -> None:
+        """Upis skupa popusta za (soba, termin): svaki popust = zaseban red, redni = pozicija."""
+        for i, body in enumerate(popusti, start=1):
+            _upsert_popust(conn, item_id, soba_id, body, period_id, redni=i)
+
+    def _popusti_iz_redova(redovi) -> list[dict]:
+        """Redovi istog opsega (više soba/termina) → lista popusta po rednom broju.
+        Po svakom rednom broju: vrednost ostaje samo ako je ista u svim redovima (spojiPopust)."""
+        po_rednom: dict[int, list[dict]] = {}
+        for r in redovi:
+            po_rednom.setdefault(int(r["redni"]), []).append(_bez_meta(r))
+        out = []
+        for redni in sorted(po_rednom):
+            spojeno = _spoji_redove(po_rednom[redni])
+            out.append({"redni": redni, **{k: v for k, v in spojeno.items() if k != "redni"}})
+        return out
 
     def _proveri_period_u_cenovniku(conn, item_id: int, period_id: int) -> None:
         """400 ako period_id nije u JSONB snimku perioda cenovnika (404 ako cenovnik ne postoji)."""
@@ -638,20 +678,15 @@ def register_cenovnici(api, engine, get_current_user):
         with engine.connect() as conn:
             _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
             redovi = conn.execute(text("""
-                SELECT umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja, vazi_od, vazi_do,
+                SELECT redni, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja, vazi_od, vazi_do,
                        tip_aranzmana, tip_cene, popust_sopstveni_prevoz
                 FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s
             """), {"c": item_id, "s": soba_id}).mappings().all()
-            if not redovi:
-                return {"postoji": False, "soba_id": soba_id, "umanjenje_vrsta": "iznos",
-                        "umanjenje": None, "tip_popusta": None, "tip_placanja": None,
-                        "vazi_od": None, "vazi_do": None, "tip_aranzmana": None,
-                        "tip_cene": None, "popust_sopstveni_prevoz": None}
-            return {"postoji": True, "soba_id": soba_id,
-                    **_spoji_redove([_bez_meta(r) for r in redovi])}
+            return {"postoji": bool(redovi), "soba_id": soba_id,
+                    "popusti": _popusti_iz_redova(redovi)}
 
     @api.put("/cenovnici/{item_id}/popust-soba/{soba_id}")
-    def popust_soba_put(item_id: int, soba_id: int, body: PopustSobaIn,
+    def popust_soba_put(item_id: int, soba_id: int, body: PopustiIn,
                         _: dict = Depends(get_current_user)):
         with engine.begin() as conn:
             _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
@@ -660,14 +695,14 @@ def register_cenovnici(api, engine, get_current_user):
             conn.execute(text("DELETE FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s"),
                          {"c": item_id, "s": soba_id})
             for p in pids:
-                _upsert_popust(conn, item_id, soba_id, body, p)
+                _upsert_popusti(conn, item_id, soba_id, body.popusti, p)
             redovi = conn.execute(text("""
-                SELECT umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja, vazi_od, vazi_do,
+                SELECT redni, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja, vazi_od, vazi_do,
                        tip_aranzmana, tip_cene, popust_sopstveni_prevoz
                 FROM popust_soba WHERE cenovnik_id = :c AND soba_id = :s
             """), {"c": item_id, "s": soba_id}).mappings().all()
-            return {"postoji": True, "soba_id": soba_id,
-                    **_spoji_redove([_bez_meta(r) for r in redovi])}
+            return {"postoji": bool(redovi), "soba_id": soba_id,
+                    "popusti": _popusti_iz_redova(redovi)}
 
     @api.delete("/cenovnici/{item_id}/popust-soba/{soba_id}")
     def popust_soba_delete(item_id: int, soba_id: int, _: dict = Depends(get_current_user)):
@@ -722,18 +757,18 @@ def register_cenovnici(api, engine, get_current_user):
         with engine.connect() as conn:
             ids = _sobe_ids_u_cenovniku(conn, item_id)
             redovi = conn.execute(text("""
-                SELECT soba_id, period_id, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja,
+                SELECT soba_id, period_id, redni, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja,
                        vazi_od, vazi_do, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
                 FROM popust_soba WHERE cenovnik_id = :c
             """), {"c": item_id}).mappings().all()
             red_u_snimku = {s: i for i, s in enumerate(ids)}
             zapisi = [{"soba_id": r["soba_id"], **_bez_meta(r)} for r in sorted(
                 (r for r in redovi if r["soba_id"] in red_u_snimku),
-                key=lambda r: (red_u_snimku[r["soba_id"]], r["period_id"]))]
+                key=lambda r: (red_u_snimku[r["soba_id"]], r["period_id"], r["redni"]))]
             return {"sobe": ids, "postoji": bool(zapisi), "zapisi": zapisi}
 
     @api.put("/cenovnici/{item_id}/popust-soba-sve")
-    def popust_sve_put(item_id: int, body: PopustSobaIn, _: dict = Depends(get_current_user)):
+    def popust_sve_put(item_id: int, body: PopustiIn, _: dict = Depends(get_current_user)):
         with engine.begin() as conn:
             ids = _sobe_ids_u_cenovniku(conn, item_id)
             pids = _periodi_ids_u_cenovniku(conn, item_id)
@@ -741,9 +776,9 @@ def register_cenovnici(api, engine, get_current_user):
             conn.execute(text("DELETE FROM popust_soba WHERE cenovnik_id = :c"), {"c": item_id})
             for s in ids:
                 for p in pids:
-                    _upsert_popust(conn, item_id, s, body, p)
+                    _upsert_popusti(conn, item_id, s, body.popusti, p)
             return {"status": "sacuvano", "broj_soba": len(ids),
-                    "broj_zapisa": len(ids) * len(pids), "soba_id": ids}
+                    "broj_zapisa": len(ids) * len(pids) * len(body.popusti), "soba_id": ids}
 
     @api.delete("/cenovnici/{item_id}/popust-soba-sve")
     def popust_sve_delete(item_id: int, _: dict = Depends(get_current_user)):
@@ -883,16 +918,17 @@ def register_cenovnici(api, engine, get_current_user):
                 _proveri_sobu_u_cenovniku(conn, item_id, soba_id)
                 ids = [soba_id]
             redovi = conn.execute(text("""
-                SELECT soba_id, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja,
+                SELECT soba_id, redni, umanjenje_vrsta, umanjenje, tip_popusta, tip_placanja,
                        vazi_od, vazi_do, tip_aranzmana, tip_cene, popust_sopstveni_prevoz
                 FROM popust_soba WHERE cenovnik_id = :c AND period_id = :p
             """), {"c": item_id, "p": period_id}).mappings().all()
-            po_sobi = {r["soba_id"]: _bez_meta(r) for r in redovi}
-            zapisi = [{"soba_id": s, **po_sobi[s]} for s in ids if s in po_sobi]
+            zapisi = [{"soba_id": r["soba_id"], **_bez_meta(r)} for r in sorted(
+                (r for r in redovi if r["soba_id"] in ids),
+                key=lambda r: (ids.index(r["soba_id"]), r["redni"]))]
             return {"sobe": ids, "period_id": period_id, "postoji": bool(zapisi), "zapisi": zapisi}
 
     @api.put("/cenovnici/{item_id}/popust-soba-termin/{period_id}")
-    def popust_termin_put(item_id: int, period_id: int, body: PopustSobaIn,
+    def popust_termin_put(item_id: int, period_id: int, body: PopustiIn,
                           soba_id: int | None = None, _: dict = Depends(get_current_user)):
         with engine.begin() as conn:
             ids = _sobe_ids_u_cenovniku(conn, item_id)
@@ -902,13 +938,13 @@ def register_cenovnici(api, engine, get_current_user):
                 conn.execute(text("""DELETE FROM popust_soba
                     WHERE cenovnik_id = :c AND period_id = :p AND soba_id = :s"""),
                     {"c": item_id, "p": period_id, "s": soba_id})
-                _upsert_popust(conn, item_id, soba_id, body, period_id)
+                _upsert_popusti(conn, item_id, soba_id, body.popusti, period_id)
                 return {"status": "sacuvano", "broj_soba": 1, "period_id": period_id,
                         "soba_id": [soba_id]}
             conn.execute(text("DELETE FROM popust_soba WHERE cenovnik_id = :c AND period_id = :p"),
                          {"c": item_id, "p": period_id})
             for s in ids:
-                _upsert_popust(conn, item_id, s, body, period_id)
+                _upsert_popusti(conn, item_id, s, body.popusti, period_id)
             return {"status": "sacuvano", "broj_soba": len(ids), "period_id": period_id}
 
     @api.delete("/cenovnici/{item_id}/popust-soba-termin/{period_id}")

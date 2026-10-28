@@ -16,18 +16,31 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+interface VarijantaPopusta {
+  popust_redni: number | null; tip_popusta: string | null; tip_placanja: string | null;
+  vazi: boolean; cena_snizena: number | null; obracun: string[];
+}
 interface SlobodnaSoba {
   id: number; broj_sobe: string; tip: string; opis: string; opis_dodatno: string;
   // obračun (pravila 2 i 3)
   nema_cene?: boolean;
   cena_osnovna?: number | null;
   cena_snizena?: number | null;
+  /** svaki popust zasebno (redni 1–3) — nikad se ne sabiraju */
+  varijante?: VarijantaPopusta[];
   struktura?: string;
   koeficijent?: number;
   tip_cene?: string | null;
   obracun?: string[];
   napomene?: string[];
 }
+const TIP_POPUSTA_LABELA: Record<string, string> = {
+  last_minute: "Last minute", first_minute: "First minute",
+  specijalna_ponuda: "Specijalna ponuda", ultra_last_minute: "Ultra last minute",
+};
+const TIP_PLACANJA_LABELA: Record<string, string> = {
+  delimicno: "Delimično plaćanje", u_celosti: "Plaćanje u celosti",
+};
 interface SlobodniSmestaj {
   smestaj_id: number; smestaj_naziv: string; sobe: SlobodnaSoba[];
   iskljuceno_putnici?: number;
@@ -426,8 +439,8 @@ export default function PretragaPage() {
     });
   }
 
-  /** Rezerviši → forma rezervacije sa prebačenim podacima (mesto, smeštaj, soba, termin, struktura, cena, popust, putnici, prevoz). */
-  function rezervisi(g: SlobodniSmestaj, s: SlobodnaSoba) {
+  /** Rezerviši → forma rezervacije sa prebačenim podacima. `snizena` = cena ovog popusta (null = bez popusta). */
+  function rezervisi(g: SlobodniSmestaj, s: SlobodnaSoba, snizena: number | null) {
     const params = new URLSearchParams({
       novi: "1",
       datumod: info?.od || od,
@@ -442,8 +455,8 @@ export default function PretragaPage() {
     });
     if (s.cena_osnovna != null) {
       params.set("cena", String(s.cena_osnovna));
-      if (s.cena_snizena != null && s.cena_snizena < s.cena_osnovna) {
-        params.set("popust", String(Math.round((s.cena_osnovna - s.cena_snizena) * 100) / 100));
+      if (snizena != null && snizena < s.cena_osnovna) {
+        params.set("popust", String(Math.round((s.cena_osnovna - snizena) * 100) / 100));
       }
     }
     navigate(`/prodaja/rezervacije?${params.toString()}`);
@@ -641,7 +654,11 @@ export default function PretragaPage() {
                     {g.sobe.map((s) => {
                       const key = `${g.smestaj_id}:${s.id}`;
                       const otvoren = otvoreniObracuni.has(key);
-                      const imaPopust = s.cena_osnovna != null && s.cena_snizena != null && s.cena_snizena < s.cena_osnovna;
+                      // jedna kartica cene po VAŽEĆEM popustu; bez popusta → jedna kartica sa osnovnom cenom
+                      const vazeci = s.varijante
+                        ? s.varijante.filter((v) => v.cena_snizena != null)
+                        : (s.cena_snizena != null ? [{ popust_redni: null, tip_popusta: null, tip_placanja: null, vazi: true, cena_snizena: s.cena_snizena, obracun: [] }] : []);
+                      const kartice: (VarijantaPopusta | null)[] = vazeci.length > 0 ? vazeci : [null];
                       return (
                       <div
                         key={s.id}
@@ -684,40 +701,55 @@ export default function PretragaPage() {
                               </div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3 shrink-0">
-                            {s.cena_osnovna == null ? (
-                              <span className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                                Nema cene
-                              </span>
-                            ) : imaPopust ? (
-                              <div className="relative rounded-lg bg-emerald-50 px-3 py-1.5 text-right leading-tight">
-                                <span className="absolute -top-2 -left-2 inline-flex items-center gap-1 rounded-full bg-red-600 text-white text-[10px] font-semibold px-2 py-0.5">
-                                  <Tag className="w-3 h-3" />
-                                  −{Math.round(100 - (s.cena_snizena! / s.cena_osnovna) * 100)}%
-                                </span>
-                                <div className="font-mono text-sm text-slate-500 line-through whitespace-nowrap">
-                                  {fmtEur(s.cena_osnovna)} €
+                          <div className="flex flex-col items-end gap-2 shrink-0">
+                            {kartice.map((v, idx) => {
+                              const snizena = v?.cena_snizena ?? null;
+                              const imaPopust = s.cena_osnovna != null && snizena != null && snizena < s.cena_osnovna;
+                              return (
+                                <div key={idx} className="flex items-center gap-3">
+                                  {s.cena_osnovna == null ? (
+                                    <span className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                                      Nema cene
+                                    </span>
+                                  ) : imaPopust ? (
+                                    <div className="relative rounded-lg bg-emerald-50 px-3 py-1.5 text-right leading-tight">
+                                      <span className="absolute -top-2 -left-2 inline-flex items-center gap-1 rounded-full bg-red-600 text-white text-[10px] font-semibold px-2 py-0.5">
+                                        <Tag className="w-3 h-3" />
+                                        −{Math.round(100 - (snizena! / s.cena_osnovna) * 100)}%
+                                      </span>
+                                      <div className="font-mono text-sm text-slate-500 line-through whitespace-nowrap">
+                                        {fmtEur(s.cena_osnovna)} €
+                                      </div>
+                                      <div className="font-mono font-bold text-2xl text-emerald-700 whitespace-nowrap tracking-tight">
+                                        {fmtEur(snizena!)} €
+                                      </div>
+                                      {v?.popust_redni != null && (
+                                        <div className="text-[10px] text-emerald-800 whitespace-nowrap">
+                                          Popust {v.popust_redni}
+                                          {v.tip_popusta ? ` · ${TIP_POPUSTA_LABELA[v.tip_popusta] ?? v.tip_popusta}` : ""}
+                                          {v.tip_placanja ? ` · ${TIP_PLACANJA_LABELA[v.tip_placanja] ?? v.tip_placanja}` : ""}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="rounded-lg bg-blue-50 border border-blue-300 px-3 py-2 text-right leading-tight">
+                                      <div className="text-[10px] uppercase tracking-wide text-blue-700 font-medium">Cena</div>
+                                      <div className="font-mono font-bold text-2xl text-blue-800 whitespace-nowrap tracking-tight">
+                                        {fmtEur(s.cena_osnovna)} €
+                                      </div>
+                                    </div>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    className="h-10 gap-1.5 rounded-lg bg-orange-500 text-white font-semibold hover:bg-orange-600 border-0"
+                                    onClick={() => rezervisi(g, s, snizena)}
+                                  >
+                                    <CalendarCheck className="w-4 h-4" />
+                                    Rezerviši
+                                  </Button>
                                 </div>
-                                <div className="font-mono font-bold text-2xl text-emerald-700 whitespace-nowrap tracking-tight">
-                                  {fmtEur(s.cena_snizena!)} €
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="rounded-lg bg-blue-50 border border-blue-300 px-3 py-2 text-right leading-tight">
-                                <div className="text-[10px] uppercase tracking-wide text-blue-700 font-medium">Cena</div>
-                                <div className="font-mono font-bold text-2xl text-blue-800 whitespace-nowrap tracking-tight">
-                                  {fmtEur(s.cena_osnovna)} €
-                                </div>
-                              </div>
-                            )}
-                            <Button
-                              size="sm"
-                              className="h-10 gap-1.5 rounded-lg bg-orange-500 text-white font-semibold hover:bg-orange-600 border-0"
-                              onClick={() => rezervisi(g, s)}
-                            >
-                              <CalendarCheck className="w-4 h-4" />
-                              Rezerviši
-                            </Button>
+                              );
+                            })}
                           </div>
                         </div>
                         {!!s.napomene?.length && (

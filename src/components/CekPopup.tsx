@@ -106,7 +106,7 @@ function BankaPicker({ naziv, label, onIzbor }: { naziv: string; label: string; 
 }
 
 /** Datum čeka u redu tabele: kalendar u popover-u (srpski, ponedeljak prvi). */
-function DatumPicker({ iso, label, onIzbor }: { iso: string; label: string; onIzbor: (iso: string) => void }) {
+export function DatumPicker({ iso, label, onIzbor }: { iso: string; label: string; onIzbor: (iso: string) => void }) {
   const [otvoreno, setOtvoreno] = useState(false);
   const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(`${iso}T00:00:00`) : undefined;
   return (

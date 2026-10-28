@@ -33,6 +33,7 @@ BOOL_POLJA = {"prevozow", "prevozrt", "placeno_prevoz", "zelja_prevoz"}
 
 LABELE = {
     "putnik": "Nosilac", "rodjen": "Datum rođenja nosioca", "pasos": "Pasoš",
+    "uzrast": "Uzrast",
     "adresa": "Adresa", "telefon": "Telefon", "refno": "Email",
     "prevozow": "Prevoz u jednom smeru", "prevozrt": "Povratni prevoz",
     "smer": "Smer", "tiprezervacije": "Tip rezervacije", "subagent": "Subagent",
@@ -58,7 +59,7 @@ LABELE = {
 }
 
 SAPUTNIK_POLJA = {
-    "rodjen": "datum rođenja", "pasos": "pasoš", "prevozow": "prevoz ow",
+    "rodjen": "datum rođenja", "pasos": "pasoš", "uzrast": "uzrast", "prevozow": "prevoz ow",
     "prevozrt": "prevoz rt", "smer": "smer", "adresa": "adresa",
     "email": "email", "telefon": "telefon", "ulazak": "ulazak",
     "mesto_sedenja": "mesto za sedenje", "placeno_prevoz": "plaćeno",

@@ -101,57 +101,95 @@ check("opcije: los enum prevoz → 422",
 
 # ── 2) API — Popusti po sobi (soba × SVI termini) ───────────────────────────
 r = c.get(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H)
-check("popust GET bez zapisa → postoji False", r.status_code == 200 and r.json()["postoji"] is False)
+check("popust GET bez zapisa → postoji False + prazna lista",
+      r.status_code == 200 and r.json()["postoji"] is False and r.json()["popusti"] == [])
 
 pbody = {"umanjenje_vrsta": "procenat", "umanjenje": "10", "tip_popusta": "last_minute",
          "tip_placanja": "delimicno", "vazi_od": "2026-06-01", "vazi_do": "2026-06-30",
          "tip_aranzmana": "sa_prevozom", "tip_cene": "po_osobi", "popust_sopstveni_prevoz": "5.5"}
-r = c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H, json=pbody)
-check("popust PUT → 200, vrednosti vraćene",
-      r.status_code == 200 and r.json()["postoji"] is True
-      and r.json()["umanjenje_vrsta"] == "procenat" and float(r.json()["umanjenje"]) == 10.0
-      and r.json()["tip_popusta"] == "last_minute" and r.json()["vazi_od"] == "2026-06-01")
-check("popust u bazi — P redova po polju",
-      len(db_rows("popust_soba", cid)) == P
-      and all(r["tip_placanja"] == "delimicno" for r in db_rows("popust_soba", cid)))
+pbody2 = {**pbody, "umanjenje": "20", "tip_popusta": "first_minute"}
+r = c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
+          json={"popusti": [pbody, pbody2]})
+g = r.json()
+check("popust PUT sa 2 zapisa → 200, GET vraća polja po rednom broju",
+      r.status_code == 200 and g["postoji"] is True and len(g["popusti"]) == 2
+      and [x["redni"] for x in g["popusti"]] == [1, 2]
+      and g["popusti"][0]["umanjenje_vrsta"] == "procenat"
+      and float(g["popusti"][0]["umanjenje"]) == 10.0
+      and g["popusti"][0]["tip_popusta"] == "last_minute"
+      and g["popusti"][0]["vazi_od"] == "2026-06-01")
+red = db_rows("popust_soba", cid)
+check("popust u bazi — 2×P eksplicitnih redova sa redni 1,2",
+      len(red) == 2 * P and {x["redni"] for x in red} == {1, 2}
+      and all(x["period_id"] != 0 for x in red)
+      and all(x["tip_placanja"] == "delimicno" for x in red))
 
 r = c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
-          json={"umanjenje_vrsta": "iznos", "umanjenje": "50", "tip_popusta": "first_minute"})
-check("popust PUT menja zapise (full-replace, i dalje P redova)",
-      r.status_code == 200 and r.json()["umanjenje_vrsta"] == "iznos"
-      and float(r.json()["umanjenje"]) == 50.0 and r.json()["tip_placanja"] is None
-      and len(db_rows("popust_soba", cid)) == P)
+          json={"popusti": [{"umanjenje_vrsta": "iznos", "umanjenje": "50", "tip_popusta": "first_minute"}]})
+g = r.json()
+check("popust PUT je full-replace — jedan zapis ostaje, redni se vraća na 1",
+      r.status_code == 200 and len(g["popusti"]) == 1 and g["popusti"][0]["redni"] == 1
+      and g["popusti"][0]["umanjenje_vrsta"] == "iznos"
+      and float(g["popusti"][0]["umanjenje"]) == 50.0
+      and g["popusti"][0]["tip_placanja"] is None and len(db_rows("popust_soba", cid)) == P)
 
+check("popust 4 zapisa → 422",
+      c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
+            json={"popusti": [pbody, pbody2, pbody, pbody2]}).status_code == 422)
 check("popust procenat 150 → 422",
       c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
-            json={"umanjenje_vrsta": "procenat", "umanjenje": "150",
-                  "tip_popusta": "last_minute"}).status_code == 422)
+            json={"popusti": [{"umanjenje_vrsta": "procenat", "umanjenje": "150",
+                               "tip_popusta": "last_minute"}]}).status_code == 422)
 check("popust umanjenje 0 → 422",
       c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
-            json={"umanjenje_vrsta": "iznos", "umanjenje": "0",
-                  "tip_popusta": "last_minute"}).status_code == 422)
+            json={"popusti": [{"umanjenje_vrsta": "iznos", "umanjenje": "0",
+                               "tip_popusta": "last_minute"}]}).status_code == 422)
 check("popust vazi_od > vazi_do → 422",
       c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
-            json={"umanjenje_vrsta": "iznos", "umanjenje": "10", "tip_popusta": "last_minute",
-                  "vazi_od": "2026-07-01", "vazi_do": "2026-06-01"}).status_code == 422)
+            json={"popusti": [{"umanjenje_vrsta": "iznos", "umanjenje": "10", "tip_popusta": "last_minute",
+                               "vazi_od": "2026-07-01", "vazi_do": "2026-06-01"}]}).status_code == 422)
 check("popust los tip popusta → 422",
       c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
-            json={"umanjenje_vrsta": "iznos", "umanjenje": "10",
-                  "tip_popusta": "super_popust"}).status_code == 422)
+            json={"popusti": [{"umanjenje_vrsta": "iznos", "umanjenje": "10",
+                               "tip_popusta": "super_popust"}]}).status_code == 422)
 check("popust los tip_placanja → 422",
       c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
-            json={"umanjenje_vrsta": "iznos", "umanjenje": "10", "tip_popusta": "last_minute",
-                  "tip_placanja": "na rate"}).status_code == 422)
+            json={"popusti": [{"umanjenje_vrsta": "iznos", "umanjenje": "10", "tip_popusta": "last_minute",
+                               "tip_placanja": "na rate"}]}).status_code == 422)
 
+r = c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H, json={"popusti": []})
+check("popust prazna lista → scope očišćen", r.status_code == 200
+      and c.get(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H).json()["postoji"] is False
+      and len(db_rows("popust_soba", cid)) == 0)
 r = c.delete(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H)
-check("popust DELETE → postoji False",
+check("popust DELETE idempotentan → postoji False",
       r.status_code == 200
+      and c.delete(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H).status_code == 200
       and c.get(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H).json()["postoji"] is False)
+
+# ── 2b) API — Popusti za ceo cenovnik (-sve), do 3 po opsegu ───────────────
+S_ALL = len(d["sobe"])
+r = c.put(f"/api/cenovnici/{cid}/popust-soba-sve", headers=H,
+          json={"popusti": [pbody, pbody2, {**pbody, "umanjenje": "5", "tip_popusta": "specijalna_ponuda"}]})
+check("popust-sve sa 3 popusta → 200, broj_zapisa = sobe × periodi × 3",
+      r.status_code == 200 and r.json()["broj_zapisa"] == S_ALL * P * 3
+      and len(db_rows("popust_soba", cid)) == S_ALL * P * 3)
+g = c.get(f"/api/cenovnici/{cid}/popust-soba-sve", headers=H).json()
+check("popust-sve GET: redni 1,2,3 i redni 2 je first_minute",
+      {z["redni"] for z in g["zapisi"]} == {1, 2, 3}
+      and all(z["tip_popusta"] == "first_minute" for z in g["zapisi"] if z["redni"] == 2))
+check("popust-sve 4 popusta → 422",
+      c.put(f"/api/cenovnici/{cid}/popust-soba-sve", headers=H,
+            json={"popusti": [pbody, pbody2, pbody, pbody2]}).status_code == 422)
+check("popust-sve prazna lista → briše sve (postoji False, 0 zapisa)",
+      c.put(f"/api/cenovnici/{cid}/popust-soba-sve", headers=H, json={"popusti": []}).status_code == 200
+      and c.get(f"/api/cenovnici/{cid}/popust-soba-sve", headers=H).json()["postoji"] is False
+      and db_rows("popust_soba", cid) == [])
 
 # cascade: obe tabele idu sa cenovnikom
 c.put(f"/api/cenovnici/{cid}/opcije-soba/{soba12['id']}", headers=H, json={"blokirano": True})
 c.put(f"/api/cenovnici/{cid}/popust-soba/{soba12['id']}", headers=H,
-      json={"umanjenje_vrsta": "iznos", "umanjenje": "10", "tip_popusta": "last_minute"})
+      json={"popusti": [pbody, pbody2]})
 c.delete(f"/api/cenovnici/{cid}", headers=H)
 check("cascade: opcije_soba i popust_soba obrisani sa cenovnikom",
       db_rows("opcije_soba", cid) == [] and db_rows("popust_soba", cid) == [])
@@ -165,12 +203,12 @@ ui_NZ = ui_N * ui_P
 
 with sync_playwright() as p:
     b = p.chromium.launch()
-    pg = b.new_page()
+    ctx = b.new_context()
+    ctx.add_init_script(f"localStorage.setItem('ta_token', {json.dumps(tok)});")
+    pg = ctx.new_page()
     BASE = "http://localhost:3058"
     pg.goto(f"{BASE}/agencija/cenovnici")
-    pg.evaluate("t => localStorage.setItem('ta_token', t)", tok)
-    pg.goto(f"{BASE}/agencija/cenovnici")
-    pg.wait_for_selector("[role=tablist]")
+    pg.get_by_role("tab", name="Izmena kreiranih cenovnika").wait_for(timeout=10000)
     pg.get_by_role("tab", name="Izmena kreiranih cenovnika").click()
     pg.get_by_label("Pretraga cenovnika").fill(str(ui_cid))
     redovi = pg.get_by_role("row").filter(has=pg.get_by_role("cell", name=str(ui_cid), exact=True))
@@ -219,8 +257,13 @@ with sync_playwright() as p:
     pg.get_by_text("Opcije su obrisane za sve sobe i sve termine").wait_for(timeout=8000)
     check("UI: opcije obrisane kroz dijalog", db_rows("opcije_soba", ui_cid) == [])
 
-    # tab Popusti: procenat + sva polja → Snimi (masovni -sve PUT)
+    # tab Popusti: scope nema popust → prazan prikaz, "Dodaj popust" otvara formu
     pg.get_by_role("tab", name="Popusti").click()
+    pg.get_by_text("Nema popusta za ovaj opseg").wait_for(timeout=8000)
+    check("UI: bez popusta prikazan 'Nema popusta' box, forma skrivena",
+          pg.locator("#pop-umanjenje").count() == 0)
+    pg.get_by_role("button", name="Dodaj popust").click()
+    pg.locator("#pop-umanjenje").wait_for(timeout=8000)
     pg.get_by_role("button", name="Procenat").click()
     pg.locator("#pop-umanjenje").fill("12,5")
     pg.locator("#pop-tip").click()
@@ -233,16 +276,24 @@ with sync_playwright() as p:
           .get_by_role("gridcell").get_by_role("button").nth(idx).click()
         pg.wait_for_timeout(200)
     pg.locator("#pop-psp").fill("5")
+    # drugi chip: dodavanje "Popust 2" i uklanjanje — ostaje 1 popust za snimanje
+    pg.get_by_role("button", name="Dodaj popust").click()
+    pg.get_by_role("button", name="Popust 2", exact=True).wait_for(timeout=8000)
+    check("UI: 'Dodaj popust' pravi drugi chip 'Popust 2'",
+          pg.get_by_role("button", name="Popust 2", exact=True).is_visible())
+    pg.get_by_role("button", name="Ukloni popust 2").click()
+    pg.get_by_role("button", name="Popust 2", exact=True).wait_for(state="detached", timeout=8000)
     with pg.expect_response(lambda r: r.request.method == "PUT"
                             and r.url.endswith("/popust-soba-sve")) as ri2:
         pg.get_by_role("button", name="Snimi", exact=True).click()
     pj = ri2.value.json()
-    check("UI: masovni popust PUT payload tačan (procenat 12.5, last_minute, delimično, datumi, psp 5)",
+    body_pop = json.loads(ri2.value.request.post_data)["popusti"]
+    check("UI: masovni popust PUT payload tačan (1 popust: procenat 12.5, last_minute, delimično, psp 5)",
           pj["status"] == "sacuvano" and pj["broj_soba"] == ui_N and pj["broj_zapisa"] == ui_NZ
-          and json.loads(ri2.value.request.post_data)["umanjenje_vrsta"] == "procenat"
-          and float(json.loads(ri2.value.request.post_data)["umanjenje"]) == 12.5
-          and json.loads(ri2.value.request.post_data)["tip_popusta"] == "last_minute")
-    pg.get_by_text(f"Popust je sačuvan za sve sobe i sve termine ({ui_NZ})").wait_for(timeout=8000)
+          and len(body_pop) == 1 and body_pop[0]["umanjenje_vrsta"] == "procenat"
+          and float(body_pop[0]["umanjenje"]) == 12.5
+          and body_pop[0]["tip_popusta"] == "last_minute")
+    pg.get_by_text(f"Popusti sačuvani (1) za sve sobe i sve termine ({ui_NZ} zapisa)").wait_for(timeout=8000)
 
     # validacija: procenat 150 → toast greške, bez PUT-a
     pg.locator("#pop-umanjenje").fill("150")
@@ -252,10 +303,10 @@ with sync_playwright() as p:
     check("UI: procenat 150 odbijen na klijentu (API vrednost nepromenjena)",
           len(zapisi) == ui_NZ and all(float(x["umanjenje"]) == 12.5 for x in zapisi))
 
-    # Obriši popust (masovno)
-    dijalog.get_by_role("button", name="Obriši popust").click()
-    pg.get_by_text("Popust je obrisan za sve sobe i sve termine").wait_for(timeout=8000)
-    check("UI: popust obrisan kroz dijalog", db_rows("popust_soba", ui_cid) == [])
+    # Obriši sve popuste (masovno)
+    dijalog.get_by_role("button", name="Obriši sve popuste").click()
+    pg.get_by_text("Popusti su obrisani za sve sobe i sve termine").wait_for(timeout=8000)
+    check("UI: svi popusti obrisani kroz dijalog", db_rows("popust_soba", ui_cid) == [])
     b.close()
 
 check("cleanup UI cenovnik obrisan", c.delete(f"/api/cenovnici/{ui_cid}", headers=H).status_code == 200)

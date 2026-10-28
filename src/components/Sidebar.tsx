@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, LogOut, ShieldCheck, Settings,
   Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus,
   FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage,
-  Eye, ShoppingBag, Banknote, Palette, Sigma, Bell, Store, ArrowRightLeft
+  Eye, ShoppingBag, Banknote, Palette, Sigma, Bell, Store, ArrowRightLeft, Ban
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -216,6 +216,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             <NavItem to="/knjigovodstvo/izvodi" icon={Landmark} label="Izvodi" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/knjizenje" icon={NotebookPen} label="Knjiženje" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/prebacivanja" icon={ArrowRightLeft} label="Prebacivanja" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/zabrane" icon={Ban} label="Administrativne zabrane" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/predracuni" icon={Receipt} label="Predračuni" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/avansne-fakture" icon={ReceiptText} label="Avansne fakture" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/fakture" icon={FileText} label="Fakture" collapsed={collapsed} onClick={onNavClick} />
@@ -616,6 +617,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/knjigovodstvo/izvodi" icon={Landmark} label="Izvodi" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/knjizenje" icon={NotebookPen} label="Knjiženje" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/prebacivanja" icon={ArrowRightLeft} label="Prebacivanja" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/zabrane" icon={Ban} label="Administrativne zabrane" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/predracuni" icon={Receipt} label="Predračuni" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/avansne-fakture" icon={ReceiptText} label="Avansne fakture" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/fakture" icon={FileText} label="Fakture" collapsed={false} onClick={closeMobile} />

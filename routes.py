@@ -26,6 +26,7 @@ from grafik_boje import kategorija_grafika
 from cenovnici_api import init_cenovnici, register_cenovnici
 from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
 from zaduzenje_api import init_zaduzenje, register_zaduzenje
+from zabrana_api import init_zabrana, register_zabrana
 from dobavljaci_api import init_dobavljaci, register_dobavljaci
 from banke_api import init_banke, register_banke
 from notifikacije_api import init_notifikacije, register_notifikacije
@@ -484,6 +485,10 @@ def init_db(engine):
                 conn.execute(text(f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS {kolona} {tip}"))
         conn.execute(text(
             "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS napomena_prevoz VARCHAR(500)"
+        ))
+        # Uzrast nosioca (ADL / CHD / INF); saputnici imaju aranzman_dopuna.uzrast
+        conn.execute(text(
+            "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS uzrast VARCHAR(20) DEFAULT ''"
         ))
         # Mesto izlaska (tab Prevoz): podrazumevano = mesto ulaska; nosilac u aranzman,
         # saputnici u aranzman_dopuna.
@@ -1198,6 +1203,7 @@ class RezPutnikIn(BaseModel):
     ime: str = ""
     datumRodjenja: Optional[str] = None  # ISO yyyy-mm-dd
     pasos: str = ""
+    uzrast: str = ""  # ADL / CHD / INF (prazno = nije izabrano)
     ow: bool = False
     rt: bool = False
     sp: bool = False
@@ -1514,6 +1520,7 @@ def create_app(static_dir: str) -> FastAPI:
     init_cenovnici(engine)
     init_koeficijenti(engine)
     init_zaduzenje(engine)
+    init_zabrana(engine)
     init_dobavljaci(engine)
     init_banke(engine)
     init_notifikacije(engine)
@@ -2524,9 +2531,11 @@ def create_app(static_dir: str) -> FastAPI:
             opcije = {(r.soba_id, r.period_id): r for r in conn.execute(text(
                 "SELECT * FROM opcije_soba WHERE cenovnik_id = :c"
             ), {"c": c.id}).mappings()}
-            popusti = {(r.soba_id, r.period_id): r for r in conn.execute(text(
-                "SELECT * FROM popust_soba WHERE cenovnik_id = :c"
-            ), {"c": c.id}).mappings()}
+            popusti: dict = {}
+            for r in conn.execute(text(
+                "SELECT * FROM popust_soba WHERE cenovnik_id = :c ORDER BY redni"
+            ), {"c": c.id}).mappings():
+                popusti.setdefault((r["soba_id"], r["period_id"]), []).append(r)
             # lanac perioda snimka od d_od do d_do (BFS — najmanje termina)
             poceci: dict = {}
             for p in c.periodi:
@@ -2625,28 +2634,37 @@ def create_app(static_dir: str) -> FastAPI:
             if cena < 0:
                 cena = Decimal("0")
             osnovna = cena.quantize(Decimal("0.01"))
-            snizena = None
-            pop = _po_opsegu(cen["popusti"], red["id"], prvi_pid)
-            if pop:
+            # Popusti se NIKAD ne sabiraju: svaki važeći popust = zasebna varijanta (kartica u pretrazi)
+            varijante = []
+            for pop in (_po_opsegu(cen["popusti"], red["id"], prvi_pid) or []):
+                obr_p = list(obr)
                 vazi = ((pop["vazi_od"] is None or pop["vazi_od"] <= danas)
                         and (pop["vazi_do"] is None or pop["vazi_do"] >= danas))
                 um = Decimal(str(pop["umanjenje"]))
+                snizena = None
                 if vazi:
                     if pop["umanjenje_vrsta"] == "procenat":
                         snizena = (osnovna * (Decimal("100") - um) / Decimal("100")).quantize(Decimal("0.01"))
-                        obr.append(f"Popust ({pop['tip_popusta']}): −{_fmt(um)}% → {_fmt(snizena)} €")
+                        obr_p.append(f"Popust #{pop['redni']} ({pop['tip_popusta']}): −{_fmt(um)}% → {_fmt(snizena)} €")
                     else:
                         snizena = max(Decimal("0"), osnovna - um).quantize(Decimal("0.01"))
-                        obr.append(f"Popust ({pop['tip_popusta']}): −{_fmt(um)} € → {_fmt(snizena)} €")
+                        obr_p.append(f"Popust #{pop['redni']} ({pop['tip_popusta']}): −{_fmt(um)} € → {_fmt(snizena)} €")
                 else:
-                    obr.append(f"Popust ({pop['tip_popusta']}) postoji ali ne važi danas "
-                               f"({pop['vazi_od']} – {pop['vazi_do']})")
-            else:
-                obr.append("Popust: nema")
+                    obr_p.append(f"Popust #{pop['redni']} ({pop['tip_popusta']}) postoji ali ne važi danas "
+                                 f"({pop['vazi_od']} – {pop['vazi_do']})")
+                varijante.append({"popust_redni": pop["redni"], "tip_popusta": pop["tip_popusta"],
+                                  "tip_placanja": pop["tip_placanja"], "vazi": vazi,
+                                  "cena_snizena": _q2(snizena) if snizena is not None else None,
+                                  "obracun": obr_p})
+            if not varijante:
+                varijante.append({"popust_redni": None, "tip_popusta": None, "tip_placanja": None,
+                                  "vazi": False, "cena_snizena": None, "obracun": obr + ["Popust: nema"]})
+            prva_vazeca = next((v for v in varijante if v["cena_snizena"] is not None), None)
             return {"nema_cene": False, "cena_osnovna": _q2(osnovna),
-                    "cena_snizena": _q2(snizena) if snizena is not None else None,
+                    "cena_snizena": prva_vazeca["cena_snizena"] if prva_vazeca else None,
+                    "varijante": varijante,
                     "struktura": struktura, "koeficijent": float(koef),
-                    "tip_cene": tip_cene, "obracun": obr, "napomene": napomene}
+                    "tip_cene": tip_cene, "obracun": varijante[0]["obracun"], "napomene": napomene}
 
         out = []
         for g in smestaji:
@@ -3911,6 +3929,8 @@ def create_app(static_dir: str) -> FastAPI:
             ])
         return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov.kljuc}
 
+    register_zabrana(api, engine, get_current_user, lambda: get_eur_middle(), calc_ugovor_values)
+
     @api.get("/prebacivanja")
     def lista_prebacivanja(q: str = "", limit: int = 500, _: dict = Depends(get_current_user)):
         """Evidencija prebačenih uplata (tabela prebacivanje), najnovije prve."""
@@ -4271,6 +4291,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "saputnik": s.ime.strip()[:200],
                 "rodjen": _rez_datum(s.datumRodjenja, "Datum rođenja saputnika"),
                 "pasos": _rez_str(s.pasos, 50),
+                "uzrast": _rez_str(s.uzrast, 20),
                 "prevozow": 1 if s.ow else 0,
                 "prevozrt": 1 if s.rt else 0,
                 "smer": _rez_str(s.smer, 50) if s.ow else None,
@@ -4324,7 +4345,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "telefon": (s.telefon or "").strip()[:300],
                 "ulazak": _rez_str(s.ulazak, 200),
                 "mesto_izlaska": _rez_str(s.mestoIzlaska, 200) or _rez_str(s.ulazak, 200),
-                "uzrast": st.uzrast if st else None,
+                "uzrast": _rez_str(s.uzrast, 20) or (st.uzrast if st else None),
                 "viza": st.viza if st else None,
                 **pv,
             })
@@ -4436,6 +4457,7 @@ def create_app(static_dir: str) -> FastAPI:
             "putnik": n.ime.strip()[:200],
             "rodjen": _rez_datum(n.datumRodjenja, "Datum rođenja"),
             "pasos": _rez_str(n.pasos, 50),
+            "uzrast": _rez_str(n.uzrast, 20),
             "adresa": (n.adresa or "").strip()[:200],
             "telefon": (n.telefon or "").strip()[:200],
             "refno": _rez_str(n.email, 200),  # refno = email (isti maping kao pri učitavanju)
@@ -4537,7 +4559,7 @@ def create_app(static_dir: str) -> FastAPI:
                 f"SELECT {cols_sql} FROM aranzman WHERE id = :id"
             ), {"id": arow.id}).mappings().one())
             stari_sap = [dict(r) for r in conn.execute(text(
-                "SELECT saputnik, rodjen, pasos, prevozow, prevozrt, smer, adresa, "
+                "SELECT saputnik, rodjen, pasos, uzrast, prevozow, prevozrt, smer, adresa, "
                 "email, telefon, ulazak, mesto_izlaska, mesto_sedenja, placeno_prevoz, zelja_prevoz, "
                 "datum_ow, destinacija_ow, datum_polaska, destinacija_polaska, "
                 "datum_povratka, destinacija_povratka "
@@ -4852,6 +4874,7 @@ def create_app(static_dir: str) -> FastAPI:
             "putnik": d.get("putnik"),
             "rodjen": fmt_date(d.get("rodjen")),
             "pasos": d.get("pasos"),
+            "uzrast": d.get("uzrast") or None,
             "putnici": putnici,
             "putnici_detalji": putnici_detalji,
             "dodatne": [dict(stavka) for stavka in dodatne],
