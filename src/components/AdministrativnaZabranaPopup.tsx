@@ -3,6 +3,7 @@ import { addMonths, format, getDaysInMonth, startOfMonth } from "date-fns";
 import { Ban, ChevronDown, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -84,6 +85,8 @@ export function AdministrativnaZabranaPopup({ open, onOpenChange, kljuc }: Props
   const [iznosTxt, setIznosTxt] = useState("");
   const [brojRataTxt, setBrojRataTxt] = useState("12");
   const [kurs, setKurs] = useState<number | null>(null);
+  const [preuzeta, setPreuzeta] = useState(false);
+  const [preuzetaDatum, setPreuzetaDatum] = useState(danas());
 
   // Pri svakom otvaranju: novi predlog broja (posle kreiranja broj se pomera na /N+1) i iznos iz obračuna.
   useEffect(() => {
@@ -96,6 +99,8 @@ export function AdministrativnaZabranaPopup({ open, onOpenChange, kljuc }: Props
     setPrvaRata(prviUSledecemMesecu());
     setPrvaPolurata("");
     setBrojRataTxt("12");
+    setPreuzeta(false);
+    setPreuzetaDatum(danas());
     Promise.all([
       apiFetch<Predlog>(`/zabrane/predlog?kljuc=${encodeURIComponent(kljuc)}`),
       apiFetch<SubagentOpcija[]>("/subagenti-izbor?ta=false"),
@@ -159,6 +164,7 @@ export function AdministrativnaZabranaPopup({ open, onOpenChange, kljuc }: Props
           prva_polurata: prvaPolurata || null,
           iznos_eur: iznos,
           broj_rata: brojRata,
+          preuzeta_datum: preuzeta ? preuzetaDatum : null,
         }),
       });
       toast.success("Administrativna zabrana je kreirana", { description: r.broj_zabrane });
@@ -264,6 +270,20 @@ export function AdministrativnaZabranaPopup({ open, onOpenChange, kljuc }: Props
                 <div className="text-xs text-muted-foreground tabular-nums" data-testid="zab-pregled">
                   Ukupno: {pregled.ukupno} RSD · kurs EUR {kurs}
                 </div>
+              )}
+            </div>
+
+            <div className="col-span-2 flex flex-wrap items-end gap-3 rounded-md border p-3">
+              <label htmlFor="zab-preuzeta" className="flex items-center gap-2 text-sm font-medium">
+                <Checkbox
+                  id="zab-preuzeta"
+                  checked={preuzeta}
+                  onCheckedChange={(v) => setPreuzeta(v === true)}
+                />
+                Zabrana preuzeta
+              </label>
+              {preuzeta && (
+                <DatumPicker iso={preuzetaDatum} label="Datum preuzimanja" onIzbor={setPreuzetaDatum} />
               )}
             </div>
           </div>

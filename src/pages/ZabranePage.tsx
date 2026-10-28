@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Ban, Download, Loader2, Search } from "lucide-react";
+import { format } from "date-fns";
+import { Ban, Download, FilePlus, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +24,7 @@ interface ZabranaRow {
   valuta: string;
   operater: string;
   preuzeta: string | null;
+  preuzeta_datum: string | null;
 }
 
 interface ZabraneResponse {
@@ -44,6 +46,7 @@ interface ZabranaDetalj {
   preduzece: string;
   mesto_obracuna: string;
   datum: string;
+  preuzeta_datum: string | null;
   broj_rata: number;
   smestaj: number;
   prevoz: number;
@@ -56,10 +59,15 @@ interface ZabranaDetalj {
 }
 
 /** Dijalog sa svim ratama zabrane i preuzimanjem PDF-a. */
-function ZabranaDetaljDialog({ broj, onClose }: { broj: string | null; onClose: () => void }) {
+function ZabranaDetaljDialog({ broj, onClose, onPromena }: {
+  broj: string | null;
+  onClose: () => void;
+  onPromena: () => void;
+}) {
   const [d, setD] = useState<ZabranaDetalj | null>(null);
   const [ucitava, setUcitava] = useState(false);
   const [pdfUcitava, setPdfUcitava] = useState(false);
+  const [preuzetaUcitava, setPreuzetaUcitava] = useState(false);
 
   useEffect(() => {
     if (!broj) return;
@@ -74,6 +82,24 @@ function ZabranaDetaljDialog({ broj, onClose }: { broj: string | null; onClose: 
       .finally(() => { if (aktivan) setUcitava(false); });
     return () => { aktivan = false; };
   }, [broj]);
+
+  async function oznaciPreuzeta(datum: string | null) {
+    if (!broj) return;
+    setPreuzetaUcitava(true);
+    try {
+      const r = await apiFetch<{ preuzeta_datum: string }>(
+        `/zabrane/preuzeta?${new URLSearchParams({ broj })}`,
+        { method: "PUT", body: JSON.stringify({ datum }) },
+      );
+      setD((prev) => (prev ? { ...prev, preuzeta_datum: r.preuzeta_datum || null } : prev));
+      onPromena();
+      toast.success(datum ? "Zabrana je označena kao preuzeta" : "Oznaka preuzimanja je poništena");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Čuvanje nije uspelo");
+    } finally {
+      setPreuzetaUcitava(false);
+    }
+  }
 
   async function preuzmiPdf() {
     if (!broj) return;
@@ -136,6 +162,31 @@ function ZabranaDetaljDialog({ broj, onClose }: { broj: string | null; onClose: 
               <div><div className="text-xs text-muted-foreground">Ukupno</div><div className="font-semibold tabular-nums">{nf2.format(d.ukupno)} RSD</div></div>
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3">
+              <div>
+                <div className="text-xs text-muted-foreground">Zabrana preuzeta</div>
+                {d.preuzeta_datum ? (
+                  <Badge className="mt-0.5 bg-emerald-600 text-white hover:bg-emerald-600 tabular-nums">
+                    Preuzeta {d.preuzeta_datum}
+                  </Badge>
+                ) : (
+                  <div className="text-muted-foreground">Nije preuzeta</div>
+                )}
+              </div>
+              {d.preuzeta_datum ? (
+                <Button variant="outline" size="sm" disabled={preuzetaUcitava}
+                  onClick={() => void oznaciPreuzeta(null)}>
+                  Poništi preuzimanje
+                </Button>
+              ) : (
+                <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700"
+                  disabled={preuzetaUcitava}
+                  onClick={() => void oznaciPreuzeta(format(new Date(), "yyyy-MM-dd"))}>
+                  Označi kao preuzetu (danas)
+                </Button>
+              )}
+            </div>
+
             <div className="overflow-x-auto rounded-md border">
               <Table>
                 <TableHeader>
@@ -169,6 +220,10 @@ function ZabranaDetaljDialog({ broj, onClose }: { broj: string | null; onClose: 
         )}
 
         <DialogFooter>
+          <Button variant="outline" disabled={!d}>
+            <FilePlus className="mr-1.5 size-4" />
+            Kreiraj knjižno odobrenje
+          </Button>
           <Button variant="outline" onClick={() => void preuzmiPdf()} disabled={!d || pdfUcitava}>
             {pdfUcitava ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Download className="mr-1.5 size-4" />}
             Preuzmi PDF
@@ -185,6 +240,7 @@ export default function ZabranePage() {
   const [redovi, setRedovi] = useState<ZabranaRow[] | null>(null);
   const [ucitava, setUcitava] = useState(false);
   const [otvorenaZabrana, setOtvorenaZabrana] = useState<string | null>(null);
+  const [osvezi, setOsvezi] = useState(0);
 
   // pretraga sa 400 ms debounce
   useEffect(() => {
@@ -207,7 +263,7 @@ export default function ZabranePage() {
       })
       .finally(() => { if (aktivan) setUcitava(false); });
     return () => { aktivan = false; };
-  }, [pojam]);
+  }, [pojam, osvezi]);
 
   return (
     <div className="space-y-4 p-4 md:p-6">
@@ -254,13 +310,14 @@ export default function ZabranePage() {
                     <TableHead className="text-right">Rata</TableHead>
                     <TableHead className="text-right">Iznos (RSD)</TableHead>
                     <TableHead>Operater</TableHead>
+                    <TableHead>Preuzeta</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {redovi.map((r) => (
                     <TableRow
                       key={r.id}
-                      className="cursor-pointer"
+                      className={r.preuzeta_datum ? "cursor-pointer bg-emerald-50/60" : "cursor-pointer"}
                       onClick={() => setOtvorenaZabrana(r.brojzabrane)}
                     >
                       <TableCell className="font-mono whitespace-nowrap">{r.brojzabrane}</TableCell>
@@ -275,6 +332,13 @@ export default function ZabranePage() {
                         {r.ukupno != null ? `${nf2.format(r.ukupno)} RSD` : "—"}
                       </TableCell>
                       <TableCell>{r.operater?.trim() || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {r.preuzeta_datum ? (
+                          <Badge className="bg-emerald-600 text-white hover:bg-emerald-600 tabular-nums">
+                            {r.preuzeta_datum}
+                          </Badge>
+                        ) : "—"}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -287,7 +351,11 @@ export default function ZabranePage() {
           )}
         </CardContent>
       </Card>
-      <ZabranaDetaljDialog broj={otvorenaZabrana} onClose={() => setOtvorenaZabrana(null)} />
+      <ZabranaDetaljDialog
+        broj={otvorenaZabrana}
+        onClose={() => setOtvorenaZabrana(null)}
+        onPromena={() => setOsvezi((n) => n + 1)}
+      />
     </div>
   );
 }

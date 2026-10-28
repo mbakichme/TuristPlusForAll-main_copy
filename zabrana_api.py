@@ -50,6 +50,9 @@ def init_zabrana(engine):
             )
         """))
         conn.execute(text(
+            "ALTER TABLE zabrana ADD COLUMN IF NOT EXISTS preuzeta_datum DATE"
+        ))
+        conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS zabrana_brojzabrane_uq ON zabrana (brojzabrane)"
         ))
         conn.execute(text(
@@ -106,6 +109,7 @@ class ZabranaNova(BaseModel):
     prva_polurata: Optional[date] = None
     iznos_eur: float = Field(gt=0)
     broj_rata: int = Field(default=BROJ_RATA, ge=1, le=120)
+    preuzeta_datum: Optional[date] = None
 
     @field_validator("kljuc", "broj_zabrane", "mesto_obracuna")
     @classmethod
@@ -120,8 +124,18 @@ class ZabranaNova(BaseModel):
         return v
 
 
+class ZabranaPreuzeta(BaseModel):
+    """datum = dan preuzimanja; null = poništi (zabrana nije preuzeta)."""
+    datum: Optional[date] = None
+
+
 def _d(v) -> str:
     return v.strftime("%d.%m.%Y.") if v else ""
+
+
+def _dd(v) -> str:
+    """dd.mm.yyyy (bez tačke na kraju) — format u tabeli zabrana."""
+    return v.strftime("%d.%m.%Y") if v else ""
 
 
 def _zabrana_detalj(conn, broj: str) -> dict:
@@ -159,6 +173,7 @@ def _zabrana_detalj(conn, broj: str) -> dict:
         "preduzece": z["preduzece"],
         "mesto_obracuna": z["mestoobracuna"] or "",
         "datum": _d(z["datum"]),
+        "preuzeta_datum": _dd(z["preuzeta_datum"]),
         "broj_rata": z["brojrata"] or len(rate),
         "smestaj": z["smestaj"] or 0,
         "prevoz": z["prevoz"] or 0,
@@ -230,7 +245,7 @@ def register_zabrana(api, engine, get_current_user, get_kurs: Callable[[], float
     def zabrane_lista(q: str = "", limit: int = 500, _: dict = Depends(get_current_user)):
         limit = max(1, min(int(limit), 2000))
         sql = ("SELECT id, id_aranzmana, brojzabrane, preduzece, datum, mestoobracuna, "
-               "prvarata, polurata, brojrata, ukupno, valuta, operater, preuzeta "
+               "prvarata, polurata, brojrata, ukupno, valuta, operater, preuzeta, preuzeta_datum "
                "FROM zabrana")
         bind: dict = {"lim": limit}
         pojam = (q or "").strip()
@@ -248,8 +263,22 @@ def register_zabrana(api, engine, get_current_user, get_kurs: Callable[[], float
                 d[k] = d[k].isoformat() if d.get(k) else None
             for k in ("prvarata", "polurata", "preuzeta"):
                 d[k] = d[k].strftime("%d.%m.%Y.") if d.get(k) else None
+            d["preuzeta_datum"] = _dd(d.get("preuzeta_datum"))
             out.append(d)
         return {"rows": out, "total": len(out)}
+
+    @api.put("/zabrane/preuzeta")
+    def zabrana_preuzeta(broj: str, body: ZabranaPreuzeta,
+                         _: dict = Depends(get_current_user)):
+        """Označi zabranu kao preuzetu (datum) ili poništi (datum = null)."""
+        with engine.begin() as conn:
+            res = conn.execute(text(
+                "UPDATE zabrana SET preuzeta_datum = :d WHERE brojzabrane = :b"
+            ), {"d": body.datum, "b": broj.strip()})
+            if res.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Zabrana nije pronađena")
+        return {"status": "sacuvano", "broj": broj.strip(),
+                "preuzeta_datum": _dd(body.datum)}
 
     @api.get("/zabrane/detalj")
     def zabrana_detalj(broj: str, _: dict = Depends(get_current_user)):
@@ -304,13 +333,14 @@ def register_zabrana(api, engine, get_current_user, get_kurs: Callable[[], float
                 INSERT INTO zabrana
                   (id_aranzmana, zabrana, preduzece, datum, procs, smestaje, smestaj, prevoz, dod,
                    kurs, prvarata, brojrata, idsub, brojzabrane, preuzeta, operater, ukupno,
-                   valuta, polurata, mestoobracuna)
+                   valuta, polurata, mestoobracuna, preuzeta_datum)
                 VALUES
                   (:ida, :zab, :pred, :datum, :procs, :smestaje, :smestaj, :prevoz, :dod,
                    :kurs, :prva, :brrata, :idsub, :broj, NOW(), :oper, :ukupno,
-                   :valuta, :polurata, :mesto)
+                   :valuta, :polurata, :mesto, :preuzeta_datum)
                 RETURNING id
             """), {
+                "preuzeta_datum": body.preuzeta_datum,
                 "ida": body.kljuc,
                 "zab": "Administrativna zabrana",
                 "pred": subagent.naziv,

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, CreditCard, Download, FilePenLine, Loader2,
+  BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, ChevronDown, CreditCard, Download, FilePenLine, Loader2,
   FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
   Users, Wallet, ArrowRightLeft,
 } from "lucide-react";
@@ -62,6 +62,51 @@ function prikaziKarticaNeunetu(kljuc: number, ugovor: string) {
   });
 }
 const MESTO_SEDENJA = ["DONJA PLATFORMA", "GORNJA PLATFORMA", "DOLE ZA STOLOM", "DOLE ZADNJI RED", "GORE IZLOG", "GORE STO", "ŠARAGE"];
+
+/** Select sa pretragom i opcijom „Prazno“ (Radix Select ne dozvoljava value=""). */
+function PretraznaSelect({ value, opcije, placeholder, ariaLabel, onChange, disabled }: {
+  value: string;
+  opcije: { value: string; label: string }[];
+  placeholder: string;
+  ariaLabel: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const [otvoreno, setOtvoreno] = useState(false);
+  const izabrana = opcije.find((o) => o.value === value);
+  const izbor = (v: string) => { onChange(v); setOtvoreno(false); };
+  return (
+    <Popover open={otvoreno} onOpenChange={setOtvoreno}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" disabled={disabled} aria-label={ariaLabel}
+          className="w-full h-8 justify-between font-normal text-xs">
+          <span className={cn("truncate", !value && "text-muted-foreground")}>
+            {value ? (izabrana?.label ?? value) : placeholder}
+          </span>
+          <ChevronDown className="size-3.5 opacity-50 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-card" align="start">
+        <Command>
+          <CommandInput placeholder="Pretraga…" />
+          <CommandList>
+            <CommandEmpty>Nema rezultata za zadatu pretragu.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem value="prazno bez izbora" onSelect={() => izbor("")}>
+                <span className="italic text-muted-foreground">Prazno (bez izbora)</span>
+              </CommandItem>
+              {opcije.map((o) => (
+                <CommandItem key={o.value} value={o.label} onSelect={() => izbor(o.value)}>
+                  {o.label}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const nf = new Intl.NumberFormat("sr-RS", { maximumFractionDigits: 2 });
 const nf2 = new Intl.NumberFormat("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -2500,30 +2545,40 @@ export default function RezervacijePage() {
                         <Chk label="OW" labelClassName="text-xs" checked={osoba.ow} onChange={(v) => updOsoba({ ow: v, rt: v ? false : osoba.rt, sp: v ? false : osoba.sp, smer: v ? osoba.smer : "", datumOw: v ? osoba.datumOw : "", destinacijaOw: v ? osoba.destinacijaOw : "", datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
                         <Chk label="SP" labelClassName="text-xs" checked={osoba.sp} onChange={(v) => updOsoba({ sp: v, ow: v ? false : osoba.ow, rt: v ? false : osoba.rt, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
                         <div className="space-y-1">
-                          <Select value={red.mestoUlaska} onValueChange={(v) => updPrevoz(p.uid, { mestoUlaska: v, ...(red.mestoIzlaska === "" || red.mestoIzlaska === red.mestoUlaska ? { mestoIzlaska: v } : {}) })} disabled={zakljucano}>
-                            <SelectTrigger aria-label={`Mesto ulaska — ${p.ime}`} className="w-full h-8 text-xs"><SelectValue placeholder="Izaberite mesto ulaska" /></SelectTrigger>
-                            <SelectContent>
-                              {stariUlaz && <SelectItem value={stariUlaz}>{stariUlaz} (sačuvano)</SelectItem>}
-                              {mestaUlaskaOpcije.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
+                          <PretraznaSelect
+                            value={red.mestoUlaska}
+                            onChange={(v) => updPrevoz(p.uid, { mestoUlaska: v, ...(red.mestoIzlaska === "" || red.mestoIzlaska === red.mestoUlaska ? { mestoIzlaska: v } : {}) })}
+                            disabled={zakljucano}
+                            ariaLabel={`Mesto ulaska — ${p.ime}`}
+                            placeholder="Izaberite mesto ulaska"
+                            opcije={[
+                              ...(stariUlaz ? [{ value: stariUlaz, label: `${stariUlaz} (sačuvano)` }] : []),
+                              ...mestaUlaskaOpcije.map((m) => ({ value: m, label: m })),
+                            ]}
+                          />
                         </div>
                         <div className="space-y-1">
-                          <Select value={red.mestoIzlaska} onValueChange={(v) => updPrevoz(p.uid, { mestoIzlaska: v })} disabled={zakljucano}>
-                            <SelectTrigger aria-label={`Mesto izlaska — ${p.ime}`} className="w-full h-8 text-xs"><SelectValue placeholder="Izaberite mesto izlaska" /></SelectTrigger>
-                            <SelectContent>
-                              {stariIzlaz && <SelectItem value={stariIzlaz}>{stariIzlaz} (sačuvano)</SelectItem>}
-                              {mestaUlaskaOpcije.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
+                          <PretraznaSelect
+                            value={red.mestoIzlaska}
+                            onChange={(v) => updPrevoz(p.uid, { mestoIzlaska: v })}
+                            disabled={zakljucano}
+                            ariaLabel={`Mesto izlaska — ${p.ime}`}
+                            placeholder="Izaberite mesto izlaska"
+                            opcije={[
+                              ...(stariIzlaz ? [{ value: stariIzlaz, label: `${stariIzlaz} (sačuvano)` }] : []),
+                              ...mestaUlaskaOpcije.map((m) => ({ value: m, label: m })),
+                            ]}
+                          />
                         </div>
                         <div className="space-y-1">
-                          <Select value={red.mestoSedenja} onValueChange={(v) => updPrevoz(p.uid, { mestoSedenja: v })} disabled={zakljucano}>
-                            <SelectTrigger aria-label={`Mesto za sedenje — ${p.ime}`} className="w-full h-8 text-xs"><SelectValue placeholder="Izaberite mesto za sedenje" /></SelectTrigger>
-                            <SelectContent>
-                              {MESTO_SEDENJA.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
+                          <PretraznaSelect
+                            value={red.mestoSedenja}
+                            onChange={(v) => updPrevoz(p.uid, { mestoSedenja: v })}
+                            disabled={zakljucano}
+                            ariaLabel={`Mesto za sedenje — ${p.ime}`}
+                            placeholder="Izaberite mesto za sedenje"
+                            opcije={MESTO_SEDENJA.map((m) => ({ value: m, label: m }))}
+                          />
                         </div>
                         <Chk label="Plaćeno" labelClassName="text-xs" checked={red.placeno} onChange={(v) => updPrevoz(p.uid, { placeno: v, zelja: v ? false : red.zelja })} disabled={zakljucano} />
                         <Chk label="Želja" labelClassName="text-xs" checked={red.zelja} onChange={(v) => updPrevoz(p.uid, { zelja: v, placeno: v ? false : red.placeno })} disabled={zakljucano} />
