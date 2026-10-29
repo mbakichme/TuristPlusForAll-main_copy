@@ -554,6 +554,8 @@ export default function RezervacijePage() {
   const [subagentOpcije, setSubagentOpcije] = useState<string[]>([]);
   // provizija izabranog subagenta (kolona subagenti.provizija) i globalni parametri obračuna
   const [subagentProvizija, setSubagentProvizija] = useState<number | null>(null);
+  // adl (maks. broj ADL osoba) strukture iz koeficijenti_prodaje — određuje saputnike i količinu smeštaja (Grafik prefill)
+  const [adlStrukture, setAdlStrukture] = useState<number | null>(null);
   const [parametriObr, setParametriObr] = useState<{ visina_popusta: number; visina_provizije: number } | null>(null);
 
   // pretraga subagenata iz tabele subagenti (po nazivu, mestu, osobi, telefonu…)
@@ -1066,6 +1068,67 @@ export default function RezervacijePage() {
     return () => { aktivan = false; };
   }, [subagent]);
 
+  // Grafik/prefill bez broja osoba: struktura → adl (maks. broj ADL osoba iz koeficijenti_prodaje)
+  // → saputnici = adl − 1, količina smeštaja = adl, cena iz Grafika se rastavlja po količini.
+  const odrasliIzLinka = Number(searchParams.get("odrasli") ?? "");
+  const bezOdrasliIzLinka = !(odrasliIzLinka >= 1);
+  useEffect(() => {
+    const st = boravak.struktura?.trim();
+    if (!noviIzLinka || ugovorIzLinka || !bezOdrasliIzLinka || !st) { setAdlStrukture(null); return; }
+    let aktivan = true;
+    apiFetch<{ redovi: { adl: number; chd: number; inf: number }[] }>(
+      `/koeficijenti/struktura?${new URLSearchParams({ struktura: st })}`
+    )
+      .then((d) => {
+        const adl = Math.max(0, ...d.redovi.filter((r) => r.chd === 0 && r.inf === 0).map((r) => r.adl));
+        if (aktivan) setAdlStrukture(adl > 0 ? adl : null);
+      })
+      .catch(() => { if (aktivan) setAdlStrukture(null); });
+    return () => { aktivan = false; };
+  }, [boravak.struktura, noviIzLinka, ugovorIzLinka, bezOdrasliIzLinka]);
+
+  useEffect(() => {
+    if (adlStrukture == null) return;
+    const cenaUrl = Number(searchParams.get("cena") ?? "");
+    setSaputnici((prev) => Array.from({ length: adlStrukture - 1 }, (_, i) => prev[i] ?? prazanSaputnik(`s${++uidRef.current}`)));
+    setCene((prev) => ({
+      ...prev,
+      kolSmestaj: String(adlStrukture),
+      cenaSmestaj: cenaUrl > 0 ? (cenaUrl / adlStrukture).toFixed(2) : prev.cenaSmestaj,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adlStrukture]);
+
+  // Maksimalni važeći popust sobe (iz pretrage/cenovnika) → Popust smeštaja % (samo kad je izabrana soba i boravak)
+  useEffect(() => {
+    if (!noviIzLinka || ugovorIzLinka || adlStrukture == null) return;
+    if (!boravak.smestaj || !boravak.soba || !boravak.datumOd || !boravak.datumDo || boravak.datumDo <= boravak.datumOd) return;
+    const ddmm = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+    const params = new URLSearchParams({
+      datum_od: ddmm(boravak.datumOd),
+      datum_do: ddmm(boravak.datumDo),
+      odrasli: String(adlStrukture),
+      prevoz: "autobuski",
+    });
+    let aktivan = true;
+    apiFetch<{ smestaj_id: number; sobe: { id: number; cena_osnovna: number | null; varijante?: { vazi: boolean; cena_snizena: number | null }[] }[] }[]>(
+      `/slobodne-sobe?${params}`
+    )
+      .then((grupe) => {
+        if (!aktivan) return;
+        const soba = grupe.find((g) => String(g.smestaj_id) === boravak.smestaj)?.sobe.find((s) => String(s.id) === boravak.soba);
+        if (!soba || soba.cena_osnovna == null || soba.cena_osnovna <= 0) return;
+        const osnovna = soba.cena_osnovna;
+        const snizene = (soba.varijante ?? []).filter((v) => v.vazi && v.cena_snizena != null).map((v) => v.cena_snizena as number);
+        if (snizene.length === 0) return;
+        const maxPopust = osnovna - Math.min(...snizene);
+        if (maxPopust <= 0) return;
+        updCene({ popustSmestajPct: String(round2((maxPopust / osnovna) * 100)) });
+      })
+      .catch(() => { /* bez popusta: polje ostaje kako je uneto */ });
+    return () => { aktivan = false; };
+  }, [adlStrukture, boravak.smestaj, boravak.soba, boravak.datumOd, boravak.datumDo, noviIzLinka, ugovorIzLinka]);
+
   // Automatska provizija (samo nova rezervacija): popularan smeštaj → smestaj.provizija;
   // inače popust na smeštaj > visina_popusta → visina_provizije; inače provizija subagenta.
   const smestajIzabran = smestaji.find((s) => String(s.id) === boravak.smestaj);
@@ -1528,8 +1591,11 @@ export default function RezervacijePage() {
     : ukupnoAranzmanEUR != null || ukupnoAranzmanRSD != null
       ? round2((ukupnoAranzmanEUR ?? 0) * (kurs?.kurs ?? 0) + (ukupnoAranzmanRSD ?? 0))
       : null;
+  // Provizije (smeštaj + prevoz, EUR i RSD) se oduzimaju od saldo.
+  const provizijaEURUkupno = num(cene.provizijaSmestaj) + num(cene.provizijaPrevoz);
+  const provizijaRSDUkupno = num(cene.provizijaSmestajRSD) + num(cene.provizijaPrevozRSD);
   const saldo = vrednostAranzmanaRSD !== null && uplacenoObracun !== null
-    ? round2(vrednostAranzmanaRSD - uplacenoObracun)
+    ? round2(vrednostAranzmanaRSD - uplacenoObracun - (provizijaEURUkupno * (kurs?.kurs ?? 0) + provizijaRSDUkupno))
     : null;
 
   // Uplate v EUR po istorijskom kursu svake uplate (isti zbir kao u tabu Uplate).
@@ -1539,7 +1605,7 @@ export default function RezervacijePage() {
       ? round2((ukupnoAranzmanEUR ?? 0) + (ukupnoAranzmanRSD ?? 0) / (kurs?.kurs || 1))
       : null;
   const saldoEUR = uplacenoObracun !== null && vrednostAranzmanaEUR !== null
-    ? round2(vrednostAranzmanaEUR - uplateSumaEUR)
+    ? round2(vrednostAranzmanaEUR - uplateSumaEUR - (provizijaEURUkupno + provizijaRSDUkupno / (kurs?.kurs || 1)))
     : null;
 
   const akcija = (naziv: string) => () => toast.info(`${naziv} je u pripremi`);

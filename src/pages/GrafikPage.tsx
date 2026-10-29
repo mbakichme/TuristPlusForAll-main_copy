@@ -842,9 +842,10 @@ export default function GrafikPage() {
     });
     if (slotSubagent) params.set("subagent", slotSubagent);
     // izabrana cena iz popupa: cena cele sobe (EUR) + struktura virtuelne sobe u „Promena strukture“
+    // struktura (uvek) → broj saputnika i količina smeštaja na Rezervacijama (adl koeficijenta)
+    if (slotCena?.tip) params.set("struktura", slotCena.tip);
     if (slotCena && slotCena.cena != null && !slotCena.blokirano) {
       params.set("cena", String(slotCena.cena));
-      if (slotCena.virtuelna && slotCena.tip) params.set("struktura", slotCena.tip);
     }
     navigate(`/prodaja/rezervacije?${params.toString()}`);
   }
