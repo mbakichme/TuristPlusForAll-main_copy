@@ -2795,8 +2795,8 @@ def create_app(static_dir: str) -> FastAPI:
                 tip = (s["tip"] or "").strip()
                 strukture = [tip] + [d for d in dodatni.get(s["id"], []) if d != tip]
                 if izuzetak_koef is not None:
-                    # izuzetak za 1 osobu: samo strukture 1/2; pravilo 2 se ne primenjuje
-                    kandidati = [(st, izuzetak_koef) for st in strukture if st == "1/2"]
+                    # izuzetak za 1 osobu: strukture 1/2 (uklj. 1/2 ECO, 1/2+1, 1/2 · STD); pravilo 2 se ne primenjuje
+                    kandidati = [(st, izuzetak_koef) for st in strukture if re.match(r"^1/2(?:[\s+]|$)", st)]
                 else:
                     kandidati = [(st, koef_map[st]) for st in strukture if st in koef_map]
                 if not kandidati:
