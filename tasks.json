@@ -1,27 +1,27 @@
 [
   {
-    "content": "[pretraga-termini] Backend: multi-termin mod u /slobodne-sobe (bez datum_do → svi termini od datum_od, raspoloživost po terminu)",
     "id": "1",
-    "status": "completed"
+    "content": "[impl-1] Grafik: uvek proslediti struktura (slotCena.tip)",
+    "status": "in_progress"
   },
   {
-    "content": "[pretraga-termini] Frontend: PretragaPage — ukloniti izbor trajanja, rezultati grupisani po terminu",
     "id": "2",
-    "status": "completed"
+    "content": "[impl-2] Rezervacije: adl iz koeficijenta → saputnici (adl−1) + količina smeštaja (adl) + cena/adl",
+    "status": "pending"
   },
   {
-    "content": "[pretraga-termini] bun run build",
     "id": "3",
-    "status": "completed"
+    "content": "[impl-3] Rezervacije: max popust iz /slobodne-sobe varijanti → Popust smeštaja %",
+    "status": "pending"
   },
   {
-    "content": "[pretraga-termini] Test: proširiti test_pretraga_termin.py (multi-mod vs ground truth) + UI smoke",
     "id": "4",
-    "status": "completed"
+    "content": "[impl-4] Saldo (RSD i EUR) umanjiti za provizije smeštaj+prevoz",
+    "status": "pending"
   },
   {
-    "content": "[pretraga-termini] Context update + commit",
     "id": "5",
-    "status": "completed"
+    "content": "[verify-1] tsc + vite build, pregled u pregledniku",
+    "status": "pending"
   }
 ]
