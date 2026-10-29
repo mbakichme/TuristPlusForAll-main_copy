@@ -3490,6 +3490,17 @@ def create_app(static_dir: str) -> FastAPI:
         "obradio", "refno", "napomena", "napomena1", "soba", "tiprezervacije",
         "organizator", "poslovnica", "naziv1", "telefon", "adresa",
     ]
+    # Kolone iz HTML tabele koje nisu proste kolone aranzman-a → SQL izraz (alias a = aranzman)
+    UGOVORI_SEARCH_EXTRA = {
+        "danas": "to_char(a.danas, 'DD.MM.YYYY')",
+        "datumod": "to_char(a.datumod, 'DD.MM.YYYY')",
+        "datumdo": "to_char(a.datumdo, 'DD.MM.YYYY')",
+        "termin": "CONCAT(to_char(a.datumod, 'DD.MM.YYYY'), ' ', to_char(a.datumdo, 'DD.MM.YYYY'))",
+        "subagent": "COALESCE(a.subagent::text, '')",
+        "apartman": "COALESCE(a.apartman::text, '')",
+        "tip_sobe": "COALESCE((SELECT b.tip FROM sobe b WHERE b.veza_id_smestaj = a.smestaj_id AND TRIM(b.broj_sobe) = TRIM(a.soba) LIMIT 1), '')",
+        "saputnici": "COALESCE((SELECT string_agg(ad.saputnik, ' ') FROM aranzman_dopuna ad WHERE ad.aranzman_id = a.id), '')",
+    }
     # Filter-red u tabeli: f_<kolona> → SQL izraz za ILIKE (min 3 karaktera)
     UGOVORI_FILTER_COLS = {
         "kljuc": "COALESCE(kljuc::text, '')",
@@ -5107,13 +5118,18 @@ def create_app(static_dir: str) -> FastAPI:
         if search:
             like = f"%{search}%"
             # search_in ograničava kolone pretrage (npr. "putnik,kljuc" za dashboard)
-            cols = UGOVORI_SEARCH_COLS
+            cols = UGOVORI_SEARCH_COLS + list(UGOVORI_SEARCH_EXTRA)
             search_in = (q.get("search_in") or "").strip()
             if search_in:
-                req = [c.strip() for c in search_in.split(",") if c.strip() in UGOVORI_SEARCH_COLS]
+                dozvoljene = set(UGOVORI_SEARCH_COLS) | set(UGOVORI_SEARCH_EXTRA)
+                req = [c.strip() for c in search_in.split(",") if c.strip() in dozvoljene]
                 if req:
                     cols = req
-            ors = " OR ".join(f"COALESCE({c}::text, '') ILIKE :search" for c in cols)
+            ors = " OR ".join(
+                f"{UGOVORI_SEARCH_EXTRA[c]} ILIKE :search" if c in UGOVORI_SEARCH_EXTRA
+                else f"COALESCE({c}::text, '') ILIKE :search"
+                for c in cols
+            )
             conds.append(f"({ors})")
             bind["search"] = like
         # Filter-red tabele: svako polje sa ≥3 karaktera dodaje svoj uslov (AND)
@@ -5125,7 +5141,7 @@ def create_app(static_dir: str) -> FastAPI:
         where = ("WHERE " + " AND ".join(conds)) if conds else ""
 
         with engine.connect() as conn:
-            total = conn.execute(text(f"SELECT COUNT(*) FROM aranzman {where}"), bind).scalar() or 0
+            total = conn.execute(text(f"SELECT COUNT(*) FROM aranzman a {where}"), bind).scalar() or 0
             rows = conn.execute(text(f"""
                 SELECT kljuc,
                        to_char(danas, 'DD.MM.YYYY') AS danas_fmt,
