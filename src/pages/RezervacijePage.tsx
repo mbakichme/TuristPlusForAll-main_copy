@@ -856,8 +856,19 @@ export default function RezervacijePage() {
       // Cena smeštaja i uplaćeno dolaze iz ugovora; dodatne stavke (i njihove sume) iz d.dodatne —
       // cenadod se ne upisuje u formu da se sa dodatenSume ne bi sabiralo dvostruko.
       // Osiguranje se učitava iz aranzman.osiguranje (RSD) / osiguranje1 (EUR).
-      // RSD cene/količine, popusti i provizije ostaju lokalna polja i resetuju se pri izboru ugovora.
-      setCene({ cenaSmestaj: brojUString(d.cenaaranz), kolSmestaj: brojUString(d.kolaranz), cenaSmestajRSD: "", kolSmestajRSD: "", popustSmestajPct: "", popustSmestaj: "", popustSmestajRSD: "", cenaPrevoz: "", kolPrevoz: "", cenaPrevozRSD: "", kolPrevozRSD: "", popustPrevozPct: "", popustPrevoz: "", popustPrevozRSD: "", osiguranjeEUR: brojUString(d.osiguranje1), osiguranjeRSD: brojUString(d.osiguranje), provizijaSmestajPct: "", provizijaSmestaj: "", provizijaSmestajRSD: "", provizijaPrevozPct: "", provizijaPrevoz: "", provizijaPrevozRSD: "", uplaceno: brojUString(d.uplacenod) }); // popusti u bazi su procenti, a u formi iznosi — ne mešati jedinice.
+      // RSD cene/količine ostaju lokalna polja i resetuju se pri izboru ugovora.
+      // Popusti i provizije se vraćaju iz baze: popustar/popustpr/procenatar su procenti, procenatpr je iznos po osobi (EUR).
+      setCene({ cenaSmestaj: brojUString(d.cenaaranz), kolSmestaj: brojUString(d.kolaranz), cenaSmestajRSD: "", kolSmestajRSD: "", popustSmestajPct: "", popustSmestaj: "", popustSmestajRSD: "", cenaPrevoz: "", kolPrevoz: "", cenaPrevozRSD: "", kolPrevozRSD: "", popustPrevozPct: "", popustPrevoz: "", popustPrevozRSD: "", osiguranjeEUR: brojUString(d.osiguranje1), osiguranjeRSD: brojUString(d.osiguranje), provizijaSmestajPct: "", provizijaSmestaj: "", provizijaSmestajRSD: "", provizijaPrevozPct: "", provizijaPrevoz: "", provizijaPrevozRSD: "", uplaceno: brojUString(d.uplacenod) });
+      // Vraćanje popusta i provizija iz baze: procenat ide u polje %, iznosi se izvode preko updCene
+      // (isto kao ručni unos, sa cenom i količinom koje su upravo postavljene).
+      const procenatUcitan = (v: number | null | undefined) => (v && v > 0 ? brojUString(v) : "");
+      const kolPrevozUcitan = Math.max(d.kolow ?? 0, d.kolrt ?? 0) || 1;
+      updCene({
+        popustSmestajPct: procenatUcitan(d.popustar),
+        popustPrevozPct: procenatUcitan(d.popustpr),
+        provizijaSmestajPct: procenatUcitan(d.procenatar),
+        provizijaPrevoz: d.procenatpr && d.procenatpr > 0 ? brojUString(round2(d.procenatpr * kolPrevozUcitan)) : "",
+      });
       setPrevozRedovi({ nosilac: { mestoUlaska: d.ulazak ?? "", mestoIzlaska: d.mesto_izlaska ?? d.ulazak ?? "", mestoSedenja: d.mesto_sedenja ?? "", placeno: !!d.placeno_prevoz, zelja: !!d.zelja_prevoz }, ...Object.fromEntries(dodati.map((p, i) => [p.uid, { mestoUlaska: dopuna[i].ulazak ?? "", mestoIzlaska: dopuna[i].mesto_izlaska ?? dopuna[i].ulazak ?? "", mestoSedenja: dopuna[i].mesto_sedenja ?? "", placeno: !!dopuna[i].placeno_prevoz, zelja: !!dopuna[i].zelja_prevoz }])) });
       setUplata({ uplatilac: "nosilac", ...UPLATA_PODRAZUMEVANO, iznos: "" });
       setIzabraniUgovor(d.kljuc);

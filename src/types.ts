@@ -160,6 +160,7 @@ export interface UgovorDetail {
   cenadod?: number | null;
   uplacenod?: number | null;
   procenatar?: number | null;
+  procenatpr?: number | null; // provizija prevoza, iznos po osobi
   mesto: string | null;
   naziv: string | null;
   datumod: string | null;
