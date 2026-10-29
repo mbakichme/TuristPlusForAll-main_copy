@@ -794,6 +794,9 @@ def init_db(engine):
             VALUES (1, 0)
             ON CONFLICT (id) DO NOTHING
         """))
+        conn.execute(text(
+            "ALTER TABLE parametri_obracuna ADD COLUMN IF NOT EXISTS visina_provizije INTEGER NOT NULL DEFAULT 10 CHECK (visina_provizije BETWEEN 0 AND 100)"
+        ))
 
         # Seed tip_ponude
         tip_ponude_values = [
@@ -1349,6 +1352,7 @@ DOZVOLJENE_BOJE = ("zelena", "plava", "crvena", "zuta", "ljubicasta", "narandzas
 
 class ParametriObracuna(BaseModel):
     visina_popusta: int
+    visina_provizije: int = 10
     datumod1: Optional[SubDate] = None
     datumdo1: Optional[SubDate] = None
     koeficijent1: Optional[float] = None
@@ -5890,7 +5894,7 @@ def create_app(static_dir: str) -> FastAPI:
         return data
 
     # ─── Parametri obračuna ──────────────────────────────────────────────────
-    PARAMETRI_POLJA = ("visina_popusta", "datumod1", "datumdo1", "koeficijent1",
+    PARAMETRI_POLJA = ("visina_popusta", "visina_provizije", "datumod1", "datumdo1", "koeficijent1",
                        "datumod2", "datumdo2", "koeficijent2")
 
     @api.get("/parametri-obracuna")
@@ -5910,6 +5914,8 @@ def create_app(static_dir: str) -> FastAPI:
     def update_parametri_obracuna(body: ParametriObracuna, _: dict = Depends(get_current_user)):
         if not (0 <= body.visina_popusta <= 100):
             raise HTTPException(status_code=400, detail="Visina popusta mora biti između 0 i 100")
+        if not (0 <= body.visina_provizije <= 100):
+            raise HTTPException(status_code=400, detail="Visina provizije mora biti između 0 i 100")
         for n in ("1", "2"):
             od, do, koef = getattr(body, f"datumod{n}"), getattr(body, f"datumdo{n}"), getattr(body, f"koeficijent{n}")
             if od and do and od > do:

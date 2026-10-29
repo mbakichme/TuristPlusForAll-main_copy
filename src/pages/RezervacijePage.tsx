@@ -552,6 +552,9 @@ export default function RezervacijePage() {
   const [subagentOtvoren, setSubagentOtvoren] = useState(false);
   const [subagentPretraga, setSubagentPretraga] = useState("");
   const [subagentOpcije, setSubagentOpcije] = useState<string[]>([]);
+  // provizija izabranog subagenta (kolona subagenti.provizija) i globalni parametri obračuna
+  const [subagentProvizija, setSubagentProvizija] = useState<number | null>(null);
+  const [parametriObr, setParametriObr] = useState<{ visina_popusta: number; visina_provizije: number } | null>(null);
 
   // pretraga subagenata iz tabele subagenti (po nazivu, mestu, osobi, telefonu…)
   useEffect(() => {
@@ -1043,7 +1046,40 @@ export default function RezervacijePage() {
       return next;
     });
 
-  // Uplate izabranog ugovora: uplate.id = aranzman.kljuc bez "/26" (radi i preko faktura)
+  // Parametri obračuna (visina popusta / visina provizije) — jednom pri učitavanju
+  useEffect(() => {
+    apiFetch<{ visina_popusta: number; visina_provizije: number }>("/parametri-obracuna")
+      .then(setParametriObr)
+      .catch(() => setParametriObr(null));
+  }, []);
+
+  // Provizija subagenta: kolona subagenti.provizija za tačno izabran naziv
+  useEffect(() => {
+    const naziv = subagent.trim();
+    if (!naziv) { setSubagentProvizija(null); return; }
+    let aktivan = true;
+    apiFetch<{ rows: { naziv: string; provizija: number | null }[] }>(
+      `/subagenti?${new URLSearchParams({ search: naziv, page_size: "100" })}`
+    )
+      .then((d) => { if (aktivan) setSubagentProvizija(d.rows.find((r) => (r.naziv ?? "").trim() === naziv)?.provizija ?? null); })
+      .catch(() => { if (aktivan) setSubagentProvizija(null); });
+    return () => { aktivan = false; };
+  }, [subagent]);
+
+  // Automatska provizija (samo nova rezervacija): popularan smeštaj → smestaj.provizija;
+  // inače popust na smeštaj > visina_popusta → visina_provizije; inače provizija subagenta.
+  const smestajIzabran = smestaji.find((s) => String(s.id) === boravak.smestaj);
+  useEffect(() => {
+    if (izabraniUgovor || !subagent.trim() || !parametriObr) return;
+    let pct: number | null;
+    if (smestajIzabran?.popular) pct = smestajIzabran.provizija;
+    else if ((procenat(cene.popustSmestajPct) ?? 0) > parametriObr.visina_popusta) pct = parametriObr.visina_provizije;
+    else pct = subagentProvizija;
+    if (pct == null) return;
+    updCene({ provizijaSmestajPct: String(pct) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subagent, subagentProvizija, smestajIzabran?.popular, smestajIzabran?.provizija, cene.popustSmestajPct, parametriObr, izabraniUgovor]);
+
   useEffect(() => {
     const request = ++uplateRequest.current;
     if (!izabraniUgovor) {

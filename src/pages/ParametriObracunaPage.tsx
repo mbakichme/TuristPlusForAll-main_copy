@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 
 interface Parametri {
   visina_popusta: number;
+  visina_provizije: number;
   datumod1: string | null;
   datumdo1: string | null;
   koeficijent1: number | null;
@@ -19,6 +20,7 @@ interface Parametri {
 // Forma drži sve kao string radi slobodnog unosa; pretvaranje se radi pri snimanju.
 interface Forma {
   visina_popusta: string;
+  visina_provizije: string;
   datumod1: string;
   datumdo1: string;
   koeficijent1: string;
@@ -30,6 +32,7 @@ interface Forma {
 function uForme(p: Parametri): Forma {
   return {
     visina_popusta: String(p.visina_popusta ?? 0),
+    visina_provizije: String(p.visina_provizije ?? 10),
     datumod1: p.datumod1 ?? "",
     datumdo1: p.datumdo1 ?? "",
     koeficijent1: p.koeficijent1 != null ? String(p.koeficijent1) : "",
@@ -73,6 +76,10 @@ export default function ParametriObracunaPage() {
     if (f.visina_popusta.trim() === "" || !Number.isInteger(popust) || popust < 0 || popust > 100) {
       return "Visina popusta mora biti ceo broj između 0 i 100";
     }
+    const provizija = Number(f.visina_provizije.trim());
+    if (f.visina_provizije.trim() === "" || !Number.isInteger(provizija) || provizija < 0 || provizija > 100) {
+      return "Visina provizije mora biti ceo broj između 0 i 100";
+    }
     for (const n of ["1", "2"] as const) {
       const od = n === "1" ? f.datumod1 : f.datumod2;
       const doo = n === "1" ? f.datumdo1 : f.datumdo2;
@@ -101,6 +108,7 @@ export default function ParametriObracunaPage() {
         method: "PUT",
         body: JSON.stringify({
           visina_popusta: Number(form.visina_popusta.trim()),
+          visina_provizije: Number(form.visina_provizije.trim()),
           datumod1: datum(form.datumod1),
           datumdo1: datum(form.datumdo1),
           koeficijent1: broj(form.koeficijent1),
@@ -153,6 +161,23 @@ export default function ParametriObracunaPage() {
               value={form.visina_popusta}
               disabled={saving}
               onChange={(e) => postavi("visina_popusta", e.target.value)}
+            />
+          </section>
+
+          <section className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
+            <div className="space-y-1">
+              <Label htmlFor="visina_provizije" className="text-sm font-semibold">Visina provizije (%)</Label>
+              <p className="text-xs text-muted-foreground">
+                Ceo broj od 0 do 100. Primenjuje se na subagenta kada popust na smeštaj premašuje visinu popusta.
+              </p>
+            </div>
+            <Input
+              id="visina_provizije"
+              inputMode="numeric"
+              className="w-32"
+              value={form.visina_provizije}
+              disabled={saving}
+              onChange={(e) => postavi("visina_provizije", e.target.value)}
             />
           </section>
 
