@@ -45,6 +45,7 @@ const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minut
 const SMER_OPCIJE = ["Polazak", "Povratak"];
 const NACIN_PLACANJA = ["Gotovina", "Kartica", "Ček", "Virman", "IPC", "Vaučer", "Ostalo"];
 const SVRHA_UPLATE = ["Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček", "Povraćaj"];
+const UPLATA_PODRAZUMEVANO = { nacin: "Gotovina", svrha: "Deo aranžmana" };
 
 /** Boja ikonice: zelena ako postoji bar jedan podatak, inače crvena. */
 const STATUS_IKONA_PUNO = "text-emerald-600 hover:text-emerald-700";
@@ -629,7 +630,7 @@ export default function RezervacijePage() {
   const [polasci, setPolasci] = useState<PolazakUlazak[]>([]);
   const [polasciGreska, setPolasciGreska] = useState(false);
   const [polasciOsvezi, setPolasciOsvezi] = useState(0);
-  const [uplata, setUplata] = useState<Uplata>({ uplatilac: "nosilac", nacin: "", iznos: "", svrha: "" });
+  const [uplata, setUplata] = useState<Uplata>({ uplatilac: "nosilac", ...UPLATA_PODRAZUMEVANO, iznos: "" });
   // popup kartice: uvek za postojeću uplatu (dugme "Kartica" u redu tabele)
   const [karticaPopup, setKarticaPopup] = useState<{ kljuc: number; vrednost: KarticaPodaci } | null>(null);
   const [karticaCuva, setKarticaCuva] = useState(false);
@@ -851,7 +852,7 @@ export default function RezervacijePage() {
       // RSD cene/količine, popusti i provizije ostaju lokalna polja i resetuju se pri izboru ugovora.
       setCene({ cenaSmestaj: brojUString(d.cenaaranz), kolSmestaj: brojUString(d.kolaranz), cenaSmestajRSD: "", kolSmestajRSD: "", popustSmestajPct: "", popustSmestaj: "", popustSmestajRSD: "", cenaPrevoz: "", kolPrevoz: "", cenaPrevozRSD: "", kolPrevozRSD: "", popustPrevozPct: "", popustPrevoz: "", popustPrevozRSD: "", osiguranjeEUR: brojUString(d.osiguranje1), osiguranjeRSD: brojUString(d.osiguranje), provizijaSmestajPct: "", provizijaSmestaj: "", provizijaSmestajRSD: "", provizijaPrevozPct: "", provizijaPrevoz: "", provizijaPrevozRSD: "", uplaceno: brojUString(d.uplacenod) }); // popusti u bazi su procenti, a u formi iznosi — ne mešati jedinice.
       setPrevozRedovi({ nosilac: { mestoUlaska: d.ulazak ?? "", mestoIzlaska: d.mesto_izlaska ?? d.ulazak ?? "", mestoSedenja: d.mesto_sedenja ?? "", placeno: !!d.placeno_prevoz, zelja: !!d.zelja_prevoz }, ...Object.fromEntries(dodati.map((p, i) => [p.uid, { mestoUlaska: dopuna[i].ulazak ?? "", mestoIzlaska: dopuna[i].mesto_izlaska ?? dopuna[i].ulazak ?? "", mestoSedenja: dopuna[i].mesto_sedenja ?? "", placeno: !!dopuna[i].placeno_prevoz, zelja: !!dopuna[i].zelja_prevoz }])) });
-      setUplata({ uplatilac: "nosilac", nacin: "", iznos: "", svrha: "" });
+      setUplata({ uplatilac: "nosilac", ...UPLATA_PODRAZUMEVANO, iznos: "" });
       setIzabraniUgovor(d.kljuc);
       setUcitanUgovor(d);
       void osveziKeptp(d.kljuc);
@@ -916,6 +917,8 @@ export default function RezervacijePage() {
     if (noviPrimljen.current === sig) return;
     noviPrimljen.current = sig;
     const struktura = searchParams.get("struktura");
+    const subagentIzLinka = searchParams.get("subagent");
+    if (subagentIzLinka) setSubagent(subagentIzLinka.trim());
     setBoravak((prev) => ({
       ...prev,
       datumOd: datumZaInput(searchParams.get("datumod")),
@@ -2994,6 +2997,24 @@ export default function RezervacijePage() {
         <Button variant="outline" onClick={akcija("Odustani")}>
           <X className="mr-1.5 size-4" />Odustani
         </Button>
+        <div
+          data-testid="saldo-traka"
+          aria-label="Saldo rezervacije"
+          className={cn(
+            "ml-auto flex items-baseline gap-2 rounded-md border-2 px-4 py-1.5 tabular-nums",
+            saldoEUR !== null && saldoEUR < 0
+              ? "border-destructive/60 bg-destructive/10 text-destructive"
+              : "border-emerald-500/60 bg-emerald-50 text-emerald-800",
+          )}
+        >
+          <span className="text-lg font-bold">
+            {izborUcitava || uplateUcitavaju
+              ? "Učitavanje…"
+              : saldoEUR !== null && saldo !== null
+                ? <>{nf2.format(saldoEUR)} € <span className="font-light">| {nf2.format(saldo)} RSD</span></>
+                : "—"}
+          </span>
+        </div>
       </div>
     </div>
   );

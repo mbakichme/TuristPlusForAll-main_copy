@@ -97,7 +97,8 @@ def _fmt_int(v):
 
 
 def build_uplate_pdf(putnik: str | None, adresa: str | None, ugovor: str,
-                     rows: list[dict], logo_data_url: str | None) -> bytes:
+                     rows: list[dict], logo_data_url: str | None,
+                     vrednost_eur: float | None = None) -> bytes:
     _ensure_fonts()
 
     page_w, page_h = A4
@@ -123,12 +124,13 @@ def build_uplate_pdf(putnik: str | None, adresa: str | None, ugovor: str,
     cell_l = ParagraphStyle("cell_l", fontName="Lib", fontSize=8.5, leading=10.5, alignment=0, textColor=BLACK)
 
     header_cells = [
-        "DATUM", "NAČIN PLAĆANJA", "DIN", "EUR", "SUMA/EUR",
+        "DATUM", "NAČIN PLAĆANJA", "DIN", "EUR", "SUMA/EUR", "OSTALO/EUR",
         "SVRHA UPLATE", "REFERENT", "KLJUC",
     ]
 
     data = [header_cells]
     sum_din = sum_evro = sum_eur = 0.0
+    ostalo = None
     for r in rows:
         din = r.get("din")
         evro = r.get("evro")
@@ -136,12 +138,16 @@ def build_uplate_pdf(putnik: str | None, adresa: str | None, ugovor: str,
         sum_din += din or 0
         sum_evro += evro or 0
         sum_eur += suma or 0
+        # ostalo posle ove uplate = vrednost aranžmana − zbir uplata do sada (istim redom kao tabela)
+        if vrednost_eur is not None:
+            ostalo = round(vrednost_eur - sum_eur, 2)
         data.append([
             str(r.get("danas") or ""),
             Paragraph(str(r.get("nacin") or "").strip(), cell_l),
             _fmt(din),
             _fmt(evro),
             _fmt(suma),
+            _fmt(ostalo) if ostalo is not None else "—",
             Paragraph(str(r.get("svrha") or "").strip(), cell_l),
             Paragraph(str(r.get("obradio") or "").strip(), cell_l),
             _fmt_int(r.get("kljuc")),
@@ -150,10 +156,11 @@ def build_uplate_pdf(putnik: str | None, adresa: str | None, ugovor: str,
     data.append([
         "U K U P N O :", "",
         _fmt(sum_din), _fmt(sum_evro), _fmt(sum_eur),
+        _fmt(ostalo) if ostalo is not None else "—",
         "", "", "",
     ])
 
-    rel_widths = [58, 84, 68, 50, 62, 72, 84, 56]
+    rel_widths = [56, 100, 62, 46, 62, 76, 84, 82, 50]
     scale = content_w / sum(rel_widths)
     widths = [w * scale for w in rel_widths]
 
@@ -163,16 +170,17 @@ def build_uplate_pdf(putnik: str | None, adresa: str | None, ugovor: str,
         ("FONTNAME", (0, 0), (-1, 0), "LibB"),          # zaglavlja bold
         ("FONTNAME", (0, 1), (0, -1), "LibI"),          # datum italic
         ("FONTNAME", (4, 1), (4, -1), "LibB"),          # SUMA/EUR bold
+        ("FONTNAME", (5, 1), (5, -1), "LibB"),          # OSTALO/EUR bold
         ("FONTNAME", (0, -1), (-1, -1), "LibB"),        # zbirni red bold
         ("FONTSIZE", (0, 0), (-1, -1), 8.5),
         ("FONTSIZE", (0, -1), (0, -1), 9.5),            # U K U P N O krupnije
-        ("FONTSIZE", (4, -1), (4, -1), 9),
+        ("FONTSIZE", (4, -1), (5, -1), 9),
         ("TEXTCOLOR", (0, 0), (-1, -1), BLACK),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         # poravnanja po kolonama
         ("ALIGN", (0, 0), (0, -1), "CENTER"),           # DATUM
-        ("ALIGN", (2, 1), (4, -1), "RIGHT"),            # DIN / EUR / SUMA-EUR
-        ("ALIGN", (7, 1), (7, -1), "RIGHT"),            # KLJUC
+        ("ALIGN", (2, 1), (5, -1), "RIGHT"),            # DIN / EUR / SUMA-EUR / OSTALO-EUR
+        ("ALIGN", (8, 1), (8, -1), "RIGHT"),            # KLJUC
         ("ALIGN", (0, -1), (0, -1), "LEFT"),            # U K U P N O labela
         # linije: tanke unutrašnje, deblji spoljni okvir i istaci redova
         ("GRID", (0, 0), (-1, -1), 0.5, BLACK),

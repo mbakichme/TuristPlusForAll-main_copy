@@ -20,9 +20,14 @@ class GrafikBojeTest(unittest.TestCase):
         self.assertEqual(self.kategorija(" BLOK ", "Agent", self.sada, 0), "blok")
 
     def test_subagent_prioritet(self):
-        for limit in [None, self.sada, self.sada + timedelta(days=1)]:
+        for limit in [None, self.sada + timedelta(days=1)]:
             self.assertEqual(self.kategorija("Predrezervacija", " Agent ", limit, 0),
                              "predrezervacija_subagent")
+
+    def test_subagent_istekao_timelimit_crveno(self):
+        for limit in [self.sada, self.sada - timedelta(days=1)]:
+            self.assertEqual(self.kategorija("Predrezervacija", " Agent ", limit, 0),
+                             "predrezervacija_istekla")
 
     def test_time_limit(self):
         for limit in [None, self.sada, self.sada - timedelta(seconds=1)]:

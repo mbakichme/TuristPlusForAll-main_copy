@@ -16,9 +16,12 @@ def kategorija_grafika(tip: str | None, subagent: str | None,
     if tip == "blok":
         return "blok"
     if tip == "predrezervacija":
-        if (subagent or "").strip():
+        istekao = timelimit is not None and _lokalno(timelimit) <= _lokalno(sada)
+        if (subagent or "").strip() and not istekao:
             return "predrezervacija_subagent"
-        if timelimit is not None and _lokalno(timelimit) > _lokalno(sada):
+        if timelimit is not None and not istekao:
             return "predrezervacija_aktivna"
+        return "predrezervacija_istekla"
+    if tip == "last minute" and timelimit is not None and _lokalno(timelimit) <= _lokalno(sada):
         return "predrezervacija_istekla"
     return "isplacen" if round(saldo_rsd, 2) < 400 else "saldo_veci"

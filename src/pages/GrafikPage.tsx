@@ -7,6 +7,7 @@ import { apiFetch } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { fmtPutnici } from "@/lib/putnici";
 import PromenaSmestajaDialog from "@/components/PromenaSmestajaDialog";
+import PretraznaSelect from "@/components/PretraznaSelect";
 import { Button } from "@/components/ui/button";
 import { PageLoader } from "@/components/PageLoader";
 import { Label } from "@/components/ui/label";
@@ -676,6 +677,9 @@ export default function GrafikPage() {
   const [slotSec, setSlotSec] = useState<GrafikData | null>(null);
   const [slotSoba, setSlotSoba] = useState<GrafikSoba | null>(null);
   const [slotPeriod, setSlotPeriod] = useState<GrafikPeriod | null>(null);
+  const [slotSubagent, setSlotSubagent] = useState(""); // naziv subagenta (kao aranzman.subagent)
+  const [subagentiIzbor, setSubagentiIzbor] = useState<{ naziv: string }[]>([]);
+  const [subagentiPretraga, setSubagentiPretraga] = useState("");
   const [brzaOtvoren, setBrzaOtvoren] = useState(false);
   const [brzaTip, setBrzaTip] = useState("Predrezervacija"); // "Predrezervacija" | "BLOK"
   const [brzaOd, setBrzaOd] = useState("");  // ISO yyyy-mm-dd
@@ -698,6 +702,18 @@ export default function GrafikPage() {
       .catch(() => toast.error("Greška pri učitavanju podataka"))
       .finally(() => setInitialLoading(false));
   }, []);
+
+  // Subagenti za popup slobodnog termina — pretraga na serveru (debounce 250ms)
+  useEffect(() => {
+    let aktivan = true;
+    const t = setTimeout(() => {
+      const params = new URLSearchParams({ search: subagentiPretraga.trim(), page_size: "50", sort: "naziv", dir: "asc" });
+      apiFetch<{ rows: { naziv: string }[] }>(`/subagenti?${params}`)
+        .then((d) => { if (aktivan) setSubagentiIzbor(d.rows.filter((r) => r.naziv && r.naziv.trim())); })
+        .catch(() => { if (aktivan) setSubagentiIzbor([]); });
+    }, 250);
+    return () => { aktivan = false; clearTimeout(t); };
+  }, [subagentiPretraga]);
 
   // Prefill iz linka (?mesto=&grupa=&smestaj=) — dugme „Grafik“ na Rezervacijama otvara
   // grafik za mesto, grupu datuma i vilu izabranog ugovora; primenjuje se JEDNOM.
@@ -765,6 +781,7 @@ export default function GrafikPage() {
     setSlotSoba(soba);
     setSlotPeriod(p);
     setSlotCena(null);
+    setSlotSubagent("");
     // predefinisani datumi slobodnog termina (mogu se ispraviti u formi)
     setBrzaOd(isoOdPrikaza(p.datum_od));
     setBrzaDo(isoOdPrikaza(p.datum_do));
@@ -823,6 +840,7 @@ export default function GrafikPage() {
       smestaj: String(slotSec.smestaj.id),
       mesto: mestoId,
     });
+    if (slotSubagent) params.set("subagent", slotSubagent);
     // izabrana cena iz popupa: cena cele sobe (EUR) + struktura virtuelne sobe u „Promena strukture“
     if (slotCena && slotCena.cena != null && !slotCena.blokirano) {
       params.set("cena", String(slotCena.cena));
@@ -847,10 +865,11 @@ export default function GrafikPage() {
           timelimit: !jeBlok && brzaTlDatum ? `${isoOdDatuma(brzaTlDatum)}T${brzaTlSat}:00:00` : null,
           nosilac: {
             ime: jeBlok ? "BLOK" : brzaIme.trim(),
-            datumRodjenja: null, pasos: "", ow: false, rt: false, sp: false, smer: "",
+            datumRodjenja: null, uzrast: "ADL", pasos: "", ow: false, rt: false, sp: false, smer: "",
             adresa: "", telefon: brzaTelefon.trim(), email: "",
           },
           saputnici: [],
+          subagent: slotSubagent,
           boravak: {
             datumOd: brzaOd, datumDo: brzaDo,
             smestajId: slotSec.smestaj.id, sobaId: slotSoba.id,
@@ -959,55 +978,37 @@ export default function GrafikPage() {
 
       {/* Kaskadna selekcija */}
       <div className="rounded-md border bg-card p-4 flex flex-wrap items-end gap-4">
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Izaberi mesto</Label>
-          <Select value={mestoId} onValueChange={onMestoChange} disabled={initialLoading}>
-            <SelectTrigger className="w-56"><SelectValue placeholder="Izaberi mesto" /></SelectTrigger>
-            <SelectContent>
-              {mesta.map((m) => (
-                <SelectItem key={m.id} value={String(m.id)}>{m.naziv}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div>
+          <PretraznaSelect
+            className="w-56" ariaLabel="Izaberi mesto" label="Izaberi mesto" placeholder="Izaberi mesto"
+            value={mestoId} onChange={onMestoChange} disabled={initialLoading}
+            opcije={mesta.map((m) => ({ value: String(m.id), label: m.naziv }))}
+          />
         </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Izaberi grupu perioda</Label>
-          <Select
-            value={grupaId}
-            onValueChange={onGrupaChange}
+        <div>
+          <PretraznaSelect
+            className="w-64" ariaLabel="Izaberi grupu perioda" label="Izaberi grupu perioda"
+            placeholder={mestoId ? "Izaberi grupu perioda" : "Prvo izaberi mesto"}
+            value={grupaId} onChange={onGrupaChange}
             disabled={!mestoId || initialLoading}
-          >
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder={mestoId ? "Izaberi grupu perioda" : "Prvo izaberi mesto"} />
-            </SelectTrigger>
-            <SelectContent>
-              {grupe
-                .filter((g) => mesta.find((m) => String(m.id) === mestoId)?.grupe?.includes(g.id))
-                .slice()
-                .sort((a, b) => a.id - b.id)
-                .map((g) => (
-                  <SelectItem key={g.id} value={String(g.id)}>{g.naziv}</SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+            opcije={grupe
+              .filter((g) => mesta.find((m) => String(m.id) === mestoId)?.grupe?.includes(g.id))
+              .slice()
+              .sort((a, b) => a.id - b.id)
+              .map((g) => ({ value: String(g.id), label: g.naziv }))}
+          />
         </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Izaberi smeštaj</Label>
-          <Select
-            value={smestajId}
-            onValueChange={setSmestajId}
+        <div>
+          <PretraznaSelect
+            className="w-64" ariaLabel="Izaberi smeštaj" label="Izaberi smeštaj"
+            placeholder={grupaId ? "Izaberi smeštaj" : "Prvo izaberi grupu"}
+            value={smestajId} onChange={setSmestajId}
             disabled={!grupaId || initialLoading}
-          >
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder={grupaId ? "Izaberi smeštaj" : "Prvo izaberi grupu"} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="sve">Prikaži sve</SelectItem>
-              {smestajiGrupe.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>{s.naziv}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            opcije={[
+              { value: "sve", label: "Prikaži sve" },
+              ...smestajiGrupe.map((s) => ({ value: String(s.id), label: s.naziv })),
+            ]}
+          />
         </div>
         {loading && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mb-2" />}
       </div>
@@ -1161,6 +1162,14 @@ export default function GrafikPage() {
               <DatumBoravka label="Datum do" value={brzaDo} onChange={setBrzaDo} />
             </div>
           </div>
+          <div>
+            <PretraznaSelect
+              ariaLabel="Izaberi subagenta" placeholder="Bez subagenta" label="Izaberi subagenta"
+              value={slotSubagent} onChange={setSlotSubagent} prazno
+              onPretraga={setSubagentiPretraga}
+              opcije={subagentiIzbor.map((s) => ({ value: s.naziv, label: s.naziv }))}
+            />
+          </div>
           {slotSec && slotSoba && slotPeriod ? (
             <SlotCene
               sec={slotSec}
@@ -1271,6 +1280,14 @@ export default function GrafikPage() {
                 </div>
               </div>
             )}
+            <div className="space-y-1.5">
+              <PretraznaSelect
+                ariaLabel="Izaberi subagenta — brza" placeholder="Bez subagenta" label="Izaberi subagenta"
+                value={slotSubagent} onChange={setSlotSubagent} prazno
+                onPretraga={setSubagentiPretraga}
+                opcije={subagentiIzbor.map((s) => ({ value: s.naziv, label: s.naziv }))}
+              />
+            </div>
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Napomena</Label>
               <Textarea rows={2} value={brzaNapomena} onChange={(e) => setBrzaNapomena(e.target.value)} />

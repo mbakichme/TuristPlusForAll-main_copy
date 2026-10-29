@@ -249,6 +249,12 @@ def init_db(engine):
             "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS ne_prima_ispod_godina INTEGER NULL"
         ))
         conn.execute(text(
+            "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS popular BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS provizija INTEGER NOT NULL DEFAULT 10"
+        ))
+        conn.execute(text(
             "ALTER TABLE IF EXISTS polazak ADD COLUMN IF NOT EXISTS cena_transfera DOUBLE PRECISION NULL"
         ))
         conn.execute(text(
@@ -770,6 +776,25 @@ def init_db(engine):
             ON CONFLICT (id) DO NOTHING
         """))
 
+        # Parametri obračuna — singleton (id=1), globalni parametri cene
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS parametri_obracuna (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                visina_popusta INTEGER NOT NULL DEFAULT 0 CHECK (visina_popusta BETWEEN 0 AND 100),
+                datumod1 DATE NULL,
+                datumdo1 DATE NULL,
+                koeficijent1 DOUBLE PRECISION NULL,
+                datumod2 DATE NULL,
+                datumdo2 DATE NULL,
+                koeficijent2 DOUBLE PRECISION NULL
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO parametri_obracuna (id, visina_popusta)
+            VALUES (1, 0)
+            ON CONFLICT (id) DO NOTHING
+        """))
+
         # Seed tip_ponude
         tip_ponude_values = [
             "Aranžmani sa fiksnim terminima",
@@ -917,6 +942,15 @@ class SmestajCreate(BaseModel):
     granica_chd: Optional[float] = 6.99
     prima_decu: Optional[bool] = True
     ne_prima_ispod_godina: Optional[int] = None
+    popular: Optional[bool] = False
+    provizija: Optional[int] = 10
+
+    @field_validator("provizija")
+    @classmethod
+    def _provizija_0_100(cls, v):
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("Provizija mora biti između 0 i 100")
+        return v
 
     @field_validator("ne_prima_ispod_godina")
     @classmethod
@@ -940,6 +974,15 @@ class SmestajUpdate(BaseModel):
     granica_chd: Optional[float] = None
     prima_decu: Optional[bool] = None
     ne_prima_ispod_godina: Optional[int] = None
+    popular: Optional[bool] = None
+    provizija: Optional[int] = None
+
+    @field_validator("provizija")
+    @classmethod
+    def _provizija_0_100_upd(cls, v):
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("Provizija mora biti između 0 i 100")
+        return v
 
     @field_validator("ne_prima_ispod_godina")
     @classmethod
@@ -1302,6 +1345,16 @@ class RezervacijaIn(BaseModel):
 
 # ─── Boje grafik ───────────────────────────────────────────────────────────
 DOZVOLJENE_BOJE = ("zelena", "plava", "crvena", "zuta", "ljubicasta", "narandzasta", "crna", "roze")
+
+
+class ParametriObracuna(BaseModel):
+    visina_popusta: int
+    datumod1: Optional[SubDate] = None
+    datumdo1: Optional[SubDate] = None
+    koeficijent1: Optional[float] = None
+    datumod2: Optional[SubDate] = None
+    datumdo2: Optional[SubDate] = None
+    koeficijent2: Optional[float] = None
 
 
 class BojeGrafik(BaseModel):
@@ -2095,7 +2148,8 @@ def create_app(static_dir: str) -> FastAPI:
             rows = conn.execute(text("""
                 SELECT s.id, s.naziv, s.drzava, s.destinacija, s.mesto, s.tip_smestaja,
                        s.grupa_datuma, s.status, s.organizator, s.predstavnik, s.grafik,
-                       s.granica_chd, s.prima_decu, s.ne_prima_ispod_godina,                       dr.naziv as drzava_naziv, de.naziv as destinacija_naziv,
+                       s.granica_chd, s.prima_decu, s.ne_prima_ispod_godina, s.popular, s.provizija,
+                       dr.naziv as drzava_naziv, de.naziv as destinacija_naziv,
                        me.naziv as mesto_naziv, ts.naziv as tip_smestaja_naziv,
                        pg.naziv as grupa_datuma_naziv
                 FROM smestaj s
@@ -2114,6 +2168,7 @@ def create_app(static_dir: str) -> FastAPI:
             "predstavnik": r.predstavnik, "grafik": r.grafik,
             "granica_chd": r.granica_chd,
             "prima_decu": r.prima_decu, "ne_prima_ispod_godina": r.ne_prima_ispod_godina,
+            "popular": r.popular, "provizija": r.provizija,
             "drzava_naziv": r.drzava_naziv,
             "destinacija_naziv": r.destinacija_naziv,
             "mesto_naziv": r.mesto_naziv,
@@ -2128,9 +2183,9 @@ def create_app(static_dir: str) -> FastAPI:
             raise HTTPException(status_code=400, detail="Za „ne prima decu“ unesite godine ispod kojih se deca ne primaju")
         with engine.begin() as conn:
             row = conn.execute(text("""
-                INSERT INTO smestaj (naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina)
-                VALUES (:naziv, :drzava, :destinacija, :mesto, :tip_smestaja, :grupa_datuma, :status, :organizator, :predstavnik, :grafik, COALESCE(:granica_chd, 6.99), :prima, :ispod)
-                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina
+                INSERT INTO smestaj (naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina, popular, provizija)
+                VALUES (:naziv, :drzava, :destinacija, :mesto, :tip_smestaja, :grupa_datuma, :status, :organizator, :predstavnik, :grafik, COALESCE(:granica_chd, 6.99), :prima, :ispod, COALESCE(:popular, FALSE), COALESCE(:provizija, 10))
+                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina, popular, provizija
             """), {
                 "naziv": body.naziv, "drzava": body.drzava, "destinacija": body.destinacija,
                 "mesto": body.mesto, "tip_smestaja": body.tip_smestaja,
@@ -2139,6 +2194,8 @@ def create_app(static_dir: str) -> FastAPI:
                 "granica_chd": body.granica_chd,
                 "prima": prima,
                 "ispod": None if prima else body.ne_prima_ispod_godina,
+                "popular": body.popular,
+                "provizija": body.provizija,
             }).fetchone()
         return {
             "id": row.id, "naziv": row.naziv, "drzava": row.drzava,
@@ -2148,6 +2205,7 @@ def create_app(static_dir: str) -> FastAPI:
             "predstavnik": row.predstavnik, "grafik": row.grafik,
             "granica_chd": row.granica_chd,
             "prima_decu": row.prima_decu, "ne_prima_ispod_godina": row.ne_prima_ispod_godina,
+            "popular": row.popular, "provizija": row.provizija,
         }
 
     @api.put("/smestaj/{item_id}")
@@ -2176,7 +2234,7 @@ def create_app(static_dir: str) -> FastAPI:
             row = conn.execute(text(f"""
                 UPDATE smestaj SET {set_clause}
                 WHERE id = :id
-                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina
+                RETURNING id, naziv, drzava, destinacija, mesto, tip_smestaja, grupa_datuma, status, organizator, predstavnik, grafik, granica_chd, prima_decu, ne_prima_ispod_godina, popular, provizija
             """), fields).fetchone()
         return {
             "id": row.id, "naziv": row.naziv, "drzava": row.drzava,
@@ -2186,6 +2244,7 @@ def create_app(static_dir: str) -> FastAPI:
             "predstavnik": row.predstavnik, "grafik": row.grafik,
             "granica_chd": row.granica_chd,
             "prima_decu": row.prima_decu, "ne_prima_ispod_godina": row.ne_prima_ispod_godina,
+            "popular": row.popular, "provizija": row.provizija,
         }
 
     @api.delete("/smestaj/{item_id}")
@@ -3699,9 +3758,14 @@ def create_app(static_dir: str) -> FastAPI:
             arow = conn.execute(text(
                 "SELECT putnik, adresa FROM aranzman WHERE kljuc = :k"
             ), {"k": kljuc_clean}).fetchone()
+            arow_full = conn.execute(text(
+                "SELECT * FROM aranzman WHERE kljuc = :k"
+            ), {"k": kljuc_clean}).mappings().first()
             logo_row = conn.execute(text(
                 "SELECT slika, slika_mime FROM dokumenti WHERE tip = 'logo'"
             )).fetchone()
+        # Vrednost aranžmana u EUR (naplata iz obračuna ugovora) — osnova za OSTALO/EUR
+        vrednost_eur = calc_ugovor_values(dict(arow_full))["naplata"] if arow_full else None
         logo_data_url = None
         if logo_row and logo_row.slika:
             mime = logo_row.slika_mime or "image/png"
@@ -3712,6 +3776,7 @@ def create_app(static_dir: str) -> FastAPI:
             ugovor=kljuc_clean,
             rows=rows,
             logo_data_url=logo_data_url,
+            vrednost_eur=vrednost_eur,
         )
         fname = f"Pregled_uplata_{kljuc_clean.replace('/', '-')}.pdf"
         return Response(
@@ -5769,7 +5834,40 @@ def create_app(static_dir: str) -> FastAPI:
             conn.execute(text(f"UPDATE boje_grafik SET {set_clause} WHERE id = :id"), data)
         return data
 
-    # ─── App setup ───────────────────────────────────────────────────────────
+    # ─── Parametri obračuna ──────────────────────────────────────────────────
+    PARAMETRI_POLJA = ("visina_popusta", "datumod1", "datumdo1", "koeficijent1",
+                       "datumod2", "datumdo2", "koeficijent2")
+
+    @api.get("/parametri-obracuna")
+    def get_parametri_obracuna(_: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            row = conn.execute(text(
+                f"SELECT {', '.join(PARAMETRI_POLJA)} FROM parametri_obracuna WHERE id = 1"
+            )).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Parametri obračuna nisu pronađeni")
+        out = dict(row)
+        for k in ("datumod1", "datumdo1", "datumod2", "datumdo2"):
+            out[k] = out[k].isoformat() if out[k] else None
+        return out
+
+    @api.put("/parametri-obracuna")
+    def update_parametri_obracuna(body: ParametriObracuna, _: dict = Depends(get_current_user)):
+        if not (0 <= body.visina_popusta <= 100):
+            raise HTTPException(status_code=400, detail="Visina popusta mora biti između 0 i 100")
+        for n in ("1", "2"):
+            od, do, koef = getattr(body, f"datumod{n}"), getattr(body, f"datumdo{n}"), getattr(body, f"koeficijent{n}")
+            if od and do and od > do:
+                raise HTTPException(status_code=400, detail=f"Datum početka mora biti pre ili jednak datumu kraja ({n}. period)")
+            if koef is not None and not (0 <= koef < 1e6):
+                raise HTTPException(status_code=400, detail=f"Koeficijent {n} mora biti nenegativan broj")
+        data = body.model_dump()
+        set_clause = ", ".join(f"{k} = :{k}" for k in data)
+        data["id"] = 1
+        with engine.begin() as conn:
+            conn.execute(text(f"UPDATE parametri_obracuna SET {set_clause} WHERE id = :id"), data)
+        return {"ok": True}
+
     app = FastAPI()
     app.include_router(api, prefix="/api")
 

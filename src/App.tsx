@@ -26,6 +26,7 @@ import KoeficijentiPage from "./pages/KoeficijentiPage";
 import AgencijaPage from "./pages/AgencijaPage";
 import DokumentiPage from "./pages/DokumentiPage";
 import BojeGrafikPage from "./pages/BojeGrafikPage";
+import ParametriObracunaPage from "./pages/ParametriObracunaPage";
 import UgovoriPage from "./pages/UgovoriPage";
 import UgovorDetaljPage from "./pages/UgovorDetaljPage";
 import IzvodiPage from "./pages/IzvodiPage";
@@ -139,6 +140,7 @@ function ProtectedLayout() {
             <Route path="/podesavanja/agencija" element={<AgencijaPage />} />
             <Route path="/podesavanja/dokumenti" element={<DokumentiPage />} />
             <Route path="/podesavanja/boje-grafik" element={<BojeGrafikPage />} />
+            <Route path="/podesavanja/parametri-obracuna" element={<ParametriObracunaPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           </ProdajaRouteGuard>

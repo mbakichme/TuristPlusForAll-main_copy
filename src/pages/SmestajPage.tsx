@@ -36,9 +36,11 @@ interface SmestajForm {
   granica_chd: string;
   prima_decu: string;
   ne_prima_ispod_godina: string;
+  popular: string;
+  provizija: string;
 }
 
-const emptyForm: SmestajForm = { naziv: "", drzava: "", destinacija: "", mesto: "", tip_smestaja: "", grupa_datuma: "", status: "1", organizator: "", predstavnik: "", grafik: "0", granica_chd: "6.99", prima_decu: "1", ne_prima_ispod_godina: "" };
+const emptyForm: SmestajForm = { naziv: "", drzava: "", destinacija: "", mesto: "", tip_smestaja: "", grupa_datuma: "", status: "1", organizator: "", predstavnik: "", grafik: "0", granica_chd: "6.99", prima_decu: "1", ne_prima_ispod_godina: "", popular: "0", provizija: "10" };
 
 export default function SmestajPage() {
   const [items, setItems] = useState<Smestaj[]>([]);
@@ -108,6 +110,8 @@ export default function SmestajPage() {
       granica_chd: String(item.granica_chd ?? 6.99),
       prima_decu: item.prima_decu === false ? "0" : "1",
       ne_prima_ispod_godina: item.ne_prima_ispod_godina != null ? String(item.ne_prima_ispod_godina) : "",
+      popular: item.popular ? "1" : "0",
+      provizija: String(item.provizija ?? 10),
     });
     setSheetOpen(true);
   }
@@ -128,6 +132,9 @@ export default function SmestajPage() {
       ispod = Number(godineDeteta);
       if (!Number.isInteger(ispod) || ispod < 0 || ispod > 18) { toast.error("Godine moraju biti ceo broj između 0 i 18"); return; }
     }
+    const provizijaTxt = form.provizija.trim();
+    const provizija = Number(provizijaTxt);
+    if (provizijaTxt === "" || !Number.isInteger(provizija) || provizija < 0 || provizija > 100) { toast.error("Provizija mora biti ceo broj između 0 i 100"); return; }
     setSaving(true);
     try {
       const payload = {
@@ -144,6 +151,8 @@ export default function SmestajPage() {
         granica_chd: granica,
         prima_decu: primaDecu,
         ne_prima_ispod_godina: ispod,
+        popular: form.popular === "1",
+        provizija,
       };
       if (editing) {
         await apiFetch(`/smestaj/${editing.id}`, {
@@ -224,12 +233,13 @@ export default function SmestajPage() {
                 <TableHead className="h-8 px-2 text-xs">Grafik</TableHead>
                 <TableHead className="h-8 px-2 text-xs">Granica CHD</TableHead>
                 <TableHead className="h-8 px-2 text-xs">Prima decu</TableHead>
+                <TableHead className="h-8 px-2 text-xs">Popularan</TableHead>
                 <TableHead className="h-8 w-20 px-2 text-right text-xs">Akcije</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {prikaz.length === 0 ? (
-                <TableRow><TableCell colSpan={10} className="py-6 text-center text-xs text-muted-foreground">{items.length === 0 ? "Nema podataka" : "Nema rezultata pretrage"}</TableCell></TableRow>
+                <TableRow><TableCell colSpan={11} className="py-6 text-center text-xs text-muted-foreground">{items.length === 0 ? "Nema podataka" : "Nema rezultata pretrage"}</TableCell></TableRow>
               ) : prikaz.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="px-2 py-1.5 font-medium">{item.naziv}</TableCell>
@@ -250,6 +260,13 @@ export default function SmestajPage() {
                   <TableCell className="px-2 py-1.5">{item.granica_chd ?? 6.99}</TableCell>
                   <TableCell className="px-2 py-1.5">
                     {item.prima_decu === false ? `NE (ispod ${item.ne_prima_ispod_godina} god.)` : "DA"}
+                  </TableCell>
+                  <TableCell className="px-2 py-1.5">
+                    {item.popular ? (
+                      <Badge className="text-[10px] px-1.5 py-0 bg-amber-500 hover:bg-amber-500 text-white">DA</Badge>
+                    ) : (
+                      <span className="text-muted-foreground">NE</span>
+                    )}
                   </TableCell>
                   <TableCell className="px-2 py-1 text-right">
                     <div className="flex items-center justify-end gap-0.5">
@@ -378,6 +395,20 @@ export default function SmestajPage() {
                 <Input inputMode="numeric" value={form.ne_prima_ispod_godina} onChange={(e) => setField("ne_prima_ispod_godina", e.target.value)} placeholder="npr. 5" />
               </div>
             )}
+            <div className="space-y-2">
+              <Label>Popularan</Label>
+              <Select value={form.popular} onValueChange={(v) => setField("popular", v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">DA</SelectItem>
+                  <SelectItem value="0">NE</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Provizija (%)</Label>
+              <Input inputMode="numeric" value={form.provizija} onChange={(e) => setField("provizija", e.target.value)} placeholder="10" />
+            </div>
           </div>
           <SheetFooter>
             <Button variant="outline" onClick={() => setSheetOpen(false)}>Otkaži</Button>
