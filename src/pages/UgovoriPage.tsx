@@ -23,7 +23,8 @@ const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: "naziv", label: "Smeštaj", sortable: true },
   { key: "struktura", label: "Struktura / soba", sortable: false },
   { key: "subagent", label: "Subagent", sortable: true },
-  { key: "datumod", label: "Termin", sortable: true },
+  { key: "datumod", label: "Polazak", sortable: true },
+  { key: "datumdo", label: "Povratak", sortable: true },
   { key: "ukupna_vrednost", label: "Ukupna vrednost", sortable: false },
 ];
 
@@ -36,14 +37,6 @@ const BATCH_SIZE = 100;
 const fmtRSD = (v: number | null | undefined) =>
   v == null ? "—" : new Intl.NumberFormat("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) + " RSD";
 
-/** "DD.MM.YYYY" + "DD.MM.YYYY" → "04.07-14.07.2026" (ista godina); različita godina → "28.12.2026-03.01.2027" */
-const fmtTermin = (od: string | null | undefined, doDatum: string | null | undefined) => {
-  const a = (od || "").split(".");
-  const b = (doDatum || "").split(".");
-  if (a.length !== 3 || b.length !== 3) return "—";
-  if (a[2] === b[2]) return `${a[0]}.${a[1]}-${b[0]}.${b[1]}.${b[2]}`;
-  return `${od}-${doDatum}`;
-};
 
 export default function UgovoriPage() {
   const navigate = useNavigate();
@@ -259,7 +252,8 @@ export default function UgovoriPage() {
                           {[r.struktura, r.soba].filter((x) => (x || "").trim()).join(" · ") || "—"}
                         </TableCell>
                         <TableCell className="px-2 py-1">{r.subagent || "—"}</TableCell>
-                        <TableCell className="px-2 py-1 whitespace-nowrap">{fmtTermin(r.datumod, r.datumdo)}</TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">{r.datumod || "—"}</TableCell>
+                        <TableCell className="px-2 py-1 whitespace-nowrap">{r.datumdo || "—"}</TableCell>
                         <TableCell className="px-2 py-1 whitespace-nowrap font-medium">
                           {fmtRSD(r.ukupna_vrednost)}
                         </TableCell>

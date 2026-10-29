@@ -3495,7 +3495,6 @@ def create_app(static_dir: str) -> FastAPI:
         "danas": "to_char(a.danas, 'DD.MM.YYYY')",
         "datumod": "to_char(a.datumod, 'DD.MM.YYYY')",
         "datumdo": "to_char(a.datumdo, 'DD.MM.YYYY')",
-        "termin": "CONCAT(to_char(a.datumod, 'DD.MM.YYYY'), ' ', to_char(a.datumdo, 'DD.MM.YYYY'))",
         "subagent": "COALESCE(a.subagent::text, '')",
         "apartman": "COALESCE(a.apartman::text, '')",
         "tip_sobe": "COALESCE((SELECT b.tip FROM sobe b WHERE b.veza_id_smestaj = a.smestaj_id AND TRIM(b.broj_sobe) = TRIM(a.soba) LIMIT 1), '')",
