@@ -953,13 +953,15 @@ export default function RezervacijePage() {
     const cena = searchParams.get("cena");
     if (cena && Number.isFinite(Number(cena))) {
       const popust = searchParams.get("popust");
+      const popustPct = searchParams.get("popustPct");
       // Popust ostaje ukupan iznos: bruto (jedinična × količina) − popust.
+      // Iz Grafika stiže kao procenat (popustPct) → upisuje se u „Popust smeštaja %“.
       setCene((prev) => ({
         ...prev,
         cenaSmestaj: (Number(cena) / brojOsoba).toFixed(2),
         kolSmestaj: String(brojOsoba),
-        popustSmestajPct: "",
-        popustSmestaj: popust && Number(popust) > 0 ? popust : "",
+        popustSmestajPct: popustPct && Number(popustPct) > 0 ? popustPct : "",
+        popustSmestaj: !popustPct && popust && Number(popust) > 0 ? popust : "",
       }));
     }
     const prevozParam = searchParams.get("prevoz");

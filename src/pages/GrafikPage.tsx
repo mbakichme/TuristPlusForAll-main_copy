@@ -911,7 +911,7 @@ export default function GrafikPage() {
     if (slotObracun?.osnovna != null && slotObracun.adl > 0) {
       params.set("odrasli", String(slotObracun.adl));
       params.set("cena", String(slotObracun.osnovna));
-      if (slotObracun.popust > 0) params.set("popust", String(slotObracun.popust));
+      if (slotObracun.popust > 0) params.set("popustPct", String(Math.round((slotObracun.popust / slotObracun.osnovna) * 10000) / 100));
     }
     if (slotCena?.tip) params.set("struktura", slotCena.tip);
     navigate(`/prodaja/rezervacije?${params.toString()}`);
