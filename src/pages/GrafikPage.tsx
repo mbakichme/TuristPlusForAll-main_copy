@@ -64,6 +64,10 @@ const fmtDatum = (d: Date) =>
 
 interface PonudaStavka { naziv: string; cena: string | null; glavna: boolean; blokirano: boolean; }
 interface PonudaInfo { naslov: string; napomena: string | null; stavke: PonudaStavka[]; }
+/** Obračun slobodnog termina (maks. ADL strukture; osnovna već umanjena za sopstveni prevoz). */
+interface SlotObracun { adl: number; struktura: string; osnovna: number | null; snizena: number | null; popust: number; napomena: string | null; }
+interface SlobodnaSoba { id: number; struktura?: string; cena_osnovna: number | null; nema_cene?: boolean; obracun?: string[]; varijante?: { vazi: boolean; cena_snizena: number | null; tip_placanja?: string | null }[]; }
+interface SlobodnaGrupa { smestaj_id: number; sobe: SlobodnaSoba[]; }
 
 /** Red cenovnika za sobu: realna soba ili njena virtuelna soba (struktura = `tip`). */
 interface CenaOpcija {
@@ -721,6 +725,55 @@ export default function GrafikPage() {
     return () => { aktivan = false; clearTimeout(t); };
   }, [subagentiPretraga]);
 
+  // Obračun za izabrani termin: maks. ADL izabrane strukture (kao u Rezervacijama) →
+  // /slobodne-sobe (osnovna već umanjena za sopstveni prevoz) → popust čiji je tip plaćanja izabran.
+  const slotStruktura = (slotCena?.tip || slotSoba?.tip || "").trim();
+  const [slotObracun, setSlotObracun] = useState<SlotObracun | null>(null);
+  useEffect(() => {
+    if (!slotOtvoren || !slotSec || !slotSoba || !brzaOd || !brzaDo || brzaDo <= brzaOd) { setSlotObracun(null); return; }
+    let aktivan = true;
+    const ddmm = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+    const smestajId = slotSec.smestaj.id;
+    const sobaId = slotSoba.id;
+    (async () => {
+      try {
+        const k = await apiFetch<{ redovi: { adl: number; chd: number; inf: number }[] }>(
+          `/koeficijenti/struktura?${new URLSearchParams({ struktura: slotStruktura })}`
+        );
+        const adl = k.redovi.filter((r) => r.chd === 0 && r.inf === 0).reduce((m, r) => Math.max(m, r.adl), 0);
+        if (adl < 1) {
+          if (aktivan) setSlotObracun({ adl: 0, struktura: slotStruktura, osnovna: null, snizena: null, popust: 0, napomena: `Nema koeficijenta za strukturu ${slotStruktura || "—"}` });
+          return;
+        }
+        const params = new URLSearchParams({ datum_od: ddmm(brzaOd), datum_do: ddmm(brzaDo), odrasli: String(adl), prevoz: slotPrevoz });
+        if (mestoId) params.set("mesto_id", mestoId);
+        const grupe = await apiFetch<SlobodnaGrupa[]>(`/slobodne-sobe?${params}`);
+        if (!aktivan) return;
+        const s = grupe.find((g) => g.smestaj_id === smestajId)?.sobe.find((x) => x.id === sobaId);
+        if (!s || s.nema_cene || s.cena_osnovna == null) {
+          setSlotObracun({ adl, struktura: slotStruktura, osnovna: null, snizena: null, popust: 0, napomena: s?.obracun?.[0] ?? "Soba nije dostupna za izabrani termin" });
+          return;
+        }
+        const osnovna = s.cena_osnovna;
+        const v = slotPlacanje
+          ? s.varijante?.find((x) => x.vazi && x.cena_snizena != null && x.tip_placanja === slotPlacanje)
+          : undefined;
+        const snizena = v?.cena_snizena ?? null;
+        setSlotObracun({
+          adl,
+          struktura: s.struktura || slotStruktura,
+          osnovna,
+          snizena,
+          popust: snizena != null ? Math.round((osnovna - snizena) * 100) / 100 : 0,
+          napomena: slotPlacanje && snizena == null ? "Nema važećeg popusta za izabrani način plaćanja" : null,
+        });
+      } catch {
+        if (aktivan) setSlotObracun({ adl: 0, struktura: slotStruktura, osnovna: null, snizena: null, popust: 0, napomena: "Obračun cene nije dostupan" });
+      }
+    })();
+    return () => { aktivan = false; };
+  }, [slotOtvoren, slotSec, slotSoba, brzaOd, brzaDo, slotPrevoz, slotPlacanje, slotStruktura, mestoId]);
+
   // Prefill iz linka (?mesto=&grupa=&smestaj=) — dugme „Grafik“ na Rezervacijama otvara
   // grafik za mesto, grupu datuma i vilu izabranog ugovora; primenjuje se JEDNOM.
   const [searchParams] = useSearchParams();
@@ -854,10 +907,13 @@ export default function GrafikPage() {
     params.set("prevoz", slotPrevoz);
     // izabrana cena iz popupa: cena cele sobe (EUR) + struktura virtuelne sobe u „Promena strukture“
     // struktura (uvek) → broj saputnika i količina smeštaja na Rezervacijama (adl koeficijenta)
-    if (slotCena?.tip) params.set("struktura", slotCena.tip);
-    if (slotCena && slotCena.cena != null && !slotCena.blokirano) {
-      params.set("cena", String(slotCena.cena));
+    // obračun za izabrani termin (maks. ADL, osnovna već umanjena za sopstveni prevoz) → odrasli, cena, popust
+    if (slotObracun?.osnovna != null && slotObracun.adl > 0) {
+      params.set("odrasli", String(slotObracun.adl));
+      params.set("cena", String(slotObracun.osnovna));
+      if (slotObracun.popust > 0) params.set("popust", String(slotObracun.popust));
     }
+    if (slotCena?.tip) params.set("struktura", slotCena.tip);
     navigate(`/prodaja/rezervacije?${params.toString()}`);
   }
 
@@ -1213,6 +1269,32 @@ export default function GrafikPage() {
               izabrana={slotCena}
               onIzbor={(o) => setSlotCena((prev) => (prev?.sobaId === o.sobaId ? null : o))}
             />
+          ) : null}
+          {slotObracun ? (
+            <div className="space-y-2 rounded-xl border border-border/60 bg-muted/40 p-4">
+              <p className="text-xs font-medium text-muted-foreground">
+                Obračun · {slotObracun.adl} {slotObracun.adl === 1 ? "osoba" : "osobe"}{slotObracun.struktura ? ` · ${slotObracun.struktura}` : ""}
+              </p>
+              {slotObracun.osnovna != null ? (
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span>Osnovna cena{slotPrevoz === "sopstveni" ? " (umanjenje za sopstveni prevoz uračunato)" : ""}</span>
+                    <span className="font-mono tabular-nums">{fmtEur(slotObracun.osnovna)}</span>
+                  </div>
+                  {slotObracun.popust > 0 ? (
+                    <div className="flex justify-between gap-3 text-emerald-700">
+                      <span>Popust · {slotPlacanje === "u_celosti" ? "u celosti" : "delimično"}</span>
+                      <span className="font-mono tabular-nums">−{fmtEur(slotObracun.popust)}</span>
+                    </div>
+                  ) : null}
+                  <div className="flex justify-between gap-3 border-t border-border/60 pt-1 font-semibold">
+                    <span>Cena za rezervaciju</span>
+                    <span className="font-mono tabular-nums">{fmtEur(slotObracun.snizena ?? slotObracun.osnovna)}</span>
+                  </div>
+                </div>
+              ) : null}
+              {slotObracun.napomena ? <p className="text-xs text-muted-foreground">{slotObracun.napomena}</p> : null}
+            </div>
           ) : null}
           <div className="grid grid-cols-2 gap-3">
             <Button
