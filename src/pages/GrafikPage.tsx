@@ -678,6 +678,8 @@ export default function GrafikPage() {
   const [slotSoba, setSlotSoba] = useState<GrafikSoba | null>(null);
   const [slotPeriod, setSlotPeriod] = useState<GrafikPeriod | null>(null);
   const [slotSubagent, setSlotSubagent] = useState(""); // naziv subagenta (kao aranzman.subagent)
+  const [slotPlacanje, setSlotPlacanje] = useState(""); // "" | delimicno | u_celosti → bira popust sobe
+  const [slotPrevoz, setSlotPrevoz] = useState("autobuski"); // autobuski | sopstveni → umanjenje cene
   const [subagentiIzbor, setSubagentiIzbor] = useState<{ naziv: string }[]>([]);
   const [subagentiPretraga, setSubagentiPretraga] = useState("");
   const [brzaOtvoren, setBrzaOtvoren] = useState(false);
@@ -782,6 +784,8 @@ export default function GrafikPage() {
     setSlotPeriod(p);
     setSlotCena(null);
     setSlotSubagent("");
+    setSlotPlacanje("");
+    setSlotPrevoz("autobuski");
     // predefinisani datumi slobodnog termina (mogu se ispraviti u formi)
     setBrzaOd(isoOdPrikaza(p.datum_od));
     setBrzaDo(isoOdPrikaza(p.datum_do));
@@ -841,6 +845,9 @@ export default function GrafikPage() {
       mesto: mestoId,
     });
     if (slotSubagent) params.set("subagent", slotSubagent);
+    // način plaćanja (bira koji popust sobe važi) i prevoz (sopstveni → umanjenje cene)
+    if (slotPlacanje) params.set("placanje", slotPlacanje);
+    params.set("prevoz", slotPrevoz);
     // izabrana cena iz popupa: cena cele sobe (EUR) + struktura virtuelne sobe u „Promena strukture“
     // struktura (uvek) → broj saputnika i količina smeštaja na Rezervacijama (adl koeficijenta)
     if (slotCena?.tip) params.set("struktura", slotCena.tip);
@@ -1170,6 +1177,29 @@ export default function GrafikPage() {
               onPretraga={setSubagentiPretraga}
               opcije={subagentiIzbor.map((s) => ({ value: s.naziv, label: s.naziv }))}
             />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Način plaćanja</Label>
+              <Select value={slotPlacanje || "nista"} onValueChange={(v) => setSlotPlacanje(v === "nista" ? "" : v)}>
+                <SelectTrigger aria-label="Način plaćanja" className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nista">Bez izbora</SelectItem>
+                  <SelectItem value="delimicno">Delimično</SelectItem>
+                  <SelectItem value="u_celosti">U celosti</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Prevoz</Label>
+              <Select value={slotPrevoz} onValueChange={setSlotPrevoz}>
+                <SelectTrigger aria-label="Prevoz" className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="autobuski">Autobuski</SelectItem>
+                  <SelectItem value="sopstveni">Sopstveni</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           {slotSec && slotSoba && slotPeriod ? (
             <SlotCene

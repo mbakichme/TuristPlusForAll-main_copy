@@ -1112,6 +1112,10 @@ export default function RezervacijePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adlStrukture, koefStrukture]);
 
+  // Način plaćanja i prevoz iz Grafika: plaćanje bira koji popust sobe važi; sopstveni prevoz menja cenu
+  const placanjeIzLinka = noviIzLinka ? (searchParams.get("placanje") ?? "") : "";
+  const prevozIzLinka = searchParams.get("prevoz") === "sopstveni" ? "sopstveni" : "autobuski";
+
   // Maksimalni važeći popust sobe (iz pretrage/cenovnika) → Popust smeštaja % (samo kad je izabrana soba i boravak)
   useEffect(() => {
     if (!noviIzLinka || ugovorIzLinka || adlStrukture == null) return;
@@ -1121,10 +1125,10 @@ export default function RezervacijePage() {
       datum_od: ddmm(boravak.datumOd),
       datum_do: ddmm(boravak.datumDo),
       odrasli: String(adlStrukture),
-      prevoz: "autobuski",
+      prevoz: prevozIzLinka,
     });
     let aktivan = true;
-    apiFetch<{ smestaj_id: number; sobe: { id: number; cena_osnovna: number | null; varijante?: { vazi: boolean; cena_snizena: number | null }[] }[] }[]>(
+    apiFetch<{ smestaj_id: number; sobe: { id: number; cena_osnovna: number | null; tip_cene?: string | null; varijante?: { vazi: boolean; cena_snizena: number | null; tip_placanja?: string | null }[] }[] }[]>(
       `/slobodne-sobe?${params}`
     )
       .then((grupe) => {
@@ -1132,15 +1136,26 @@ export default function RezervacijePage() {
         const soba = grupe.find((g) => String(g.smestaj_id) === boravak.smestaj)?.sobe.find((s) => String(s.id) === boravak.soba);
         if (!soba || soba.cena_osnovna == null || soba.cena_osnovna <= 0) return;
         const osnovna = soba.cena_osnovna;
-        const snizene = (soba.varijante ?? []).filter((v) => v.vazi && v.cena_snizena != null).map((v) => v.cena_snizena as number);
-        if (snizene.length === 0) return;
+        // sopstveni prevoz: umanjenje je već u obračunu → jedinična (po osobi) = ukupno / koeficijent
+        if (prevozIzLinka === "sopstveni" && soba.tip_cene === "po_osobi" && koefStrukture) {
+          updCene({ cenaSmestaj: String(round2(osnovna / koefStrukture)) });
+        }
+        const kandidati = (soba.varijante ?? []).filter((v) =>
+          v.vazi && v.cena_snizena != null && (!placanjeIzLinka || v.tip_placanja === placanjeIzLinka));
+        if (kandidati.length === 0) {
+          // izabran način plaćanja bez važećeg popusta → nema popusta
+          if (placanjeIzLinka) updCene({ popustSmestajPct: "" });
+          return;
+        }
+        const snizene = kandidati.map((v) => v.cena_snizena as number);
         const maxPopust = osnovna - Math.min(...snizene);
         if (maxPopust <= 0) return;
         updCene({ popustSmestajPct: String(round2((maxPopust / osnovna) * 100)) });
       })
       .catch(() => { /* bez popusta: polje ostaje kako je uneto */ });
     return () => { aktivan = false; };
-  }, [adlStrukture, boravak.smestaj, boravak.soba, boravak.datumOd, boravak.datumDo, noviIzLinka, ugovorIzLinka]);
+  }, [adlStrukture, koefStrukture, boravak.smestaj, boravak.soba, boravak.datumOd, boravak.datumDo, noviIzLinka, ugovorIzLinka, placanjeIzLinka, prevozIzLinka]);
+
 
   // Automatska provizija (samo nova rezervacija): popularan smeštaj → smestaj.provizija;
   // inače popust na smeštaj > visina_popusta → visina_provizije; inače provizija subagenta.
