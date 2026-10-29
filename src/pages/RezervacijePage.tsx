@@ -1602,14 +1602,23 @@ export default function RezervacijePage() {
   // bez konverzije i bez ponovnog dodavanja cenadod-a (nema dvostrukog prebrojavanja)
   const imaDodatnih = dodatneStavke.length > 0;
 
+  // Provizije (smeštaj + prevoz, EUR i RSD) se oduzimaju od ukupne vrednosti aranžmana.
+  const provizijaEURUkupno = num(cene.provizijaSmestaj) + num(cene.provizijaPrevoz);
+  const provizijaRSDUkupno = num(cene.provizijaSmestajRSD) + num(cene.provizijaPrevozRSD);
+  // Ukupna cena pre popusta i provizije (bruto + osiguranje + dodatne stavke) i zbir popusta
+  const brutoEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) + dodatneSume.eur + num(cene.osiguranjeEUR);
+  const brutoRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) + dodatneSume.din + num(cene.osiguranjeRSD);
+  const popustEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) - (netoSmestajEUR ?? 0) - (netoPrevozEUR ?? 0);
+  const popustRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) - (netoSmestajRSD ?? 0) - (netoPrevozRSD ?? 0);
+
   // Svaka valuta se sabira nezavisno; osiguranje je deo ukupne cene.
   const ukupnoAranzmanEUR =
     netoSmestajEUR != null || netoPrevozEUR != null || imaDodatnih || cene.osiguranjeEUR.trim()
-      ? (netoSmestajEUR ?? 0) + (netoPrevozEUR ?? 0) + dodatneSume.eur + num(cene.osiguranjeEUR)
+      ? (netoSmestajEUR ?? 0) + (netoPrevozEUR ?? 0) + dodatneSume.eur + num(cene.osiguranjeEUR) - provizijaEURUkupno
       : null;
   const ukupnoAranzmanRSD =
     netoSmestajRSD != null || netoPrevozRSD != null || imaDodatnih || cene.osiguranjeRSD.trim()
-      ? (netoSmestajRSD ?? 0) + (netoPrevozRSD ?? 0) + dodatneSume.din + num(cene.osiguranjeRSD)
+      ? (netoSmestajRSD ?? 0) + (netoPrevozRSD ?? 0) + dodatneSume.din + num(cene.osiguranjeRSD) - provizijaRSDUkupno
       : null;
 
   // Uplaćeno dolazi isključivo iz stvarnih uplata ugovora, uključujući storna.
@@ -1621,11 +1630,9 @@ export default function RezervacijePage() {
     : ukupnoAranzmanEUR != null || ukupnoAranzmanRSD != null
       ? round2((ukupnoAranzmanEUR ?? 0) * (kurs?.kurs ?? 0) + (ukupnoAranzmanRSD ?? 0))
       : null;
-  // Provizije (smeštaj + prevoz, EUR i RSD) se oduzimaju od saldo.
-  const provizijaEURUkupno = num(cene.provizijaSmestaj) + num(cene.provizijaPrevoz);
-  const provizijaRSDUkupno = num(cene.provizijaSmestajRSD) + num(cene.provizijaPrevozRSD);
+  // Vrednost aranžmana already net of provizija; saldo = vrednost − uplaćeno.
   const saldo = vrednostAranzmanaRSD !== null && uplacenoObracun !== null
-    ? round2(vrednostAranzmanaRSD - uplacenoObracun - (provizijaEURUkupno * (kurs?.kurs ?? 0) + provizijaRSDUkupno))
+    ? round2(vrednostAranzmanaRSD - uplacenoObracun)
     : null;
 
   // Uplate v EUR po istorijskom kursu svake uplate (isti zbir kao u tabu Uplate).
@@ -1635,7 +1642,7 @@ export default function RezervacijePage() {
       ? round2((ukupnoAranzmanEUR ?? 0) + (ukupnoAranzmanRSD ?? 0) / (kurs?.kurs || 1))
       : null;
   const saldoEUR = uplacenoObracun !== null && vrednostAranzmanaEUR !== null
-    ? round2(vrednostAranzmanaEUR - uplateSumaEUR - (provizijaEURUkupno + provizijaRSDUkupno / (kurs?.kurs || 1)))
+    ? round2(vrednostAranzmanaEUR - uplateSumaEUR)
     : null;
 
   const akcija = (naziv: string) => () => toast.info(`${naziv} je u pripremi`);
@@ -2550,8 +2557,23 @@ export default function RezervacijePage() {
                       <UkupnoInput vrednost={ukupnoAranzmanRSD} />
                     </Fld>
                   </div>
+                  <div data-testid="obracun-pregled" className="rounded-md border border-border/60 bg-muted/30 p-2 text-xs">
+                    <div className="mb-1 font-semibold text-muted-foreground">Obračun</div>
+                    <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-1 tabular-nums">
+                      <span className="text-muted-foreground">Ukupna cena pre odbijanja popusta i provizije</span>
+                      <span className="text-right">{nf2.format(brutoEURUkupno)} €</span>
+                      <span className="text-right">{nf2.format(brutoRSDUkupno)} din</span>
+                      <span className="text-muted-foreground">Popust</span>
+                      <span className="text-right">− {nf2.format(popustEURUkupno)} €</span>
+                      <span className="text-right">− {nf2.format(popustRSDUkupno)} din</span>
+                      <span className="text-muted-foreground">Provizija</span>
+                      <span className="text-right">− {nf2.format(provizijaEURUkupno)} €</span>
+                      <span className="text-right">− {nf2.format(provizijaRSDUkupno)} din</span>
+                    </div>
+                  </div>
                   <div className="flex items-baseline justify-between gap-3">
                     <Label htmlFor="obracun-uplaceno" className="text-xs text-muted-foreground">Uplaćeno (RSD):</Label>
+
                     <Input
                       id="obracun-uplaceno"
                       inputMode="decimal"
