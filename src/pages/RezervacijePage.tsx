@@ -2148,10 +2148,10 @@ export default function RezervacijePage() {
                     <Input inputMode="decimal" aria-label="Količina za cenu smeštaja (EUR)" value={cene.kolSmestaj} onChange={(e) => updCene({ kolSmestaj: e.target.value })} placeholder="1" disabled={zakljucano} />
                   </Fld>
                   <Fld label="Cena smeštaja (RSD)">
-                    <Input inputMode="decimal" aria-label="Cena smeštaja (RSD)" value={cene.cenaSmestajRSD} onChange={(e) => updCene({ cenaSmestajRSD: e.target.value })} placeholder="0,00" disabled={zakljucano} />
+                    <Input inputMode="decimal" aria-label="Cena smeštaja (RSD)" value={cene.cenaSmestajRSD} placeholder="0,00" disabled className="bg-muted text-muted-foreground" />
                   </Fld>
                   <Fld label="Količina">
-                    <Input inputMode="decimal" aria-label="Količina za cenu smeštaja (RSD)" value={cene.kolSmestajRSD} onChange={(e) => updCene({ kolSmestajRSD: e.target.value })} placeholder="1" disabled={zakljucano} />
+                    <Input inputMode="decimal" aria-label="Količina za cenu smeštaja (RSD)" value={cene.kolSmestajRSD} placeholder="1" disabled className="bg-muted text-muted-foreground" />
                   </Fld>
                 </div>
                 <PanelaSazetka kompaktno>
@@ -2174,10 +2174,10 @@ export default function RezervacijePage() {
                     <Input inputMode="decimal" aria-label="Količina za cenu prevoza (EUR)" value={cene.kolPrevoz} onChange={(e) => updCene({ kolPrevoz: e.target.value })} placeholder="1" disabled={zakljucano} />
                   </Fld>
                   <Fld label="Cena prevoza (RSD)">
-                    <Input inputMode="decimal" aria-label="Cena prevoza (RSD)" value={cene.cenaPrevozRSD} onChange={(e) => updCene({ cenaPrevozRSD: e.target.value })} placeholder="0,00" disabled={zakljucano} />
+                    <Input inputMode="decimal" aria-label="Cena prevoza (RSD)" value={cene.cenaPrevozRSD} placeholder="0,00" disabled className="bg-muted text-muted-foreground" />
                   </Fld>
                   <Fld label="Količina">
-                    <Input inputMode="decimal" aria-label="Količina za cenu prevoza (RSD)" value={cene.kolPrevozRSD} onChange={(e) => updCene({ kolPrevozRSD: e.target.value })} placeholder="1" disabled={zakljucano} />
+                    <Input inputMode="decimal" aria-label="Količina za cenu prevoza (RSD)" value={cene.kolPrevozRSD} placeholder="1" disabled className="bg-muted text-muted-foreground" />
                   </Fld>
                 </div>
                 <PanelaSazetka kompaktno>
