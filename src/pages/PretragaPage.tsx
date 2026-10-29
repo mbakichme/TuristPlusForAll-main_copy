@@ -5,6 +5,7 @@ import { apiFetch } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import PretraznaSelect from "@/components/PretraznaSelect";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
@@ -486,16 +487,15 @@ export default function PretragaPage() {
               <Label className="text-xs text-muted-foreground">Izaberite mesto</Label>
               <div className="relative">
                 <SelIcon icon={MapPin} />
-                <Select value={mestoId} onValueChange={onMestoChange} disabled={initialLoading}>
-                  <SelectTrigger className="pl-9 w-full">
-                    <SelectValue placeholder={initialLoading ? "Učitavanje..." : "Izaberite mesto"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {mesta.map((m) => (
-                      <SelectItem key={m.id} value={String(m.id)}>{m.naziv}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <PretraznaSelect
+                  value={mestoId}
+                  onChange={onMestoChange}
+                  disabled={initialLoading}
+                  ariaLabel="Izaberite mesto"
+                  placeholder={initialLoading ? "Učitavanje..." : "Izaberite mesto"}
+                  className="pl-9"
+                  opcije={mesta.map((m) => ({ value: String(m.id), label: m.naziv }))}
+                />
               </div>
             </div>
             <div className="space-y-1.5">

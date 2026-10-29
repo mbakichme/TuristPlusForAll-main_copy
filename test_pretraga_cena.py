@@ -73,6 +73,10 @@ def ground_truth(conn, smestaj_id, soba, d_od, d_do, adl, chd, sopstveni):
         osnova = Decimal(0)
         ok = True
         for p in lanac:
+            ob = conn.execute(text("SELECT blokirano FROM opcije_soba WHERE cenovnik_id=:c AND soba_id=:s AND period_id IN (:p, 0) ORDER BY period_id DESC LIMIT 1"),
+                              {"c": c.id, "s": red["id"], "p": p["id"]}).scalar()
+            if ob:
+                ok = False; break  # blokirana smena u lancu → soba se ne prikazuje
             cena = conn.execute(text("SELECT cena FROM cenovnik_cene WHERE cenovnik_id=:c AND soba_id=:s AND period_id=:p"),
                                 {"c": c.id, "s": red["id"], "p": p["id"]}).scalar()
             if not cena or cena <= 0:
@@ -90,8 +94,10 @@ def ground_truth(conn, smestaj_id, soba, d_od, d_do, adl, chd, sopstveni):
             if k <= 0:
                 continue  # po osobi bez unetog koeficijenta → nema cene
             cena = osnova * k
-            if sopstveni and opc and opc["popust_sopstveni_prevoz"]:
-                cena -= Decimal(str(opc["popust_sopstveni_prevoz"])) * (adl + chd)
+            n_smena = len(lanac)
+            puta = n_smena if sopstveni else n_smena - 1
+            if opc and opc["popust_sopstveni_prevoz"] and puta > 0:
+                cena -= Decimal(str(opc["popust_sopstveni_prevoz"])) * (adl + chd) * puta
         cena = max(Decimal(0), cena).quantize(Decimal("0.01"))
         # popusti: svaki važeći red (redni 1..3) je zasebna varijanta, nikad se ne sabiraju
         pop_redovi = conn.execute(text("SELECT * FROM popust_soba WHERE cenovnik_id=:c AND soba_id=:s AND period_id=:p ORDER BY redni"),
@@ -161,12 +167,17 @@ def main():
                 proveri(f"[{tag}] {g['smestaj_naziv']} iskljuceno_putnici == {isklj.get(g['smestaj_id'], 0)}",
                         g["iskljuceno_putnici"] == isklj.get(g["smestaj_id"], 0), f"api={g['iskljuceno_putnici']}")
             if adl == 1 and sop:
-                s = next((s for s in po_sobi.values() if s.get("varijante")), None)
-                ob = s["varijante"][0]["obracun"] if s else []
-                proveri("[sopstveni] obracun pominje umanjenje jednom (ne po terminu)",
-                        s is not None and sum("Sopstveni prevoz" in l for l in ob) == 1)
+                s0 = next((s for s in po_sobi.values() if s.get("varijante")), None)
+                ob0 = s0["varijante"][0]["obracun"] if s0 else []
                 proveri("[lanac] obracun pokazuje zbir termina",
-                        s is not None and any("lanac od 2 termina" in l for l in ob))
+                        s0 is not None and any("lanac od 2 termina" in l for l in ob0))
+                s = next((s for s in po_sobi.values() if any("smena" in l for l in (s.get("varijante") or [{}])[0].get("obracun", []))), None)
+                if s is None:
+                    print("SKIP [sopstveni] umanjenje: aktivni cenovnik nema umanjenje za sopstveni prevoz (formula nije proverena uživo)")
+                else:
+                    ob = s["varijante"][0]["obracun"]
+                    proveri("[sopstveni] umanjenje se oduzima × broj smena (lanac od 2 = × 2 smena)",
+                            any("× 2 smena" in l for l in ob) and sum("Sopstveni prevoz: umanjenje" in l for l in ob) == 1)
             # varijante: jedna po važećem popustu, redni rastući, svaka sa sopstvenom cenom
             for k, s in po_sobi.items():
                 if s.get("cena_osnovna") is None:
@@ -189,17 +200,19 @@ def main():
         ctx.add_init_script(f"localStorage.setItem('ta_token', {json.dumps(token)});")
         page = ctx.new_page()
         page.goto(APP + "/prodaja/pretraga", wait_until="domcontentloaded")
-        page.get_by_role("combobox").first.wait_for(timeout=15000)
-        page.get_by_role("combobox").first.click()
+        page.get_by_role("button", name="Izaberite mesto").first.wait_for(timeout=15000)
+        page.get_by_role("button", name="Izaberite mesto").first.click()
+        page.get_by_placeholder("Pretraga…").fill("Hanioti")
         page.get_by_role("option", name="Hanioti", exact=True).click()
+        page.get_by_role("option", name="Hanioti", exact=True).wait_for(state="detached", timeout=5000)
         page.get_by_text("Izaberite datum polaska").click()
         kal = page.locator("[data-radix-popper-content-wrapper]")
-        kal.wait_for(timeout=5000)
-        page.wait_for_timeout(200)
+        kal.last.wait_for(timeout=5000)
+        page.wait_for_timeout(300)
         import re
-        kal.first.locator("button:not([disabled])", has_text=re.compile(r"^25$")).first.click()
+        kal.last.locator("button:not([disabled])", has_text=re.compile(r"^25$")).first.click()
         page.wait_for_timeout(400)
-        kal.first.get_by_text(f"20 noćenja | Povratak: {DO}.", exact=True).click(force=True)
+        kal.last.get_by_text(f"20 noćenja | Povratak: {DO}.", exact=True).click(force=True)
         page.wait_for_timeout(300)
         with page.expect_request(lambda r: "/slobodne-sobe" in r.url and "odrasli=2" in r.url and "prevoz=autobuski" in r.url, timeout=10000):
             page.get_by_role("button", name="Pretraži", exact=True).click()

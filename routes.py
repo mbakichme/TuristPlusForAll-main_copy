@@ -2584,6 +2584,22 @@ def create_app(static_dir: str) -> FastAPI:
         for r in koef_rows:
             koef_map.setdefault((r.struktura or "").strip(), Decimal(str(r.koeficijent or 0)))
 
+        # Izuzetak za JEDNU osobu (1 ADL): ako početak boravka pada u period 1 ili 2
+        # iz parametri_obracuna, koeficijent tog perioda množi OSNOVU iz cenovnika
+        # i zamenjuje pravilo 2 (soba prolazi bez reda u koeficijenti_prodaje).
+        izuzetak_koef = None
+        if adl == 1 and chd == 0 and inf == 0:
+            par = conn.execute(text("""
+                SELECT datumod1, datumdo1, koeficijent1, datumod2, datumdo2, koeficijent2
+                FROM parametri_obracuna WHERE id = 1
+            """)).mappings().first()
+            if par:
+                for n in ("1", "2"):
+                    od_, do_, k_ = par[f"datumod{n}"], par[f"datumdo{n}"], par[f"koeficijent{n}"]
+                    if od_ and do_ and k_ is not None and od_ <= d_od <= do_:
+                        izuzetak_koef = Decimal(str(k_))
+                        break
+
         soba_ids = [s["id"] for g in smestaji for s in g["sobe"]]
         dodatni: dict = {}
         if soba_ids:
@@ -2643,8 +2659,12 @@ def create_app(static_dir: str) -> FastAPI:
         def _po_opsegu(mapa, soba_row_id, pid):
             return mapa.get((soba_row_id, pid)) or mapa.get((soba_row_id, 0))
 
-        def _obracun_sobe(cen, soba, struktura, koef):
-            """Vrati dict obračuna ili None ako nema cene za tu strukturu."""
+        def _obracun_sobe(cen, soba, struktura, koef, izuz=False):
+            """Vrati dict obračuna ili None ako nema cene za tu strukturu.
+
+            izuz=True: izuzetak za jednu osobu — koef je koeficijent perioda iz
+            parametri_obracuna; množi se OSNOVA iz cenovnika (pre umanjenja i popusta).
+            """
             obr = []
             if struktura == (soba["tip"] or "").strip():
                 red = next((r for r in cen["sobe"] if r["id"] == soba["id"] and not r.get("virtuelna")), None)
@@ -2658,6 +2678,10 @@ def create_app(static_dir: str) -> FastAPI:
             osnova = Decimal("0")
             delovi = []
             for p in cen["lanac"]:
+                opc_p = _po_opsegu(cen["opcije"], red["id"], p["id"])
+                if opc_p and opc_p["blokirano"]:
+                    # blokirana smena u lancu → soba se NE prikazuje
+                    return {"blokirano_u_lancu": True}
                 cena_p = cen["cene"].get((red["id"], p["id"]))
                 if cena_p is None or cena_p <= 0:
                     return {"nema_cene": True, "obracun": obr + [
@@ -2669,14 +2693,23 @@ def create_app(static_dir: str) -> FastAPI:
                            f"(lanac od {len(delovi)} termina)")
             else:
                 obr.append(f"Osnova iz cenovnika: {_fmt(osnova)} €")
+            # koeficijent koji se množi: izuzetak (1 osoba) → osnova × koef perioda,
+            # inače koef iz koeficijenti_prodaje (po osobi, u grani ispod)
+            koef_mnozi = koef
+            if izuz:
+                if koef <= 0:
+                    return {"nema_cene": True, "obracun": obr + [
+                        "Izuzetak za 1 osobu: koeficijent perioda u parametrima obračuna je 0"]}
+                osnova = osnova * koef
+                obr.append(f"Izuzetak za 1 osobu (početak boravka u periodu parametara): "
+                           f"osnova × {koef} = {_fmt(osnova)} €")
+                koef_mnozi = Decimal("1")
             prvi_pid = cen["lanac"][0]["id"]
             opc = _po_opsegu(cen["opcije"], red["id"], prvi_pid)
             tip_cene = (opc["tip_cene"] if opc and opc["tip_cene"] else "po_osobi")
             umanj_sp = Decimal(str(opc["popust_sopstveni_prevoz"])) if opc and opc["popust_sopstveni_prevoz"] else Decimal("0")
             napomene = []
             if opc:
-                if opc["blokirano"]:
-                    napomene.append("Soba je BLOKIRANA u opcijama cenovnika")
                 if opc["prevoz"] == "obavezan" and sopstveni:
                     napomene.append("Opcije: prevoz je OBAVEZAN (traženo: sopstveni)")
                 if opc["prevoz"] == "nemoguc" and not sopstveni:
@@ -2692,20 +2725,30 @@ def create_app(static_dir: str) -> FastAPI:
                     obr.append(f"Autobuski prevoz: karte {_fmt(KARTA_ADL)}×{adl} ADL + "
                                f"{_fmt(KARTA_CHD)}×{chd} CHD = {_fmt(karte)} € → {_fmt(cena)} €")
             else:
-                if koef <= 0:
+                if koef_mnozi <= 0:
                     return {"nema_cene": True, "obracun": obr + [
                         f"Tip cene: PO OSOBI, ali koeficijent za {adl} ADL / {chd} CHD / {inf} INF "
                         f"(struktura {struktura}) je 0 — unesite ga na Koeficijentima prodaje"]}
-                cena = osnova * koef
-                obr.append(f"Tip cene: PO OSOBI → {_fmt(osnova)} × {koef} = {_fmt(cena)} €")
-                if sopstveni:
-                    if umanj_sp > 0:
-                        um = umanj_sp * broj_osoba
-                        cena -= um
-                        obr.append(f"Sopstveni prevoz: umanjenje {_fmt(umanj_sp)} × {broj_osoba} osoba = "
-                                   f"−{_fmt(um)} € → {_fmt(cena)} €")
+                cena = osnova * koef_mnozi
+                if not izuz:
+                    obr.append(f"Tip cene: PO OSOBI → {_fmt(osnova)} × {koef} = {_fmt(cena)} €")
+                else:
+                    obr.append(f"Tip cene: PO OSOBI → {_fmt(cena)} €")
+                # Umanjenje za sopstveni prevoz: sopstveni → × broj smena,
+                # autobuski → × (broj smena − 1); uvek × broj osoba.
+                n_smena = len(cen["lanac"])
+                puta = n_smena if sopstveni else n_smena - 1
+                if umanj_sp > 0 and puta > 0:
+                    um = umanj_sp * broj_osoba * puta
+                    cena -= um
+                    if sopstveni:
+                        obr.append(f"Sopstveni prevoz: umanjenje {_fmt(umanj_sp)} × {broj_osoba} osoba × "
+                                   f"{puta} smena = −{_fmt(um)} € → {_fmt(cena)} €")
                     else:
-                        obr.append("Sopstveni prevoz: umanjenje nije definisano u opcijama (0 €)")
+                        obr.append(f"Autobuski prevoz: umanjenje {_fmt(umanj_sp)} × {broj_osoba} osoba × "
+                                   f"{puta} (smena − 1) = −{_fmt(um)} € → {_fmt(cena)} €")
+                elif sopstveni:
+                    obr.append("Sopstveni prevoz: umanjenje nije definisano u opcijama (0 €)")
                 else:
                     obr.append("Autobuski prevoz: konačna cena (prevoz uključen)")
             if cena < 0:
@@ -2751,14 +2794,22 @@ def create_app(static_dir: str) -> FastAPI:
             for s in g["sobe"]:
                 tip = (s["tip"] or "").strip()
                 strukture = [tip] + [d for d in dodatni.get(s["id"], []) if d != tip]
-                kandidati = [(st, koef_map[st]) for st in strukture if st in koef_map]
+                if izuzetak_koef is not None:
+                    # izuzetak za 1 osobu: pravilo 2 se ne primenjuje
+                    kandidati = [(st, izuzetak_koef) for st in strukture]
+                else:
+                    kandidati = [(st, koef_map[st]) for st in strukture if st in koef_map]
                 if not kandidati:
                     iskljuceno += 1
                     continue
                 najbolji = None
+                blokirana = False
                 if cen and cen["lanac"]:
                     for st, koef in kandidati:
-                        r = _obracun_sobe(cen, s, st, koef)
+                        r = _obracun_sobe(cen, s, st, koef, izuz=izuzetak_koef is not None)
+                        if r and r.get("blokirano_u_lancu"):
+                            blokirana = True
+                            break
                         if r is None or r["nema_cene"]:
                             if najbolji is None:
                                 najbolji = r
@@ -2766,6 +2817,10 @@ def create_app(static_dir: str) -> FastAPI:
                         if najbolji is None or najbolji.get("nema_cene") or \
                            (r["cena_snizena"] or r["cena_osnovna"]) < (najbolji["cena_snizena"] or najbolji["cena_osnovna"]):
                             najbolji = r
+                if blokirana:
+                    # blokirana smena u lancu (spajanje termina) → soba se ne prikazuje
+                    iskljuceno += 1
+                    continue
                 if najbolji is None:
                     razlog = ("Nema aktivnog cenovnika za ovaj smeštaj" if not cen else
                               "Cenovnik ne pokriva traženi boravak lancem termina" if not cen["lanac"] else
