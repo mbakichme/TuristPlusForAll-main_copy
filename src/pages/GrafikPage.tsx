@@ -451,11 +451,13 @@ const formattersKalendara = {
   formatWeekdayName: (day: Date) => DANI[day.getDay()],
 };
 
-function DatumBoravka({ label, value, onChange }: {
-  label: string; value: string; onChange: (value: string) => void;
+function DatumBoravka({ label, value, onChange, smene }: {
+  label: string; value: string; onChange: (value: string) => void; smene?: GrafikPeriod[];
 }) {
   const [open, setOpen] = useState(false);
   const datum = value ? new Date(`${value}T12:00:00`) : undefined;
+  // Datumi smena (početak i kraj perioda grupe) — samo oznaka, ostali datumi ostaju slobodni
+  const smeneDatumi = (smene ?? []).flatMap((p) => [pDate(p.datum_od), pDate(p.datum_do)]);
   return (
     <div className="min-w-0 space-y-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
@@ -469,6 +471,8 @@ function DatumBoravka({ label, value, onChange }: {
         <PopoverContent align="start" className="w-auto rounded-xl bg-card p-0 shadow-lg">
           <Calendar mode="single" selected={datum} defaultMonth={datum} weekStartsOn={1}
             formatters={formattersKalendara} initialFocus
+            modifiers={{ smena: smeneDatumi }}
+            modifiersClassNames={{ smena: "bg-blue-500 text-white rounded-md font-semibold" }}
             onSelect={(d) => { if (d) { onChange(isoOdDatuma(d)); setOpen(false); } }} />
         </PopoverContent>
       </Popover>
@@ -1166,8 +1170,8 @@ export default function GrafikPage() {
               </span>
             </div>
             <div className="grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
-              <DatumBoravka label="Datum od" value={brzaOd} onChange={setBrzaOd} />
-              <DatumBoravka label="Datum do" value={brzaDo} onChange={setBrzaDo} />
+              <DatumBoravka label="Datum od" value={brzaOd} onChange={setBrzaOd} smene={slotSec?.periodi} />
+              <DatumBoravka label="Datum do" value={brzaDo} onChange={setBrzaDo} smene={slotSec?.periodi} />
             </div>
           </div>
           <div>
