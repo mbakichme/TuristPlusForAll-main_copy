@@ -211,18 +211,18 @@ function MiniKalendar({ view, onView, odSet, selectedKey, onPick }: {
         {cells.map((d, i) => {
           if (!d) return <div key={`e-${i}`} />;
           const k = keyOf(d);
-          const smena = odSet.has(k);
+          const selectable = odSet.has(k);
           const selected = selectedKey === k;
           return (
             <button
-              key={k} type="button" onClick={() => onPick(d)}
+              key={k} type="button" disabled={!selectable} onClick={() => onPick(d)}
               className={cn(
                 "h-8 w-8 mx-auto rounded-md text-sm flex items-center justify-center transition-colors",
                 selected
                   ? "bg-primary text-primary-foreground font-semibold"
-                  : smena
-                    ? "bg-blue-500/15 text-blue-700 font-semibold hover:bg-blue-500/25"
-                    : "text-foreground hover:bg-muted"
+                  : selectable
+                    ? "text-foreground font-medium hover:bg-muted"
+                    : "text-muted-foreground/50 cursor-default"
               )}
             >
               {d.getDate()}
