@@ -221,7 +221,7 @@ function MiniKalendar({ view, onView, odSet, selectedKey, onPick }: {
                 selected
                   ? "bg-primary text-primary-foreground font-semibold"
                   : smena
-                    ? "bg-blue-500/15 text-blue-700 font-semibold hover:bg-blue-500/25"
+                    ? "bg-blue-500 text-white font-semibold hover:bg-blue-600"
                     : "text-foreground hover:bg-muted"
               )}
             >
