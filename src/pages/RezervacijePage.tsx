@@ -3072,14 +3072,11 @@ export default function RezervacijePage() {
                 </div>
               )}
 
-              {izabraniUgovor && (
+              {izabraniUgovor && zabraneUgovora.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-2.5">
                   <Ban className="w-4 h-4 text-muted-foreground" />
-                  {zabraneUgovora.length === 0 ? (
-                    <span className="text-sm text-muted-foreground">Nema administrativne zabrane za ovaj ugovor.</span>
-                  ) : (
-                    <>
-                      <span className="text-sm font-semibold">Administrativna zabrana:</span>
+                  <>
+                    <span className="text-sm font-semibold">Administrativna zabrana:</span>
                       {zabraneUgovora.map((z) => (
                         <div key={z.broj} className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1">
                           <Badge variant="secondary">{z.broj}</Badge>
@@ -3104,8 +3101,7 @@ export default function RezervacijePage() {
                           </Button>
                         </div>
                       ))}
-                    </>
-                  )}
+                  </>
                 </div>
               )}
             </CardContent>
