@@ -82,7 +82,7 @@ function fmtDatum(iso: string | null | undefined): string {
 }
 
 const EMPTY_FORM = {
-  naziv: "", adresa: "", mesto: "", pib: "", matbroj: "", ta: "true", ugovor_broj: "", ugovor_datumod: "", ugovor_datumdo: "", tel: "", tel1: "", tel2: "",
+  naziv: "", adresa: "", mesto: "", pib: "", matbroj: "", ta: "true", ugovor_broj: "", ugovor_datumod: "", ugovor_datumdo: "", tel: "", tel1: "", tel2: "", email: "",
   fax: "", racun: "", provizija: "0", provizija1: "0", provizija1a: "0",
   provizija2: "0", punnaziv: "", kontakt: "",
 };
@@ -180,7 +180,7 @@ export default function SubagentiPage() {
       naziv: s.naziv || "", adresa: s.adresa || "", mesto: s.mesto || "",
       pib: s.pib || "", matbroj: s.matbroj || "", ta: s.ta === false ? "false" : "true", ugovor_broj: s.ugovor_broj || "",
       ugovor_datumod: s.ugovor_datumod || "", ugovor_datumdo: s.ugovor_datumdo || "",
-      tel: s.tel || "", tel1: s.tel1 || "", tel2: s.tel2 || "",
+      tel: s.tel || "", tel1: s.tel1 || "", tel2: s.tel2 || "", email: s.email || "",
       fax: s.fax || "", racun: s.racun || "",
       provizija: String(s.provizija ?? 0), provizija1: String(s.provizija1 ?? 0),
       provizija1a: String(s.provizija1a ?? 0), provizija2: String(s.provizija2 ?? 0),
@@ -446,8 +446,12 @@ export default function SubagentiPage() {
               <Input value={form.tel1} onChange={(e) => setField("tel1", e.target.value)} className="h-8 text-xs" />
             </div>
             <div>
-              <Label className="text-[11px]">Email / Telefon 2</Label>
+              <Label className="text-[11px]">Telefon 2</Label>
               <Input value={form.tel2} onChange={(e) => setField("tel2", e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div>
+              <Label className="text-[11px]">Email</Label>
+              <Input type="email" value={form.email} onChange={(e) => setField("email", e.target.value)} className="h-8 text-xs" />
             </div>
             <div>
               <Label className="text-[11px]">Fax</Label>
