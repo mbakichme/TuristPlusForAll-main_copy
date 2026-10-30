@@ -3143,6 +3143,14 @@ def create_app(static_dir: str) -> FastAPI:
                     ), {"c": cen_row.id}).all()
                     blok_globalno = {int(s) for s, pid, b in blok_rows if int(pid) == 0 and b}
                     blok_eksplicitno = {(int(s), int(pid)): bool(b) for s, pid, b in blok_rows if int(pid) != 0}
+                    # Popusti po (soba, period): eksplicitan period, inače globalni (period_id = 0)
+                    popusti_mapa: dict = {}
+                    for pr in conn.execute(text(
+                        "SELECT soba_id, period_id, redni, tip_popusta, tip_placanja, umanjenje_vrsta, umanjenje, vazi_od, vazi_do "
+                        "FROM popust_soba WHERE cenovnik_id = :c ORDER BY redni"
+                    ), {"c": cen_row.id}).mappings():
+                        popusti_mapa.setdefault((int(pr["soba_id"]), int(pr["period_id"])), []).append(pr)
+                    danas_g = sada.date()
                     cene_out = []
                     for cr in conn.execute(text(
                         "SELECT soba_id, period_id, cena FROM cenovnik_cene WHERE cenovnik_id = :c"
@@ -3151,11 +3159,21 @@ def create_app(static_dir: str) -> FastAPI:
                         if p is None:
                             continue
                         sid, pid = int(cr.soba_id), int(cr.period_id)
+                        pops = popusti_mapa.get((sid, pid)) or popusti_mapa.get((sid, 0)) or []
                         cene_out.append({
                             "soba_id": sid,
                             "datum_od": _dmy(p["datum_od"]), "datum_do": _dmy(p["datum_do"]),
                             "cena": float(cr.cena),
                             "blokirano": blok_eksplicitno.get((sid, pid), sid in blok_globalno),
+                            "popusti": [{
+                                "redni": int(pr["redni"]),
+                                "tip_popusta": pr["tip_popusta"],
+                                "tip_placanja": pr["tip_placanja"],
+                                "vrsta": pr["umanjenje_vrsta"],
+                                "umanjenje": float(pr["umanjenje"]),
+                                "vazi": (pr["vazi_od"] is None or pr["vazi_od"] <= danas_g)
+                                        and (pr["vazi_do"] is None or pr["vazi_do"] >= danas_g),
+                            } for pr in pops],
                         })
                     cenovnik_out = {
                         "sobe": [{

@@ -42,7 +42,8 @@ interface GrafikUgovor { kljuc: string; soba: string; datum_od: string; datum_do
 interface GrafikPeriod { datum_od: string; datum_do: string; }
 interface GrafikCenovnik {
   sobe: { id: number; broj_sobe: string; tip: string; izvor_soba_id: number | null }[];
-  cene: { soba_id: number; datum_od: string; datum_do: string; cena: number; blokirano: boolean }[];
+  cene: { soba_id: number; datum_od: string; datum_do: string; cena: number; blokirano: boolean;
+    popusti?: { redni: number; tip_popusta: string | null; tip_placanja: string | null; vrsta: string; umanjenje: number; vazi: boolean }[] }[];
 }
 interface GrafikData {
   smestaj: { id: number; naziv: string };
@@ -62,12 +63,15 @@ function pDate(s: string): Date {
 const fmtDatum = (d: Date) =>
   `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
 
-interface PonudaStavka { naziv: string; cena: string | null; glavna: boolean; blokirano: boolean; }
+interface PonudaStavka { naziv: string; cena: string | null; glavna: boolean; blokirano: boolean; popusti: { tip: string; procenat: number | null; iznos: number | null }[]; }
 interface PonudaInfo { naslov: string; napomena: string | null; stavke: PonudaStavka[]; }
 /** Obračun slobodnog termina (maks. ADL strukture; osnovna već umanjena za sopstveni prevoz). */
 interface SlotObracun { adl: number; struktura: string; osnovna: number | null; snizena: number | null; popust: number; napomena: string | null; }
 interface SlobodnaSoba { id: number; struktura?: string; cena_osnovna: number | null; nema_cene?: boolean; obracun?: string[]; varijante?: { vazi: boolean; cena_snizena: number | null; tip_placanja?: string | null }[]; }
 interface SlobodnaGrupa { smestaj_id: number; sobe: SlobodnaSoba[]; }
+
+/** Način plaćanja → naziv za prikaz (popust po tipu plaćanja). */
+const PLACANJE_NAZIV: Record<string, string> = { delimicno: "delimično", u_celosti: "u celosti" };
 
 /** Red cenovnika za sobu: realna soba ili njena virtuelna soba (struktura = `tip`). */
 interface CenaOpcija {
@@ -79,6 +83,7 @@ interface CenaOpcija {
   glavna: boolean;       // red same sobe
   cena: number | null;   // EUR za najuži period cenovnika koji obuhvata slobodan deo
   blokirano: boolean;
+  popusti: { tip: string; procenat: number | null; iznos: number | null }[]; // samo važeći popusti
 }
 
 /** Redovi cena za slobodan termin: soba + njene virtuelne sobe iz aktivnog cenovnika.
@@ -114,6 +119,12 @@ function cenaOpcije(sec: GrafikData, soba: GrafikSoba, p: GrafikPeriod):
       glavna: s.id === soba.id,
       cena: zapis ? zapis.cena : null,
       blokirano: zapis ? zapis.blokirano : false,
+      popusti: (zapis?.popusti ?? []).filter((x) => x.vazi).map((x) => ({
+        tip: x.tip_placanja ? (PLACANJE_NAZIV[x.tip_placanja] ?? x.tip_placanja) : (x.tip_popusta ?? "popust"),
+        procenat: x.vrsta === "procenat" ? x.umanjenje
+          : (zapis && zapis.cena > 0 ? Math.round((x.umanjenje / zapis.cena) * 1000) / 10 : null),
+        iznos: x.vrsta === "procenat" ? null : x.umanjenje,
+      })),
     };
   });
   return { napomena: null, period, opcije };
@@ -129,6 +140,7 @@ function ponudaInfo(sec: GrafikData, soba: GrafikSoba, p: GrafikPeriod): PonudaI
     cena: o.blokirano || o.cena == null ? null : `${o.cena.toLocaleString("sr-RS", { maximumFractionDigits: 2 })} €`,
     glavna: o.glavna,
     blokirano: o.blokirano,
+    popusti: o.blokirano ? [] : o.popusti,
   }));
   return { naslov, napomena: null, stavke };
 }
@@ -298,8 +310,18 @@ function PonudaTooltip({ info, tipRef, pos }: {
           <ul className="space-y-1">
             {info.stavke.map((s, i) => (
               <li key={i} className={cn("flex items-baseline justify-between gap-3 text-xs", !s.glavna && "text-muted-foreground")}>
-                <span className={cn("truncate", s.glavna && "font-semibold text-foreground")}>
-                  {s.naziv}
+                <span className="min-w-0">
+                  <span className={cn("block truncate", s.glavna && "font-semibold text-foreground")}>
+                    {s.naziv}
+                  </span>
+                  {s.popusti.map((p, j) => (
+                    <span key={j} className="block truncate text-[10px] font-medium text-emerald-700">
+                      −{p.procenat != null ? `${p.procenat.toLocaleString("sr-RS", { maximumFractionDigits: 1 })}%` : ""}
+                      {p.procenat != null && p.iznos != null ? " · " : ""}
+                      {p.iznos != null ? `${p.iznos.toLocaleString("sr-RS", { maximumFractionDigits: 2 })} €` : ""}
+                      {` ${p.tip}`}
+                    </span>
+                  ))}
                 </span>
                 <span className={cn("shrink-0 font-mono tabular-nums", s.blokirano ? "text-[11px] font-sans font-medium text-red-600" : s.glavna ? "text-sm font-semibold text-foreground" : "text-xs")}>
                   {s.blokirano ? "blokirano" : (s.cena ?? "nema cene")}
@@ -841,8 +863,7 @@ export default function GrafikPage() {
     setSlotPeriod(p);
     setSlotCena(null);
     setSlotSubagent("");
-    setSlotPlacanje("");
-    setSlotPrevoz("autobuski");
+    setSlotPlacanje("delimicno");
     // predefinisani datumi slobodnog termina (mogu se ispraviti u formi)
     setBrzaOd(isoOdPrikaza(p.datum_od));
     setBrzaDo(isoOdPrikaza(p.datum_do));
