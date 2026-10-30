@@ -4617,8 +4617,10 @@ def create_app(static_dir: str) -> FastAPI:
         neto_sm_eur = round(bruto_sm_eur * (1 - popustar / 100.0), 2)
         neto_sm_rsd = round(bruto_sm_rsd * (1 - popustar / 100.0), 2)
         procenatar = _rez_procenat_iz_reda(c.provizijaSmestaj, neto_sm_eur, neto_sm_rsd)
-        # provizija prevoza: legacy obračun = procenatpr × količina (iznos po osobi)
-        prv_ukupno = _rez_red_ukupno(c.provizijaPrevoz, bruto_pr_eur, bruto_pr_rsd)
+        # provizija prevoza: legacy obračun = procenatpr × količina (iznos po osobi); računa se nad NETO prevozom
+        neto_pr_eur = round(bruto_pr_eur * (1 - popustpr / 100.0), 2)
+        neto_pr_rsd = round(bruto_pr_rsd * (1 - popustpr / 100.0), 2)
+        prv_ukupno = _rez_red_ukupno(c.provizijaPrevoz, neto_pr_eur, neto_pr_rsd)
         kol_pr = c.kolPrevozRSD if (c.provizijaPrevoz.eur is None and c.provizijaPrevoz.rsd is not None) \
             else c.kolPrevozEUR
         procenatpr = round(prv_ukupno / kol_pr, 2) if prv_ukupno is not None and kol_pr > 0 else 0.0

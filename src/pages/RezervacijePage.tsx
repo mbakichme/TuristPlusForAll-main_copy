@@ -1126,8 +1126,12 @@ export default function RezervacijePage() {
         next.provizijaSmestajRSD = brojUString(round2((p / 100) * Math.max(0, netoRSD)));
       }
       if (procenat(next.provizijaPrevozPct) != null) {
-        next.provizijaPrevoz = izProcenata(next.provizijaPrevozPct, next.cenaPrevoz, next.kolPrevoz);
-        next.provizijaPrevozRSD = izProcenata(next.provizijaPrevozPct, next.cenaPrevozRSD, next.kolPrevozRSD);
+        // provizija prevoza se računa na neto prevoz (bruto − popust)
+        const p = procenat(next.provizijaPrevozPct) ?? 0;
+        const netoEUR = num(next.cenaPrevoz) * qty(next.kolPrevoz) - num(next.popustPrevoz);
+        const netoRSD = num(next.cenaPrevozRSD) * qty(next.kolPrevozRSD) - num(next.popustPrevozRSD);
+        next.provizijaPrevoz = brojUString(round2((p / 100) * Math.max(0, netoEUR)));
+        next.provizijaPrevozRSD = brojUString(round2((p / 100) * Math.max(0, netoRSD)));
       }
       return next;
     });
@@ -2674,10 +2678,10 @@ export default function RezervacijePage() {
                 iznosEUR={cene.provizijaPrevoz}
                 iznosRSD={cene.provizijaPrevozRSD}
                 netoEUR={netoPrevozEUR != null || cene.provizijaPrevoz.trim() || cene.provizijaPrevozPct.trim()
-                  ? Math.max(0, (brutoPrevozEUR ?? 0) - num(cene.provizijaPrevoz))
+                  ? Math.max(0, (netoPrevozEUR ?? 0) - num(cene.provizijaPrevoz))
                   : null}
                 netoRSD={netoPrevozRSD != null || cene.provizijaPrevozRSD.trim() || cene.provizijaPrevozPct.trim()
-                  ? Math.max(0, (brutoPrevozRSD ?? 0) - num(cene.provizijaPrevozRSD))
+                  ? Math.max(0, (netoPrevozRSD ?? 0) - num(cene.provizijaPrevozRSD))
                   : null}
                 onPct={(v) => updCene({ provizijaPrevozPct: v })}
                 onIznosEUR={(v) => updCene({ provizijaPrevoz: v, provizijaPrevozPct: "" })}
