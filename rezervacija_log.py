@@ -26,7 +26,7 @@ PREVOZ_POLJA = {"prevozow", "prevozrt", "smer", "cenaow", "kolow", "cenart",
                 "destinacija_ow", "datum_polaska", "destinacija_polaska",
                 "datum_povratka", "destinacija_povratka", "napomena_prevoz"}
 OBRACUN_POLJA = {"cenaaranz", "kolaranz", "cenaaranzd", "osiguranje", "osiguranje1",
-                 "popustar", "popustpr", "procenatar", "procenatpr"}
+                 "popustar", "popustpr", "procenatar", "procenatpr", "nacin_placanja"}
 # kolone koje se ne loguju (tehnička polja, menjaju se pri svakom snimanju)
 IGNORISANA_POLJA = {"kljuc", "danas", "obradio"}
 BOOL_POLJA = {"prevozow", "prevozrt", "placeno_prevoz", "zelja_prevoz"}
@@ -41,7 +41,7 @@ LABELE = {
     "smestaj_id": "Smeštaj (ID)", "soba": "Soba", "destinacija": "Destinacija",
     "apartman": "Struktura", "datumod": "Datum od", "datumdo": "Datum do",
     "datumoddo": "Period", "napomena": "Napomena", "napomena1": "Napomena interna",
-    "ulazak": "Ulazak", "mesto_izlaska": "Mesto izlaska", "cenaaranz": "Smeštaj cena (EUR)",
+    "ulazak": "Ulazak", "nacin_placanja": "Način plaćanja", "mesto_izlaska": "Mesto izlaska", "cenaaranz": "Smeštaj cena (EUR)",
     "kolaranz": "Smeštaj količina (EUR)", "cenaaranzd": "Smeštaj cena (RSD)",
     "cenaow": "Prevoz cena ow (EUR)", "kolow": "Prevoz količina ow",
     "cenart": "Prevoz cena rt (EUR)", "kolrt": "Prevoz količina rt",

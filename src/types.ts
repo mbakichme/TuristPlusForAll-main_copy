@@ -141,6 +141,7 @@ export interface UgovorDetail {
   datum_povratka?: string | null;
   destinacija_povratka?: string | null;
   napomena_prevoz?: string | null;
+  nacin_placanja?: string | null;
   osiguranje?: number | null; // RSD
   osiguranje1?: number | null; // EUR
   soba?: string | null;

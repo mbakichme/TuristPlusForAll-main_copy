@@ -568,6 +568,10 @@ def init_db(engine):
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_aranzman_smestaj_id ON aranzman(smestaj_id)"
         ))
+        # Način plaćanja rezervacije (delimicno | u_celosti | NULL = nije izabran) — bira popust sobe
+        conn.execute(text(
+            "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS nacin_placanja VARCHAR(20)"
+        ))
         # Dodatne stavke — id je broj ugovora i nije jedinstven.
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS dodatne (
@@ -1350,6 +1354,8 @@ class RezervacijaIn(BaseModel):
     izlazak: str = ""  # mesto izlaska nosioca (prazno → mesto ulaska)
     napomenaPrevoz: str = ""  # polje pored "Izbor destinacije" (tab Prevoz)
     cene: RezCeneIn
+    # način plaćanja: "delimicno" | "u_celosti" | "" (nije izabran) — bira koji popust sobe važi
+    nacinPlacanja: str = ""
     # TRANSFER stavke dodatnih usluga (po mestu ulaska). None = ne diraj; lista = zameni sve TRANSFER redove.
     transferi: Optional[list[RezTransferStavka]] = None
 
@@ -2866,6 +2872,8 @@ def create_app(static_dir: str) -> FastAPI:
         adl = int(odrasli_raw) if odrasli_raw.isdigit() else 2
         godine = [int(x) for x in deca_raw.split(",") if x.strip().isdigit()] if deca_raw else []
         sopstveni = prevoz_raw.startswith("sopstveni")
+        # postojeći ugovor (obračun/promena plaćanja u Rezervaciji): njegova soba se ne broji kao zauzeta
+        iskl = (q.get("iskluci_kljuc") or "").strip() or None
         if not od:
             raise HTTPException(status_code=400, detail="datum_od je obavezan")
         try:
@@ -2875,7 +2883,7 @@ def create_app(static_dir: str) -> FastAPI:
         grupa_id = int(grupa_raw) if grupa_raw.isdigit() else None
         mesto_id = int(mesto_raw) if mesto_raw.isdigit() else None
 
-        def _smestaji_za_termin(conn, d_od, d_do):
+        def _smestaji_za_termin(conn, d_od, d_do, iskluci_kljuc=None):
             """Slobodni smeštaji (sa sobama) za boravak od d_od do d_do.
 
             Smeštaj prolazi SAMO ako njegova grupa termina (smestaj.grupa_datuma)
@@ -2921,9 +2929,11 @@ def create_app(static_dir: str) -> FastAPI:
                         AND a.datumod IS NOT NULL AND a.datumdo IS NOT NULL
                         AND a.datumod < :ddo
                         AND a.datumdo > :dod
+                        -- postojeći ugovor koji se obračunava ne zauzima sobu sam sebi
+                        AND a.kljuc IS DISTINCT FROM CAST(:iskl AS TEXT)
                   )
                 ORDER BY s.naziv, b.broj_sobe
-            """), {"g": grupa_id, "m": mesto_id, "dod": d_od, "ddo": d_do}).fetchall()
+            """), {"g": grupa_id, "m": mesto_id, "dod": d_od, "ddo": d_do, "iskl": iskluci_kljuc}).fetchall()
             grouped: dict = {}
             for r in rows:
                 g = grouped.setdefault(r.smestaj_id, {
@@ -2948,7 +2958,7 @@ def create_app(static_dir: str) -> FastAPI:
                     raise HTTPException(status_code=400, detail="Datumi moraju biti u formatu DD.MM.YYYY")
                 if d_do <= d_od:
                     raise HTTPException(status_code=400, detail="Datum do mora biti posle datuma od")
-                smestaji = _smestaji_za_termin(conn, d_od, d_do)
+                smestaji = _smestaji_za_termin(conn, d_od, d_do, iskl)
                 # smeštaj koji ne prima decu ispod N godina: ako neko od dece
                 # putnika ima manje od N, smeštaj se ne nudi (DA ili nedefinisane
                 # godine ne utiču na pretragu)
@@ -4693,6 +4703,7 @@ def create_app(static_dir: str) -> FastAPI:
             "procenatpr": procenatpr,
             "obradio": f"{(urow.first_name or '').strip()} {(urow.last_name or '').strip()}".strip(),
             "napomena_prevoz": _rez_str(body.napomenaPrevoz, 500),
+            "nacin_placanja": body.nacinPlacanja if body.nacinPlacanja in ("delimicno", "u_celosti") else None,
             **_rez_prevoz_polja(n),
         }
 
@@ -5115,6 +5126,7 @@ def create_app(static_dir: str) -> FastAPI:
             "datum_povratka": d["datum_povratka"].isoformat() if d.get("datum_povratka") else None,
             "destinacija_povratka": d.get("destinacija_povratka"),
             "napomena_prevoz": d.get("napomena_prevoz"),
+            "nacin_placanja": d.get("nacin_placanja"),
 
             "osiguranje1": d.get("osiguranje1"),
             "soba": d.get("soba"),

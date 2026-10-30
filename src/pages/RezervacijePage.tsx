@@ -880,6 +880,9 @@ export default function RezervacijePage() {
       const novoMesto = mestoId ? String(mestoId) : (d.mesto ?? "").trim() ? CUVAR : "";
       mestoUgovoraRef.current = novoMesto || null; // destinacija se ne veže ponovo dok se mesto ne promeni
       setBoravak({ datumOd: datumZaInput(d.datumod), datumDo: datumZaInput(d.datumdo), smestaj: smestajId ? String(smestajId) : (d.naziv ?? "").trim() ? CUVAR : "", soba: sobaId ? String(sobaId) : (d.soba ?? "").trim() ? CUVAR : "", mesto: novoMesto, struktura: d.apartman ?? "", promenaStrukture: "", viza: Number(d.viza) === 1, napomena: d.napomena ?? "", napomenaInterna: d.napomena1 ?? "", napomenaPrevoz: d.napomena_prevoz ?? "" });
+      // način plaćanja iz baze (promena se kasnije potvrđuje dijalogom)
+      setPlacanje(d.nacin_placanja === "delimicno" || d.nacin_placanja === "u_celosti" ? d.nacin_placanja : "");
+      setPlacanjeZahtev(null);
       // Cena smeštaja i uplaćeno dolaze iz ugovora; dodatne stavke (i njihove sume) iz d.dodatne —
       // cenadod se ne upisuje u formu da se sa dodatenSume ne bi sabiralo dvostruko.
       // Osiguranje se učitava iz aranzman.osiguranje (RSD) / osiguranje1 (EUR).
@@ -1216,7 +1219,7 @@ export default function RezervacijePage() {
   // (samo kad je izabrana soba i boravak; izvor se čuva da bi promena plaćanja mogla ponovo da obračuna)
   useEffect(() => {
     setIzvorPopusta(null);
-    if (!noviIzLinka || ugovorIzLinka || adlStrukture == null) return;
+    if (adlStrukture == null) return;
     if (!boravak.smestaj || !boravak.soba || !boravak.datumOd || !boravak.datumDo || boravak.datumDo <= boravak.datumOd) return;
     const ddmm = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
     const params = new URLSearchParams({
@@ -1224,6 +1227,8 @@ export default function RezervacijePage() {
       datum_do: ddmm(boravak.datumDo),
       odrasli: String(adlStrukture),
       prevoz: prevozIzLinka,
+      // postojeći ugovor: njegova soba se ne računa kao zauzeta (inače nestaje iz liste)
+      ...(izabraniUgovor ? { iskluci_kljuc: izabraniUgovor } : {}),
     });
     let aktivan = true;
     apiFetch<{ smestaj_id: number; sobe: { id: number; cena_osnovna: number | null; tip_cene?: string | null; varijante?: { vazi: boolean; cena_snizena: number | null; tip_placanja?: string | null }[] }[] }[]>(
@@ -1234,12 +1239,14 @@ export default function RezervacijePage() {
         const soba = grupe.find((g) => String(g.smestaj_id) === boravak.smestaj)?.sobe.find((s) => String(s.id) === boravak.soba);
         if (!soba || soba.cena_osnovna == null || soba.cena_osnovna <= 0) return;
         const osnovna = soba.cena_osnovna;
+        const izvor: IzvorPopusta = { osnovna, varijante: soba.varijante ?? [] };
+        setIzvorPopusta(izvor);
+        // postojeći ugovor: sačuvani popust/cena ostaju; obračun se menja samo kroz promenu plaćanja
+        if (!noviIzLinka || izabraniUgovor) return;
         // sopstveni prevoz: umanjenje je već u obračunu → jedinična (po osobi) = ukupno / koeficijent
         if (prevozIzLinka === "sopstveni" && soba.tip_cene === "po_osobi" && koefStrukture) {
           updCene({ cenaSmestaj: String(round2(osnovna / koefStrukture)) });
         }
-        const izvor: IzvorPopusta = { osnovna, varijante: soba.varijante ?? [] };
-        setIzvorPopusta(izvor);
         // pri učitavanju primenjuje se način plaćanja koji je već izabran (iz Grafika ili polja)
         const pct = popustZaPlacanje(izvor, placanje);
         if (pct) updCene({ popustSmestajPct: pct });
@@ -1249,7 +1256,7 @@ export default function RezervacijePage() {
     return () => { aktivan = false; };
     // promena plaćanja NE ide kroz ovaj efekt — samo kroz potvrdu (promeniPlacanje → potvrdiPlacanje)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adlStrukture, koefStrukture, boravak.smestaj, boravak.soba, boravak.datumOd, boravak.datumDo, noviIzLinka, ugovorIzLinka, prevozIzLinka]);
+  }, [adlStrukture, koefStrukture, boravak.smestaj, boravak.soba, boravak.datumOd, boravak.datumDo, noviIzLinka, izabraniUgovor, prevozIzLinka]);
 
   // Promena načina plaćanja: ako postoji obračun (izabrana soba) → traži potvrdu; inače samo postavlja
   const promeniPlacanje = (novi: string) => {
@@ -1678,7 +1685,9 @@ export default function RezervacijePage() {
       ulazak: prevozRedovi["nosilac"]?.mestoUlaska ?? "",
       izlazak: prevozRedovi["nosilac"]?.mestoIzlaska ?? "",
       napomenaPrevoz: boravak.napomenaPrevoz,
-      transferi: transferStavke.map((t) => ({ usluga: t.usluga ?? "", eur: t.eur ?? 0 })),      cene: {
+      nacinPlacanja: placanje,
+      transferi: transferStavke.map((t) => ({ usluga: t.usluga ?? "", eur: t.eur ?? 0 })),
+      cene: {
         cenaSmestajEUR: num(cene.cenaSmestaj), kolSmestajEUR: qty(cene.kolSmestaj),
         cenaSmestajRSD: num(cene.cenaSmestajRSD), kolSmestajRSD: qty(cene.kolSmestajRSD),
         popustSmestaj: cenaRed(cene.popustSmestajPct, cene.popustSmestaj, cene.popustSmestajRSD),
