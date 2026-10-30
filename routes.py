@@ -1029,8 +1029,8 @@ class PolazakSave(BaseModel):
     chdow: Optional[float] = None
     infow: Optional[float] = None
     cena_transfera: Optional[float] = None  # EUR, uvek; NULL = nije uneta (logo je globalni, ostali su dokumenti sa headerom + napomenom)
-    mesto_id: Optional[int] = None  # šifarnik mesto; obavezno za nove/izmenjene zapise
-    grupa_id: Optional[int] = None  # period_grupa; obavezno za nove/izmenjene zapise
+    mesto_id: Optional[int] = None  # šifarnik mesto; opciono
+    grupa_id: Optional[int] = None  # period_grupa; opciono
     destinacija_id: Optional[int] = None  # šifarnik destinacija; obavezno; destinacija (tekst) se popunjava iz naziva
 DOKUMENTI_TIPOVI = {
     "logo": "Logo agencije",
@@ -2395,8 +2395,8 @@ def create_app(static_dir: str) -> FastAPI:
         return [dict(r._mapping) for r in rows]
 
     def _polazak_validiraj(conn, body: "PolazakSave") -> dict:
-        if body.destinacija_id is None or body.mesto_id is None or body.grupa_id is None:
-            raise HTTPException(status_code=400, detail="Destinacija, mesto i grupa termina su obavezni")
+        if body.destinacija_id is None:
+            raise HTTPException(status_code=400, detail="Destinacija je obavezna")
         naziv = conn.execute(text("SELECT naziv FROM destinacija WHERE id = :id"),
                              {"id": body.destinacija_id}).scalar()
         if naziv is None:

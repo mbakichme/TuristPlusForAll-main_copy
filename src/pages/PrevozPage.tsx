@@ -35,8 +35,8 @@ const COLUMNS: ColDef[] = [
   { key: "polazak", label: "Mesto polaska", cls: "min-w-56" },
   { key: "sat", label: "Sat", cls: "w-20" },
   { key: "valuta", label: "Valuta", cls: "w-20" },
-  { key: "mesto_naziv", label: "Mesto", tip: "Mesto iz šifarnika (obavezno)", cls: "min-w-40" },
-  { key: "grupa_naziv", label: "Grupa termina", tip: "Grupa termina (obavezno)", cls: "min-w-44" },
+  { key: "mesto_naziv", label: "Mesto", tip: "Mesto iz šifarnika", cls: "min-w-40" },
+  { key: "grupa_naziv", label: "Grupa termina", tip: "Grupa termina", cls: "min-w-44" },
   { key: "adlrt", label: "ADL RT", tip: "Odrasli — povratna karta (RT)", num: true, cls: "w-24" },
   { key: "chdrt", label: "CHD RT", tip: "Dete — povratna karta (RT)", num: true, cls: "w-24" },
   { key: "adlow", label: "ADL OW", tip: "Odrasli — jedan pravac (OW)", num: true, cls: "w-24" },
@@ -209,8 +209,8 @@ export default function PrevozPage() {
   }
 
   async function handleSave() {
-    if (!form.destinacija_id || !form.mesto_id || !form.grupa_id) {
-      toast.error("Destinacija, mesto i grupa termina su obavezni");
+    if (!form.destinacija_id) {
+      toast.error("Destinacija je obavezna");
       return;
     }
     setSaving(true);
