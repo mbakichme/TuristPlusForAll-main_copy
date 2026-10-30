@@ -28,6 +28,7 @@ from cenovnici_api import init_cenovnici, register_cenovnici
 from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
 from zaduzenje_api import init_zaduzenje, register_zaduzenje
 from zabrana_api import init_zabrana, register_zabrana
+from saglasnost_pdf import init_saglasnost
 from dobavljaci_api import init_dobavljaci, register_dobavljaci
 from banke_api import init_banke, register_banke
 from notifikacije_api import init_notifikacije, register_notifikacije
@@ -1596,6 +1597,7 @@ def create_app(static_dir: str) -> FastAPI:
     init_koeficijenti(engine)
     init_zaduzenje(engine)
     init_zabrana(engine)
+    init_saglasnost(engine)
     init_dobavljaci(engine)
     init_banke(engine)
     init_notifikacije(engine)
@@ -5855,11 +5857,33 @@ def create_app(static_dir: str) -> FastAPI:
             return {}
         return dict(row._mapping)
 
+    @api.get("/saglasnost/pdf")
+    def get_saglasnost_pdf(kljuc: str, _: dict = Depends(get_current_user)):
+        """Saglasnost za obradu podataka — zaglavlje iz Osnovnih podataka, davalac = nosilac."""
+        from saglasnost_pdf import build_saglasnost_pdf
+
+        k = kljuc.strip().strip("/")
+        with engine.connect() as conn:
+            ag = conn.execute(text("SELECT * FROM agencija WHERE id = 1")).mappings().first() or {}
+            ar = conn.execute(
+                text("SELECT kljuc, putnik FROM aranzman WHERE kljuc = :k"), {"k": k}
+            ).mappings().first()
+        if not ar:
+            raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+        pdf = build_saglasnost_pdf(
+            dict(ag), ar["kljuc"], _belgrade_now().strftime("%d.%m.%Y"), (ar["putnik"] or "").strip()
+        )
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="Saglasnost_{k.replace("/", "-")}.pdf"'},
+        )
+
     @api.put("/agencija")
     async def update_agencija(request: Request, _: dict = Depends(get_current_user)):
         data = await request.json()
         allowed = [
-            "naziv", "poslovno_ime", "email1", "email2", "telefon1", "telefon2",
+            "naziv", "poslovno_ime", "licenca", "email1", "email2", "telefon1", "telefon2",
             "ulica", "broj", "post_broj", "mesto", "drzava",
             "opstina_rgz", "opstina_naziv", "mesto_rgz", "mesto_naziv",
             "ulica_rgz", "ulica_naziv", "api_kljuc_efakture", "api_kljuc_cis",

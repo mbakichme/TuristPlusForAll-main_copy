@@ -12,6 +12,7 @@ import { toast } from "sonner";
 interface AgencijaData {
   naziv?: string;
   poslovno_ime?: string;
+  licenca?: string;
   email1?: string;
   email2?: string;
   telefon1?: string;
@@ -151,6 +152,7 @@ export default function AgencijaPage() {
           <Section title="Opšti podaci">
             <Field label="Naziv" name="naziv" value={form.naziv || ""} onChange={setField} />
             <Field label="Poslovno ime" name="poslovno_ime" value={form.poslovno_ime || ""} onChange={setField} />
+            <Field label="Licenca" name="licenca" value={form.licenca || ""} onChange={setField} />
             <Field label="PIB" name="pib" value={form.pib || ""} onChange={setField} />
             <Field label="Matični broj" name="mb" value={form.mb || ""} onChange={setField} />
             <Field label="JBKJS" name="jbkjs" value={form.jbkjs || ""} onChange={setField} />

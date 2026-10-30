@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, ChevronDown, CreditCard, Download, FilePenLine, Loader2,
+  BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, ChevronDown, CreditCard, Download, FilePenLine, FileSignature, Loader2,
   FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
   Users, Wallet, ArrowRightLeft,
 } from "lucide-react";
@@ -655,6 +655,7 @@ export default function RezervacijePage() {
   const uplataZakljucana = useRef(false);
   const [uplateOsvezi, setUplateOsvezi] = useState(0);
   const [uplatePdfUcitava, setUplatePdfUcitava] = useState(false);
+  const [saglasnostPdfUcitava, setSaglasnostPdfUcitava] = useState(false);
   const [priznanicaKljuc, setPriznanicaKljuc] = useState<number | null>(null);
   const [istorija, setIstorija] = useState<IstorijaRed[] | null>(null);
   const [istorijaUcitava, setIstorijaUcitava] = useState(false);
@@ -1320,6 +1321,36 @@ export default function RezervacijePage() {
   );
 
   // PDF "Pregled uplata" (šablon starog sistema + logo) — preuzimanje fajla
+  // Saglasnost za obradu podataka o ličnosti — PDF (zaglavlje iz Osnovnih podataka)
+  async function preuzmiSaglasnostPdf() {
+    if (!izabraniUgovor || saglasnostPdfUcitava) return;
+    setSaglasnostPdfUcitava(true);
+    try {
+      const token = getToken();
+      const res = await fetch(`/api/saglasnost/pdf?kljuc=${encodeURIComponent(izabraniUgovor)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Saglasnost_${izabraniUgovor.replace("/", "-")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(
+        err instanceof TypeError
+          ? "Server nije dostupan — osveži stranicu i pokušaj ponovo"
+          : "Greška pri generisanju saglasnosti",
+      );
+    } finally {
+      setSaglasnostPdfUcitava(false);
+    }
+  }
+
   async function preuzmiUplatePdf() {
     if (!izabraniUgovor || uplatePdfUcitava) return;
     setUplatePdfUcitava(true);
@@ -3132,7 +3163,20 @@ export default function RezervacijePage() {
             : "Najpre sačuvajte rezervaciju ili izaberite postojeći ugovor"}
           onClick={() => setZabranaOtvorena(true)}
         >
-          <Ban className="mr-1.5 size-4" />Administrativna zabrana
+          <Ban className="mr-1.5 size-4" />Adm. zabrana
+        </Button>
+        <Button
+          variant="outline"
+          disabled={!izabraniUgovor || saglasnostPdfUcitava}
+          title={izabraniUgovor
+            ? "Preuzmi saglasnost za obradu podataka o ličnosti (PDF)"
+            : "Najpre sačuvajte rezervaciju ili izaberite postojeći ugovor"}
+          onClick={() => void preuzmiSaglasnostPdf()}
+        >
+          {saglasnostPdfUcitava
+            ? <Loader2 className="mr-1.5 size-4 animate-spin" />
+            : <FileSignature className="mr-1.5 size-4" />}
+          Saglasnost
         </Button>
         <Button variant="outline" onClick={akcija("Najava")}>
           <Send className="mr-1.5 size-4" />Najava
