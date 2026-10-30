@@ -1118,8 +1118,12 @@ export default function RezervacijePage() {
         next.popustPrevozRSD = izProcenata(next.popustPrevozPct, next.cenaPrevozRSD, next.kolPrevozRSD);
       }
       if (procenat(next.provizijaSmestajPct) != null) {
-        next.provizijaSmestaj = izProcenata(next.provizijaSmestajPct, next.cenaSmestaj, next.kolSmestaj);
-        next.provizijaSmestajRSD = izProcenata(next.provizijaSmestajPct, next.cenaSmestajRSD, next.kolSmestajRSD);
+        // provizija smeštaja se računa na neto smeštaj (bruto − popust), ne na bruto
+        const p = procenat(next.provizijaSmestajPct) ?? 0;
+        const netoEUR = num(next.cenaSmestaj) * qty(next.kolSmestaj) - num(next.popustSmestaj);
+        const netoRSD = num(next.cenaSmestajRSD) * qty(next.kolSmestajRSD) - num(next.popustSmestajRSD);
+        next.provizijaSmestaj = brojUString(round2((p / 100) * Math.max(0, netoEUR)));
+        next.provizijaSmestajRSD = brojUString(round2((p / 100) * Math.max(0, netoRSD)));
       }
       if (procenat(next.provizijaPrevozPct) != null) {
         next.provizijaPrevoz = izProcenata(next.provizijaPrevozPct, next.cenaPrevoz, next.kolPrevoz);
