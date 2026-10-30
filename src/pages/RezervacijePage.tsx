@@ -2938,43 +2938,6 @@ export default function RezervacijePage() {
               )}
 
               {izabraniUgovor && (
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-2.5">
-                  <Ban className="w-4 h-4 text-muted-foreground" />
-                  {zabraneUgovora.length === 0 ? (
-                    <span className="text-sm text-muted-foreground">Nema administrativne zabrane za ovaj ugovor.</span>
-                  ) : (
-                    <>
-                      <span className="text-sm font-semibold">Administrativna zabrana:</span>
-                      {zabraneUgovora.map((z) => (
-                        <div key={z.broj} className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1">
-                          <Badge variant="secondary">{z.broj}</Badge>
-                          <span className="text-sm">
-                            {z.datum ? z.datum.split("-").reverse().join(".") : "—"}
-                            {z.ukupno != null && ` · ${nf2.format(z.ukupno)} ${z.valuta || "RSD"}`}
-                          </span>
-                          {z.preuzeta_datum && (
-                            <Badge variant="outline">Preuzeta {z.preuzeta_datum}</Badge>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7"
-                            disabled={zabranaPdfBroj !== null}
-                            onClick={() => void preuzmiZabranuPdf(z.broj)}
-                          >
-                            {zabranaPdfBroj === z.broj
-                              ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                              : <Printer className="w-4 h-4 mr-1.5" />}
-                            Štampaj (PDF)
-                          </Button>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {izabraniUgovor && (
                 <div className="overflow-hidden rounded-lg border">
                   <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-4 py-2.5">
                     <Receipt className="w-4 h-4 text-muted-foreground" />
@@ -3105,6 +3068,43 @@ export default function RezervacijePage() {
                     </div>
                   ) : (
                     <div className="py-6 text-center text-sm text-muted-foreground">Nema uplata za ovaj ugovor.</div>
+                  )}
+                </div>
+              )}
+
+              {izabraniUgovor && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-2.5">
+                  <Ban className="w-4 h-4 text-muted-foreground" />
+                  {zabraneUgovora.length === 0 ? (
+                    <span className="text-sm text-muted-foreground">Nema administrativne zabrane za ovaj ugovor.</span>
+                  ) : (
+                    <>
+                      <span className="text-sm font-semibold">Administrativna zabrana:</span>
+                      {zabraneUgovora.map((z) => (
+                        <div key={z.broj} className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1">
+                          <Badge variant="secondary">{z.broj}</Badge>
+                          <span className="text-sm">
+                            {z.datum ? z.datum.split("-").reverse().join(".") : "—"}
+                            {z.ukupno != null && ` · ${nf2.format(z.ukupno)} ${z.valuta || "RSD"}`}
+                          </span>
+                          {z.preuzeta_datum && (
+                            <Badge variant="outline">Preuzeta {z.preuzeta_datum}</Badge>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7"
+                            disabled={zabranaPdfBroj !== null}
+                            onClick={() => void preuzmiZabranuPdf(z.broj)}
+                          >
+                            {zabranaPdfBroj === z.broj
+                              ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                              : <Printer className="w-4 h-4 mr-1.5" />}
+                            Štampaj (PDF)
+                          </Button>
+                        </div>
+                      ))}
+                    </>
                   )}
                 </div>
               )}
