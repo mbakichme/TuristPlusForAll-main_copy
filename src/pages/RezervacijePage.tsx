@@ -160,6 +160,22 @@ const qty = (v: string) => {
 };
 /** zaokruživanje iznosa iz procenta na 2 decimale */
 const round2 = (x: number) => Math.round(x * 100) / 100;
+
+/** Podaci sobe iz /slobodne-sobe potrebni za ponovni obračun popusta pri promeni načina plaćanja. */
+type IzvorPopusta = {
+  osnovna: number;
+  varijante: { vazi: boolean; cena_snizena: number | null; tip_placanja?: string | null }[];
+};
+
+/** Maksimalni važeći popust (procenat) sobe za izabrani način plaćanja ("" = bez izbora). "" ako nema popusta. */
+function popustZaPlacanje(izvor: IzvorPopusta, placanje: string): string {
+  const kandidati = izvor.varijante.filter((v) =>
+    v.vazi && v.cena_snizena != null && (!placanje || v.tip_placanja === placanje));
+  if (kandidati.length === 0 || izvor.osnovna <= 0) return "";
+  const maxPopust = izvor.osnovna - Math.min(...kandidati.map((v) => v.cena_snizena as number));
+  if (maxPopust <= 0) return "";
+  return String(round2((maxPopust / izvor.osnovna) * 100));
+}
 /** procenat iz inputa; prazno ili neispravno → null */
 const procenat = (v: string) => {
   const x = parseFloat(v.replace(",", "."));
@@ -1190,9 +1206,16 @@ export default function RezervacijePage() {
   // Način plaćanja i prevoz iz Grafika: plaćanje bira koji popust sobe važi; sopstveni prevoz menja cenu
   const placanjeIzLinka = noviIzLinka ? (searchParams.get("placanje") ?? "") : "";
   const prevozIzLinka = searchParams.get("prevoz") === "sopstveni" ? "sopstveni" : "autobuski";
+  // Način plaćanja (delimično | u celosti | "" = bez izbora) — bira koji popust sobe važi
+  const [placanje, setPlacanje] = useState(placanjeIzLinka);
+  // Izvor za obračun popusta (podaci sobe iz /slobodne-sobe) + zahtev za promenu plaćanja (čeka potvrdu)
+  const [izvorPopusta, setIzvorPopusta] = useState<IzvorPopusta | null>(null);
+  const [placanjeZahtev, setPlacanjeZahtev] = useState<string | null>(null);
 
-  // Maksimalni važeći popust sobe (iz pretrage/cenovnika) → Popust smeštaja % (samo kad je izabrana soba i boravak)
+  // Maksimalni važeći popust sobe za izabrani način plaćanja → Popust smeštaja %
+  // (samo kad je izabrana soba i boravak; izvor se čuva da bi promena plaćanja mogla ponovo da obračuna)
   useEffect(() => {
+    setIzvorPopusta(null);
     if (!noviIzLinka || ugovorIzLinka || adlStrukture == null) return;
     if (!boravak.smestaj || !boravak.soba || !boravak.datumOd || !boravak.datumDo || boravak.datumDo <= boravak.datumOd) return;
     const ddmm = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
@@ -1215,21 +1238,31 @@ export default function RezervacijePage() {
         if (prevozIzLinka === "sopstveni" && soba.tip_cene === "po_osobi" && koefStrukture) {
           updCene({ cenaSmestaj: String(round2(osnovna / koefStrukture)) });
         }
-        const kandidati = (soba.varijante ?? []).filter((v) =>
-          v.vazi && v.cena_snizena != null && (!placanjeIzLinka || v.tip_placanja === placanjeIzLinka));
-        if (kandidati.length === 0) {
-          // izabran način plaćanja bez važećeg popusta → nema popusta
-          if (placanjeIzLinka) updCene({ popustSmestajPct: "" });
-          return;
-        }
-        const snizene = kandidati.map((v) => v.cena_snizena as number);
-        const maxPopust = osnovna - Math.min(...snizene);
-        if (maxPopust <= 0) return;
-        updCene({ popustSmestajPct: String(round2((maxPopust / osnovna) * 100)) });
+        const izvor: IzvorPopusta = { osnovna, varijante: soba.varijante ?? [] };
+        setIzvorPopusta(izvor);
+        // pri učitavanju primenjuje se način plaćanja koji je već izabran (iz Grafika ili polja)
+        const pct = popustZaPlacanje(izvor, placanje);
+        if (pct) updCene({ popustSmestajPct: pct });
+        else if (placanje) updCene({ popustSmestajPct: "" });
       })
       .catch(() => { /* bez popusta: polje ostaje kako je uneto */ });
     return () => { aktivan = false; };
-  }, [adlStrukture, koefStrukture, boravak.smestaj, boravak.soba, boravak.datumOd, boravak.datumDo, noviIzLinka, ugovorIzLinka, placanjeIzLinka, prevozIzLinka]);
+    // promena plaćanja NE ide kroz ovaj efekt — samo kroz potvrdu (promeniPlacanje → potvrdiPlacanje)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adlStrukture, koefStrukture, boravak.smestaj, boravak.soba, boravak.datumOd, boravak.datumDo, noviIzLinka, ugovorIzLinka, prevozIzLinka]);
+
+  // Promena načina plaćanja: ako postoji obračun (izabrana soba) → traži potvrdu; inače samo postavlja
+  const promeniPlacanje = (novi: string) => {
+    if (novi === placanje) return;
+    if (izvorPopusta) setPlacanjeZahtev(novi);
+    else setPlacanje(novi);
+  };
+  const potvrdiPlacanje = () => {
+    if (placanjeZahtev == null || !izvorPopusta) { setPlacanjeZahtev(null); return; }
+    setPlacanje(placanjeZahtev);
+    updCene({ popustSmestajPct: popustZaPlacanje(izvorPopusta, placanjeZahtev) });
+    setPlacanjeZahtev(null);
+  };
 
 
   // Automatska provizija (samo nova rezervacija): popularan smeštaj → smestaj.provizija;
@@ -2620,6 +2653,16 @@ export default function RezervacijePage() {
               </CardTitle>
             </CardHeader>
             <CardContent className={cn(KOMPAKT_CONTENT, "space-y-2")}>
+              <Fld label="Način plaćanja">
+                <Select value={placanje || "nista"} onValueChange={(v) => promeniPlacanje(v === "nista" ? "" : v)} disabled={zakljucano}>
+                  <SelectTrigger aria-label="Način plaćanja" className="h-8 w-56"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="nista">Bez izbora</SelectItem>
+                    <SelectItem value="delimicno">Delimično</SelectItem>
+                    <SelectItem value="u_celosti">U celosti</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Fld>
               <ProcenatRed
                 naslov="Smeštaj"
                 pct={cene.popustSmestajPct}
@@ -2646,6 +2689,26 @@ export default function RezervacijePage() {
               />
             </CardContent>
           </Card>
+
+          {/* Promena načina plaćanja — potvrda pre ponovnog obračuna popusta */}
+          <AlertDialog
+            open={placanjeZahtev !== null}
+            onOpenChange={(open) => { if (!open) setPlacanjeZahtev(null); }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Promena načina plaćanja</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Dolazi do promene obračuna. Popust smeštaja biće ponovo određen za način plaćanja „
+                  {placanjeZahtev === "u_celosti" ? "u celosti" : placanjeZahtev === "delimicno" ? "delimično" : "bez izbora"}”.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Odustani</AlertDialogCancel>
+                <AlertDialogAction onClick={(e) => { e.preventDefault(); potvrdiPlacanje(); }}>Promeni</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {/* Provizija */}
           <Card>
