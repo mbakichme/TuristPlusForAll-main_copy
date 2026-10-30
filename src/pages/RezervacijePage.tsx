@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, ChevronDown, CreditCard, Download, FilePenLine, FileSignature, Loader2,
   FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
-  Users, Wallet, ArrowRightLeft,
+  Users, Wallet, ArrowRightLeft, Printer,
 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -279,6 +279,15 @@ interface PolazakUlazak {
   destinacija: string | null;
   polazak: string | null;
 }
+/** Administrativna zabrana vezana za ugovor (GET /ugovori/{kljuc}/zabrane). */
+interface ZabranaVezana {
+  broj: string;
+  datum: string | null;
+  ukupno: number | null;
+  valuta: string;
+  preuzeta_datum: string;
+}
+
 interface Uplata {
   uplatilac: string;
   nacin: string;
@@ -655,6 +664,9 @@ export default function RezervacijePage() {
   const uplataZakljucana = useRef(false);
   const [uplateOsvezi, setUplateOsvezi] = useState(0);
   const [uplatePdfUcitava, setUplatePdfUcitava] = useState(false);
+  // administrativne zabrane vezane za izabrani ugovor (prikaz u tabu Uplate + štampa)
+  const [zabraneUgovora, setZabraneUgovora] = useState<ZabranaVezana[]>([]);
+  const [zabranaPdfBroj, setZabranaPdfBroj] = useState<string | null>(null);
   const [saglasnostPdfUcitava, setSaglasnostPdfUcitava] = useState(false);
   const [priznanicaKljuc, setPriznanicaKljuc] = useState<number | null>(null);
   const [istorija, setIstorija] = useState<IstorijaRed[] | null>(null);
@@ -1188,6 +1200,41 @@ export default function RezervacijePage() {
       .catch(() => { if (request === uplateRequest.current) { setUplateRedovi(null); toast.error("Učitavanje uplata nije uspelo"); } })
       .finally(() => { if (request === uplateRequest.current) setUplateUcitavaju(false); });
   }, [izabraniUgovor, uplateOsvezi]);
+
+  // Administrativne zabrane ugovora: osvežava se pri izboru ugovora i posle zatvaranja popupa zabrane
+  useEffect(() => {
+    if (!izabraniUgovor) { setZabraneUgovora([]); return; }
+    let aktivan = true;
+    apiFetch<{ rows: ZabranaVezana[] }>(`/ugovori/${encodeURIComponent(izabraniUgovor)}/zabrane`)
+      .then((data) => { if (aktivan) setZabraneUgovora(data.rows); })
+      .catch(() => { if (aktivan) setZabraneUgovora([]); });
+    return () => { aktivan = false; };
+  }, [izabraniUgovor, zabranaOtvorena]);
+
+  async function preuzmiZabranuPdf(broj: string) {
+    if (zabranaPdfBroj) return;
+    setZabranaPdfBroj(broj);
+    try {
+      const token = getToken();
+      const res = await fetch(`/api/zabrane/pdf?${new URLSearchParams({ broj })}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Administrativna_zabrana_${broj.replace("/", "-")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Greška pri generisanju PDF-a zabrane");
+    } finally {
+      setZabranaPdfBroj(null);
+    }
+  }
 
   // Pri promeni ugovora zatvori toaste kartica prethodnog ugovora
   useEffect(() => {
@@ -2891,10 +2938,48 @@ export default function RezervacijePage() {
               )}
 
               {izabraniUgovor && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-2.5">
+                  <Ban className="w-4 h-4 text-muted-foreground" />
+                  {zabraneUgovora.length === 0 ? (
+                    <span className="text-sm text-muted-foreground">Nema administrativne zabrane za ovaj ugovor.</span>
+                  ) : (
+                    <>
+                      <span className="text-sm font-semibold">Administrativna zabrana:</span>
+                      {zabraneUgovora.map((z) => (
+                        <div key={z.broj} className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1">
+                          <Badge variant="secondary">{z.broj}</Badge>
+                          <span className="text-sm">
+                            {z.datum ? z.datum.split("-").reverse().join(".") : "—"}
+                            {z.ukupno != null && ` · ${nf2.format(z.ukupno)} ${z.valuta || "RSD"}`}
+                          </span>
+                          {z.preuzeta_datum && (
+                            <Badge variant="outline">Preuzeta {z.preuzeta_datum}</Badge>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7"
+                            disabled={zabranaPdfBroj !== null}
+                            onClick={() => void preuzmiZabranuPdf(z.broj)}
+                          >
+                            {zabranaPdfBroj === z.broj
+                              ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                              : <Printer className="w-4 h-4 mr-1.5" />}
+                            Štampaj (PDF)
+                          </Button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {izabraniUgovor && (
                 <div className="overflow-hidden rounded-lg border">
                   <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-4 py-2.5">
                     <Receipt className="w-4 h-4 text-muted-foreground" />
                     <span className="text-sm font-semibold">Uplate za ugovor {izabraniUgovor}</span>
+
                     {uplateRedovi && uplateRedovi.length > 0 && (
                       <Badge variant="secondary" className="ml-auto">{uplateRedovi.length}</Badge>
                     )}

@@ -267,6 +267,25 @@ def register_zabrana(api, engine, get_current_user, get_kurs: Callable[[], float
             out.append(d)
         return {"rows": out, "total": len(out)}
 
+    @api.get("/ugovori/{kljuc:path}/zabrane")
+    def ugovor_zabrane(kljuc: str, _: dict = Depends(get_current_user)):
+        """Administrativne zabrane vezane za ugovor (tačno poklapanje id_aranzmana = kljuc)."""
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT brojzabrane, datum, ukupno, valuta, preuzeta_datum "
+                "FROM zabrana WHERE id_aranzmana = :k ORDER BY id"
+            ), {"k": kljuc.strip().strip("/")}).mappings().all()
+        out = []
+        for r in rows:
+            out.append({
+                "broj": r["brojzabrane"],
+                "datum": r["datum"].isoformat() if r["datum"] else None,
+                "ukupno": float(r["ukupno"]) if r["ukupno"] is not None else None,
+                "valuta": r["valuta"] or "",
+                "preuzeta_datum": _dd(r["preuzeta_datum"]),
+            })
+        return {"rows": out, "total": len(out)}
+
     @api.put("/zabrane/preuzeta")
     def zabrana_preuzeta(broj: str, body: ZabranaPreuzeta,
                          _: dict = Depends(get_current_user)):
