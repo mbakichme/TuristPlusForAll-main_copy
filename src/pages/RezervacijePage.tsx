@@ -2658,10 +2658,10 @@ export default function RezervacijePage() {
                 iznosEUR={cene.provizijaSmestaj}
                 iznosRSD={cene.provizijaSmestajRSD}
                 netoEUR={netoSmestajEUR != null || cene.provizijaSmestaj.trim() || cene.provizijaSmestajPct.trim()
-                  ? Math.max(0, (brutoSmestajEUR ?? 0) - num(cene.provizijaSmestaj))
+                  ? Math.max(0, (netoSmestajEUR ?? 0) - num(cene.provizijaSmestaj))
                   : null}
                 netoRSD={netoSmestajRSD != null || cene.provizijaSmestajRSD.trim() || cene.provizijaSmestajPct.trim()
-                  ? Math.max(0, (brutoSmestajRSD ?? 0) - num(cene.provizijaSmestajRSD))
+                  ? Math.max(0, (netoSmestajRSD ?? 0) - num(cene.provizijaSmestajRSD))
                   : null}
                 onPct={(v) => updCene({ provizijaSmestajPct: v })}
                 onIznosEUR={(v) => updCene({ provizijaSmestaj: v, provizijaSmestajPct: "" })}
