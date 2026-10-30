@@ -278,6 +278,8 @@ interface PolazakUlazak {
   id: number;
   destinacija: string | null;
   polazak: string | null;
+  sat: string | null;
+  cena_transfera: number | null;
 }
 /** Administrativna zabrana vezana za ugovor (GET /ugovori/{kljuc}/zabrane). */
 interface ZabranaVezana {
@@ -636,10 +638,6 @@ export default function RezervacijePage() {
     montirano.current = true;
     return () => { montirano.current = false; };
   }, []);
-  const dodatneSume = dodatneStavke.reduce((suma, stavka) => ({
-    eur: suma.eur + (stavka.eur ?? 0),
-    din: suma.din + (stavka.din ?? 0),
-  }), { eur: 0, din: 0 });
   const [prevozRedovi, setPrevozRedovi] = useState<Record<string, PrevozRed>>({});
   const [prevozDetaljiOtvoreni, setPrevozDetaljiOtvoreni] = useState<Record<string, boolean>>({});
   const [destinacijaZaSve, setDestinacijaZaSve] = useState("");
@@ -1022,6 +1020,60 @@ export default function RezervacijePage() {
     }
     return [...skup].sort((a, b) => a.localeCompare(b, "sr"));
   }, [polasci, destinacije, destinacijaZaSve]);
+
+  // TRANSFER stavke: po mestu ulaska zbir transfera svih putnika (nosilac + saputnici) iz registra prevoza.
+  // Red registra = prvi po satu/id koji se poklapa sa mestom ulaska i izabranom destinacijom.
+  // Zbir 0 → stavka se ne prikazuje (nestaje kad putnik pređe na mesto bez transfera).
+  const transferStavke = useMemo<NonNullable<UgovorDetail["dodatne"]>>(() => {
+    const naziv = (v: string | null | undefined) => (v ?? "").trim().toLocaleLowerCase();
+    const nazivDest = destinacijaZaSve === CUVAR
+      ? destinacijaSacuvana
+      : destinacije.find((x) => String(x.id) === destinacijaZaSve)?.naziv ?? null;
+    const satBroj = (v: string | null | undefined) => {
+      const n = parseFloat(v ?? "");
+      return Number.isNaN(n) ? Number.POSITIVE_INFINITY : n;
+    };
+    const ulazi = [
+      prevozRedovi["nosilac"]?.mestoUlaska ?? "",
+      ...saputnici.filter((s) => s.ime.trim()).map((s) => prevozRedovi[s.uid]?.mestoUlaska ?? ""),
+    ];
+    const zbir = new Map<string, number>();
+    for (const u of ulazi) {
+      const mesto = u.trim();
+      if (!mesto) continue;
+      const kandidati = polasci
+        .filter((p) => (p.polazak ?? "").trim() === mesto && (!nazivDest || naziv(p.destinacija) === naziv(nazivDest)))
+        .sort((a, b) => {
+          const sa = satBroj(a.sat);
+          const sb = satBroj(b.sat);
+          return sa === sb ? a.id - b.id : sa < sb ? -1 : 1;
+        });
+      const cena = kandidati[0]?.cena_transfera ?? 0;
+      if (!cena) continue;
+      const kljuc = mesto.toLocaleUpperCase("sr");
+      zbir.set(kljuc, (zbir.get(kljuc) ?? 0) + cena);
+    }
+    const out: NonNullable<UgovorDetail["dodatne"]> = [];
+    let redni = 0;
+    for (const [mesto, eur] of zbir) {
+      if (!eur) continue;
+      redni += 1;
+      // negativan stavka_id = izračunata stavka (nije u tabeli dodatne); ključ reda u React listi
+      out.push({ stavka_id: -redni, usluga: `TRANSFER - ${mesto}`, eur: Math.round(eur * 100) / 100, din: null });
+    }
+    return out;
+  }, [prevozRedovi, saputnici, polasci, destinacije, destinacijaZaSve, destinacijaSacuvana]);
+
+  // Prikaz dodatnih usluga = sačuvane stavke bez TRANSFER redova + izračunati TRANSFER-i
+  // (TRANSFER redovi iz baze se zamenjuju pri Sačuvaj, pa se ne prikazuju dvaput).
+  const sveDodatne = useMemo(
+    () => [...dodatneStavke.filter((s) => !(s.usluga ?? "").startsWith("TRANSFER - ")), ...transferStavke],
+    [dodatneStavke, transferStavke],
+  );
+  const sveDodatneSume = sveDodatne.reduce((suma, stavka) => ({
+    eur: suma.eur + (stavka.eur ?? 0),
+    din: suma.din + (stavka.din ?? 0),
+  }), { eur: 0, din: 0 });
 
   useEffect(() => {
     // ako je izabrani uplatilac obrisan, vrati se na nosioca
@@ -1585,7 +1637,7 @@ export default function RezervacijePage() {
       ulazak: prevozRedovi["nosilac"]?.mestoUlaska ?? "",
       izlazak: prevozRedovi["nosilac"]?.mestoIzlaska ?? "",
       napomenaPrevoz: boravak.napomenaPrevoz,
-      cene: {
+      transferi: transferStavke.map((t) => ({ usluga: t.usluga ?? "", eur: t.eur ?? 0 })),      cene: {
         cenaSmestajEUR: num(cene.cenaSmestaj), kolSmestajEUR: qty(cene.kolSmestaj),
         cenaSmestajRSD: num(cene.cenaSmestajRSD), kolSmestajRSD: qty(cene.kolSmestajRSD),
         popustSmestaj: cenaRed(cene.popustSmestajPct, cene.popustSmestaj, cene.popustSmestajRSD),
@@ -1678,25 +1730,25 @@ export default function RezervacijePage() {
 
   // dodatne stavke su sačuvane u ugovoru (dodatneSume) — sabiraju se jednom, po svojoj valuti,
   // bez konverzije i bez ponovnog dodavanja cenadod-a (nema dvostrukog prebrojavanja)
-  const imaDodatnih = dodatneStavke.length > 0;
+  const imaDodatnih = sveDodatne.length > 0;
 
   // Provizije (smeštaj + prevoz, EUR i RSD) se oduzimaju od ukupne vrednosti aranžmana.
   const provizijaEURUkupno = num(cene.provizijaSmestaj) + num(cene.provizijaPrevoz);
   const provizijaRSDUkupno = num(cene.provizijaSmestajRSD) + num(cene.provizijaPrevozRSD);
   // Ukupna cena pre popusta i provizije (bruto + osiguranje + dodatne stavke) i zbir popusta
-  const brutoEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) + dodatneSume.eur + num(cene.osiguranjeEUR);
-  const brutoRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) + dodatneSume.din + num(cene.osiguranjeRSD);
+  const brutoEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) + sveDodatneSume.eur + num(cene.osiguranjeEUR);
+  const brutoRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) + sveDodatneSume.din + num(cene.osiguranjeRSD);
   const popustEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) - (netoSmestajEUR ?? 0) - (netoPrevozEUR ?? 0);
   const popustRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) - (netoSmestajRSD ?? 0) - (netoPrevozRSD ?? 0);
 
   // Svaka valuta se sabira nezavisno; osiguranje je deo ukupne cene.
   const ukupnoAranzmanEUR =
     netoSmestajEUR != null || netoPrevozEUR != null || imaDodatnih || cene.osiguranjeEUR.trim()
-      ? (netoSmestajEUR ?? 0) + (netoPrevozEUR ?? 0) + dodatneSume.eur + num(cene.osiguranjeEUR) - provizijaEURUkupno
+      ? (netoSmestajEUR ?? 0) + (netoPrevozEUR ?? 0) + sveDodatneSume.eur + num(cene.osiguranjeEUR) - provizijaEURUkupno
       : null;
   const ukupnoAranzmanRSD =
     netoSmestajRSD != null || netoPrevozRSD != null || imaDodatnih || cene.osiguranjeRSD.trim()
-      ? (netoSmestajRSD ?? 0) + (netoPrevozRSD ?? 0) + dodatneSume.din + num(cene.osiguranjeRSD) - provizijaRSDUkupno
+      ? (netoSmestajRSD ?? 0) + (netoPrevozRSD ?? 0) + sveDodatneSume.din + num(cene.osiguranjeRSD) - provizijaRSDUkupno
       : null;
 
   // Uplaćeno dolazi isključivo iz stvarnih uplata ugovora, uključujući storna.
@@ -2460,7 +2512,7 @@ export default function RezervacijePage() {
                         }}
                       />
                     )}
-                    {!izabraniUgovor ? (
+                    {!izabraniUgovor && transferStavke.length === 0 ? (
                       <p className="px-4 py-4 text-sm text-muted-foreground">Izaberite ugovor za pregled dodatnih stavki.</p>
                     ) : (
                       <Table>
@@ -2473,14 +2525,17 @@ export default function RezervacijePage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {dodatneStavke.length === 0 ? (
+                          {sveDodatne.length === 0 ? (
                             <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">Nema dodatnih stavki za ovaj ugovor.</TableCell></TableRow>
-                          ) : dodatneStavke.map((stavka) => (
+                          ) : sveDodatne.map((stavka) => (
                             <TableRow key={stavka.stavka_id}>
                               <TableCell>{stavka.usluga || "—"}</TableCell>
                               <TableCell className="text-right tabular-nums whitespace-nowrap">{stavka.eur == null ? "—" : `${nf2.format(stavka.eur)} €`}</TableCell>
                               <TableCell className="text-right tabular-nums whitespace-nowrap">{stavka.din == null ? "—" : `${nf2.format(stavka.din)} din`}</TableCell>
                               <TableCell className="text-right">
+                                {stavka.stavka_id < 0 ? (
+                                  <span className="text-xs text-muted-foreground">iz registra prevoza</span>
+                                ) : (
                                 <div className="flex items-center justify-end gap-1">
                                   <Button type="button" size="sm" variant="ghost" disabled={zakljucano || izborUcitava || dodatnaIzmena !== null || dodatnaBrisanje !== null} onClick={() => setDodatnaIzmena(stavka)}><FilePenLine className="size-4" />Izmeni</Button>
                                   <Button
@@ -2498,6 +2553,7 @@ export default function RezervacijePage() {
                                       : <Trash2 className="size-4" />}
                                   </Button>
                                 </div>
+                                )}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -2509,10 +2565,10 @@ export default function RezervacijePage() {
                 <PanelaSazetka kompaktno>
                   <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     <Fld label="Ukupno (EUR)">
-                      <UkupnoInput vrednost={dodatneStavke.length ? dodatneSume.eur : null} />
+                      <UkupnoInput vrednost={sveDodatne.length ? sveDodatneSume.eur : null} />
                     </Fld>
                     <Fld label="Ukupno (RSD)">
-                      <UkupnoInput vrednost={dodatneStavke.length ? dodatneSume.din : null} />
+                      <UkupnoInput vrednost={sveDodatne.length ? sveDodatneSume.din : null} />
                     </Fld>
                   </div>
                 </PanelaSazetka>

@@ -1332,6 +1332,11 @@ class RezBoravakIn(BaseModel):
     viza: bool = False
 
 
+class RezTransferStavka(BaseModel):
+    usluga: str  # npr. "TRANSFER - SUBOTICA" (računa frontend iz tabele Prevoz)
+    eur: float
+
+
 class RezervacijaIn(BaseModel):
     tiprezervacije: str = ""
     subagent: Optional[str] = None  # naziv iz tabele subagenti (aranzman.subagent)
@@ -1345,7 +1350,8 @@ class RezervacijaIn(BaseModel):
     izlazak: str = ""  # mesto izlaska nosioca (prazno → mesto ulaska)
     napomenaPrevoz: str = ""  # polje pored "Izbor destinacije" (tab Prevoz)
     cene: RezCeneIn
-
+    # TRANSFER stavke dodatnih usluga (po mestu ulaska). None = ne diraj; lista = zameni sve TRANSFER redove.
+    transferi: Optional[list[RezTransferStavka]] = None
 
 # ─── Boje grafik ───────────────────────────────────────────────────────────
 DOZVOLJENE_BOJE = ("zelena", "plava", "crvena", "zuta", "ljubicasta", "narandzasta", "crna", "roze")
@@ -4667,6 +4673,24 @@ def create_app(static_dir: str) -> FastAPI:
             **_rez_prevoz_polja(n),
         }
 
+    def rez_transferi_upisi(conn, kljuc: str, transferi: list[RezTransferStavka]):
+        """Zamena TRANSFER stavki ugovora (dodatne.id = broj ugovora iz ključa).
+        Redovi sa usluga 'TRANSFER - …' se brišu pa ponovo upisuju; nulti iznosi se preskaču."""
+        broj_str = kljuc.strip().strip("/").split("/", 1)[0]
+        if not re.fullmatch(r"[0-9]+", broj_str):
+            raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
+        broj = int(broj_str)
+        conn.execute(text(
+            "DELETE FROM dodatne WHERE id = :id AND LEFT(usluga, 11) = 'TRANSFER - '"
+        ), {"id": broj})
+        for t in transferi:
+            if not t.eur:
+                continue
+            vals = _dodatna_values(DodatnaCreate(usluga=t.usluga, eur=t.eur, din=None))
+            conn.execute(text(
+                "INSERT INTO dodatne (id, usluga, eur, din) VALUES (:id, :usluga, :eur, :din)"
+            ), {"id": broj, **vals})
+
     @api.post("/rezervacije", status_code=201)
     def kreiraj_rezervaciju(body: RezervacijaIn, current_user: dict = Depends(get_current_user)):
         """Sačuvaj — novi ugovor. Broj = MAX(broj) unutar godine iz Datuma od + 1,
@@ -4693,6 +4717,8 @@ def create_app(static_dir: str) -> FastAPI:
                         f"INSERT INTO aranzman ({', '.join(cols)}) VALUES ({ph}) RETURNING id"
                     ), vals).scalar_one()
                     rez_saputnici_upisi(conn, aid, body.saputnici)
+                    if body.transferi:
+                        rez_transferi_upisi(conn, kljuc, body.transferi)
                     uid, uime = log_user(conn, current_user)
                     for oblast, promene in podeli_po_oblastima({}, vals).items():
                         zabelezi(conn, kljuc, oblast, "kreirana", uid, uime, promene)
@@ -4733,6 +4759,8 @@ def create_app(static_dir: str) -> FastAPI:
             conn.execute(text(f"UPDATE aranzman SET {sets} WHERE kljuc = :wk"),
                          {**vals, "wk": kljuc})
             rez_saputnici_upisi(conn, arow.id, body.saputnici)
+            if body.transferi is not None:
+                rez_transferi_upisi(conn, kljuc, body.transferi)
             uid, uime = log_user(conn, current_user)
             for oblast, promene in podeli_po_oblastima(stari, vals).items():
                 zabelezi(conn, kljuc, oblast, "izmena", uid, uime, promene)
