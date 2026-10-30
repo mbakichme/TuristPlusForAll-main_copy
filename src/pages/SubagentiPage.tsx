@@ -67,7 +67,7 @@ const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: "ugovor_datumod", label: "Datum od", sortable: false },
   { key: "ugovor_datumdo", label: "Datum do", sortable: false },
   { key: "tel", label: "Telefon", sortable: false },
-  { key: "tel2", label: "Email", sortable: false },
+  { key: "email", label: "Email", sortable: false },
   { key: "racun", label: "Račun", sortable: false },
   { key: "provizija", label: "Provizija %", sortable: true },
   { key: "broj_ugovora", label: "Ugovori", sortable: true },
@@ -339,7 +339,7 @@ export default function SubagentiPage() {
                       <TableCell className="whitespace-nowrap">{fmtDatum(s.ugovor_datumod)}</TableCell>
                       <TableCell className="whitespace-nowrap">{fmtDatum(s.ugovor_datumdo)}</TableCell>
                       <TableCell className="whitespace-nowrap">{s.tel || "—"}</TableCell>
-                      <TableCell className="max-w-40 truncate" title={s.tel2 || ""}>{s.tel2 || "—"}</TableCell>
+                      <TableCell className="max-w-40 truncate" title={s.email || ""}>{s.email || "—"}</TableCell>
                       <TableCell className="font-mono text-xs">{s.racun || "—"}</TableCell>
                       <TableCell>{s.provizija ?? 0}</TableCell>
                       <TableCell className="text-center">
