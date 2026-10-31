@@ -16,8 +16,13 @@ from routes import create_access_token
 
 API = os.environ.get("TEST_API_URL", "http://localhost:3158/api")
 
+MESTA = ("donja_platforma_eur", "gornja_platforma_eur", "dole_za_stolom_eur",
+         "dole_zadnji_red_eur", "gore_izlog_eur", "gore_sto_eur", "sarage_eur")
+
 PUN = {
-    "visina_popusta": 12, "donja_platforma_eur": 15.5,
+    "visina_popusta": 12, "donja_platforma_eur": 15.5, "gornja_platforma_eur": 5,
+    "dole_za_stolom_eur": 0, "dole_zadnji_red_eur": 7.25, "gore_izlog_eur": 3,
+    "gore_sto_eur": 2, "sarage_eur": 20,
     "datumod1": "2026-05-01", "datumdo1": "2026-06-30", "koeficijent1": 1.25,
     "datumod2": "2026-07-01", "datumdo2": "2026-09-30", "koeficijent2": 0.9,
 }
@@ -37,7 +42,7 @@ def main():
         assert {k: back[k] for k in PUN} == PUN, back
         print("OK 2: PUT punih vrednosti → GET identičan")
 
-        prazno = {k: None for k in PUN} | {"visina_popusta": 0, "donja_platforma_eur": 0}
+        prazno = {k: None for k in PUN} | {k: 0 for k in MESTA} | {"visina_popusta": 0}
         r = api.put("/parametri-obracuna", json=prazno)
         assert r.status_code == 200, r.text
         now = api.get("/parametri-obracuna").json()
@@ -49,7 +54,7 @@ def main():
             ({"visina_popusta": -1}, "popust -1"),
             ({"visina_popusta": 5, "datumod1": "2026-06-10", "datumdo1": "2026-06-01"}, "datumod1 > datumdo1"),
             ({"visina_popusta": 5, "koeficijent2": -1}, "koeficijent2 < 0"),
-            ({"visina_popusta": 5, "donja_platforma_eur": -1}, "donja platforma < 0"),
+            ({"visina_popusta": 5, "sarage_eur": -1}, "šarage < 0"),
         ):
             r = api.put("/parametri-obracuna", json=bad)
             assert r.status_code in (400, 422), f"{opis}: očekivano 400/422, ima {r.status_code} {r.text}"

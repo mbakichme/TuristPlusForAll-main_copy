@@ -10,6 +10,12 @@ interface Parametri {
   visina_popusta: number;
   visina_provizije: number;
   donja_platforma_eur: number;
+  gornja_platforma_eur: number;
+  dole_za_stolom_eur: number;
+  dole_zadnji_red_eur: number;
+  gore_izlog_eur: number;
+  gore_sto_eur: number;
+  sarage_eur: number;
   datumod1: string | null;
   datumdo1: string | null;
   koeficijent1: number | null;
@@ -18,24 +24,43 @@ interface Parametri {
   koeficijent2: number | null;
 }
 
+type KljucSedenja = "donja_platforma_eur" | "gornja_platforma_eur" | "dole_za_stolom_eur"
+  | "dole_zadnji_red_eur" | "gore_izlog_eur" | "gore_sto_eur" | "sarage_eur";
+
+const MESTA_SEDENJA: { kljuc: KljucSedenja; naziv: string }[] = [
+  { kljuc: "donja_platforma_eur", naziv: "Donja platforma" },
+  { kljuc: "gornja_platforma_eur", naziv: "Gornja platforma" },
+  { kljuc: "dole_za_stolom_eur", naziv: "Dole za stolom" },
+  { kljuc: "dole_zadnji_red_eur", naziv: "Dole zadnji red" },
+  { kljuc: "gore_izlog_eur", naziv: "Gore izlog" },
+  { kljuc: "gore_sto_eur", naziv: "Gore sto" },
+  { kljuc: "sarage_eur", naziv: "Šarage" },
+];
+
 // Forma drži sve kao string radi slobodnog unosa; pretvaranje se radi pri snimanju.
 interface Forma {
   visina_popusta: string;
   visina_provizije: string;
-  donja_platforma_eur: string;
   datumod1: string;
   datumdo1: string;
   koeficijent1: string;
   datumod2: string;
   datumdo2: string;
   koeficijent2: string;
+  donja_platforma_eur: string;
+  gornja_platforma_eur: string;
+  dole_za_stolom_eur: string;
+  dole_zadnji_red_eur: string;
+  gore_izlog_eur: string;
+  gore_sto_eur: string;
+  sarage_eur: string;
 }
 
 function uForme(p: Parametri): Forma {
   return {
     visina_popusta: String(p.visina_popusta ?? 0),
     visina_provizije: String(p.visina_provizije ?? 10),
-    donja_platforma_eur: String(p.donja_platforma_eur ?? 0),
+    ...Object.fromEntries(MESTA_SEDENJA.map(({ kljuc }) => [kljuc, String(p[kljuc] ?? 0)])) as Pick<Forma, KljucSedenja>,
     datumod1: p.datumod1 ?? "",
     datumdo1: p.datumdo1 ?? "",
     koeficijent1: p.koeficijent1 != null ? String(p.koeficijent1) : "",
@@ -83,10 +108,12 @@ export default function ParametriObracunaPage() {
     if (f.visina_provizije.trim() === "" || !Number.isInteger(provizija) || provizija < 0 || provizija > 100) {
       return "Visina provizije mora biti ceo broj između 0 i 100";
     }
-    const platforma = f.donja_platforma_eur.trim().replace(",", ".");
-    if (platforma === "" || !Number.isFinite(Number(platforma)) || Number(platforma) < 0) {
-      return "Doplata za donju platformu mora biti nenegativan broj";
-    }
+    const platforme = MESTA_SEDENJA.map(({ kljuc, naziv }) => {
+      const t = f[kljuc].trim().replace(",", ".");
+      return { naziv, ok: t !== "" && Number.isFinite(Number(t)) && Number(t) >= 0 };
+    });
+    const nevalidna = platforme.find((p) => !p.ok);
+    if (nevalidna) return `Doplata za „${nevalidna.naziv}" mora biti nenegativan broj`;
     for (const n of ["1", "2"] as const) {
       const od = n === "1" ? f.datumod1 : f.datumod2;
       const doo = n === "1" ? f.datumdo1 : f.datumdo2;
@@ -116,7 +143,7 @@ export default function ParametriObracunaPage() {
         body: JSON.stringify({
           visina_popusta: Number(form.visina_popusta.trim()),
           visina_provizije: Number(form.visina_provizije.trim()),
-          donja_platforma_eur: Number(form.donja_platforma_eur.trim().replace(",", ".")),
+          ...Object.fromEntries(MESTA_SEDENJA.map(({ kljuc }) => [kljuc, Number(form[kljuc].trim().replace(",", "."))])),
           datumod1: datum(form.datumod1),
           datumdo1: datum(form.datumdo1),
           koeficijent1: broj(form.koeficijent1),
@@ -191,20 +218,23 @@ export default function ParametriObracunaPage() {
 
           <section className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
             <div className="space-y-1">
-              <h2 className="text-sm font-semibold">Mesta za sedenje — doplata</h2>
+              <h2 className="text-sm font-semibold">Mesta za sedenje — doplata (EUR)</h2>
               <p className="text-xs text-muted-foreground">Doplata za izbor mesta za sedenje; važi za sve.</p>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="donja_platforma_eur">Donja platforma (EUR)</Label>
-              <Input
-                id="donja_platforma_eur"
-                inputMode="decimal"
-                className="w-32"
-                placeholder="npr. 10"
-                value={form.donja_platforma_eur}
-                disabled={saving}
-                onChange={(e) => postavi("donja_platforma_eur", e.target.value)}
-              />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {MESTA_SEDENJA.map(({ kljuc, naziv }) => (
+                <div key={kljuc} className="space-y-2">
+                  <Label htmlFor={kljuc}>{naziv}</Label>
+                  <Input
+                    id={kljuc}
+                    inputMode="decimal"
+                    placeholder="npr. 10"
+                    value={form[kljuc]}
+                    disabled={saving}
+                    onChange={(e) => postavi(kljuc, e.target.value)}
+                  />
+                </div>
+              ))}
             </div>
           </section>
 

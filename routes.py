@@ -114,6 +114,11 @@ def _belgrade_now() -> datetime:
 
 
 # ─── DB ─────────────────────────────────────────────────────────────────────
+# Doplate za mesta za sedenje (EUR) — kolone parametri_obracuna
+MESTA_SEDENJA_POLJA = ("donja_platforma_eur", "gornja_platforma_eur", "dole_za_stolom_eur",
+                       "dole_zadnji_red_eur", "gore_izlog_eur", "gore_sto_eur", "sarage_eur")
+
+
 def get_engine():
     return db_config.get_engine()
 
@@ -806,6 +811,10 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE parametri_obracuna ADD COLUMN IF NOT EXISTS donja_platforma_eur NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (donja_platforma_eur >= 0)"
         ))
+        for _kol in MESTA_SEDENJA_POLJA:
+            conn.execute(text(
+                f"ALTER TABLE parametri_obracuna ADD COLUMN IF NOT EXISTS {_kol} NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK ({_kol} >= 0)"
+            ))
 
         # Seed tip_ponude
         tip_ponude_values = [
@@ -1371,6 +1380,12 @@ class ParametriObracuna(BaseModel):
     visina_popusta: int
     visina_provizije: int = 10
     donja_platforma_eur: float = Field(0, ge=0, lt=1e6)
+    gornja_platforma_eur: float = Field(0, ge=0, lt=1e6)
+    dole_za_stolom_eur: float = Field(0, ge=0, lt=1e6)
+    dole_zadnji_red_eur: float = Field(0, ge=0, lt=1e6)
+    gore_izlog_eur: float = Field(0, ge=0, lt=1e6)
+    gore_sto_eur: float = Field(0, ge=0, lt=1e6)
+    sarage_eur: float = Field(0, ge=0, lt=1e6)
     datumod1: Optional[SubDate] = None
     datumdo1: Optional[SubDate] = None
     koeficijent1: Optional[float] = None
@@ -6003,7 +6018,7 @@ def create_app(static_dir: str) -> FastAPI:
         return data
 
     # ─── Parametri obračuna ──────────────────────────────────────────────────
-    PARAMETRI_POLJA = ("visina_popusta", "visina_provizije", "donja_platforma_eur",
+    PARAMETRI_POLJA = ("visina_popusta", "visina_provizije", *MESTA_SEDENJA_POLJA,
                        "datumod1", "datumdo1", "koeficijent1",
                        "datumod2", "datumdo2", "koeficijent2")
 
@@ -6016,7 +6031,8 @@ def create_app(static_dir: str) -> FastAPI:
         if not row:
             raise HTTPException(status_code=404, detail="Parametri obračuna nisu pronađeni")
         out = dict(row)
-        out["donja_platforma_eur"] = float(out["donja_platforma_eur"] or 0)
+        for k in MESTA_SEDENJA_POLJA:
+            out[k] = float(out[k] or 0)
         for k in ("datumod1", "datumdo1", "datumod2", "datumdo2"):
             out[k] = out[k].isoformat() if out[k] else None
         return out
