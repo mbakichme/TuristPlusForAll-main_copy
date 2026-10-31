@@ -2092,7 +2092,7 @@ export default function RezervacijePage() {
                 </SekcijaIkona>
                 <span className="shrink-0">Ugovor</span>
                 {ucitanUgovor && (
-                  <span aria-label="Pregled učitanog ugovora" className="ml-1 flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium text-foreground">
+                  <span aria-label="Pregled učitanog ugovora" className="ml-1 flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-2 gap-y-0.5 text-right text-sm font-medium text-foreground">
                     {([
                       ucitanUgovor.kljuc,
                       ucitanUgovor.putnik,
