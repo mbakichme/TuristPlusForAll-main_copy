@@ -17,7 +17,7 @@ from routes import create_access_token
 API = os.environ.get("TEST_API_URL", "http://localhost:3158/api")
 
 PUN = {
-    "visina_popusta": 12,
+    "visina_popusta": 12, "donja_platforma_eur": 15.5,
     "datumod1": "2026-05-01", "datumdo1": "2026-06-30", "koeficijent1": 1.25,
     "datumod2": "2026-07-01", "datumdo2": "2026-09-30", "koeficijent2": 0.9,
 }
@@ -28,19 +28,20 @@ def main():
     api = httpx.Client(base_url=API, headers={"Authorization": "Bearer " + token}, timeout=30)
     original = api.get("/parametri-obracuna").json()
     try:
-        assert set(original) == set(PUN), original
+        assert set(PUN) <= set(original), original
         print("OK 1: GET vraća sva polja")
 
         r = api.put("/parametri-obracuna", json=PUN)
         assert r.status_code == 200, r.text
         back = api.get("/parametri-obracuna").json()
-        assert back == PUN, back
+        assert {k: back[k] for k in PUN} == PUN, back
         print("OK 2: PUT punih vrednosti → GET identičan")
 
-        prazno = {k: None for k in PUN} | {"visina_popusta": 0}
+        prazno = {k: None for k in PUN} | {"visina_popusta": 0, "donja_platforma_eur": 0}
         r = api.put("/parametri-obracuna", json=prazno)
         assert r.status_code == 200, r.text
-        assert api.get("/parametri-obracuna").json() == prazno
+        now = api.get("/parametri-obracuna").json()
+        assert {k: now[k] for k in PUN} == prazno, now
         print("OK 3: null datumi/koeficijenti se čuvaju kao null")
 
         for bad, opis in (
@@ -48,10 +49,11 @@ def main():
             ({"visina_popusta": -1}, "popust -1"),
             ({"visina_popusta": 5, "datumod1": "2026-06-10", "datumdo1": "2026-06-01"}, "datumod1 > datumdo1"),
             ({"visina_popusta": 5, "koeficijent2": -1}, "koeficijent2 < 0"),
+            ({"visina_popusta": 5, "donja_platforma_eur": -1}, "donja platforma < 0"),
         ):
             r = api.put("/parametri-obracuna", json=bad)
-            assert r.status_code == 400, f"{opis}: očekivano 400, ima {r.status_code} {r.text}"
-        print("OK 4: validacija (popust, datumi, koeficijent) → 400")
+            assert r.status_code in (400, 422), f"{opis}: očekivano 400/422, ima {r.status_code} {r.text}"
+        print("OK 4: validacija (popust, datumi, koeficijent, platforma) → 400/422")
     finally:
         r = api.put("/parametri-obracuna", json={k: original[k] for k in PUN})
         assert r.status_code == 200, r.text

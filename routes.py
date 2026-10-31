@@ -14,7 +14,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, APIRouter, Request, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 import bcrypt
@@ -803,6 +803,9 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE parametri_obracuna ADD COLUMN IF NOT EXISTS visina_provizije INTEGER NOT NULL DEFAULT 10 CHECK (visina_provizije BETWEEN 0 AND 100)"
         ))
+        conn.execute(text(
+            "ALTER TABLE parametri_obracuna ADD COLUMN IF NOT EXISTS donja_platforma_eur NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (donja_platforma_eur >= 0)"
+        ))
 
         # Seed tip_ponude
         tip_ponude_values = [
@@ -1367,6 +1370,7 @@ DOZVOLJENE_BOJE = ("zelena", "plava", "crvena", "zuta", "ljubicasta", "narandzas
 class ParametriObracuna(BaseModel):
     visina_popusta: int
     visina_provizije: int = 10
+    donja_platforma_eur: float = Field(0, ge=0, lt=1e6)
     datumod1: Optional[SubDate] = None
     datumdo1: Optional[SubDate] = None
     koeficijent1: Optional[float] = None
@@ -5999,7 +6003,8 @@ def create_app(static_dir: str) -> FastAPI:
         return data
 
     # ─── Parametri obračuna ──────────────────────────────────────────────────
-    PARAMETRI_POLJA = ("visina_popusta", "visina_provizije", "datumod1", "datumdo1", "koeficijent1",
+    PARAMETRI_POLJA = ("visina_popusta", "visina_provizije", "donja_platforma_eur",
+                       "datumod1", "datumdo1", "koeficijent1",
                        "datumod2", "datumdo2", "koeficijent2")
 
     @api.get("/parametri-obracuna")
@@ -6011,6 +6016,7 @@ def create_app(static_dir: str) -> FastAPI:
         if not row:
             raise HTTPException(status_code=404, detail="Parametri obračuna nisu pronađeni")
         out = dict(row)
+        out["donja_platforma_eur"] = float(out["donja_platforma_eur"] or 0)
         for k in ("datumod1", "datumdo1", "datumod2", "datumdo2"):
             out[k] = out[k].isoformat() if out[k] else None
         return out

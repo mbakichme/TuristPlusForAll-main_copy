@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 interface Parametri {
   visina_popusta: number;
   visina_provizije: number;
+  donja_platforma_eur: number;
   datumod1: string | null;
   datumdo1: string | null;
   koeficijent1: number | null;
@@ -21,6 +22,7 @@ interface Parametri {
 interface Forma {
   visina_popusta: string;
   visina_provizije: string;
+  donja_platforma_eur: string;
   datumod1: string;
   datumdo1: string;
   koeficijent1: string;
@@ -33,6 +35,7 @@ function uForme(p: Parametri): Forma {
   return {
     visina_popusta: String(p.visina_popusta ?? 0),
     visina_provizije: String(p.visina_provizije ?? 10),
+    donja_platforma_eur: String(p.donja_platforma_eur ?? 0),
     datumod1: p.datumod1 ?? "",
     datumdo1: p.datumdo1 ?? "",
     koeficijent1: p.koeficijent1 != null ? String(p.koeficijent1) : "",
@@ -80,6 +83,10 @@ export default function ParametriObracunaPage() {
     if (f.visina_provizije.trim() === "" || !Number.isInteger(provizija) || provizija < 0 || provizija > 100) {
       return "Visina provizije mora biti ceo broj između 0 i 100";
     }
+    const platforma = f.donja_platforma_eur.trim().replace(",", ".");
+    if (platforma === "" || !Number.isFinite(Number(platforma)) || Number(platforma) < 0) {
+      return "Doplata za donju platformu mora biti nenegativan broj";
+    }
     for (const n of ["1", "2"] as const) {
       const od = n === "1" ? f.datumod1 : f.datumod2;
       const doo = n === "1" ? f.datumdo1 : f.datumdo2;
@@ -109,6 +116,7 @@ export default function ParametriObracunaPage() {
         body: JSON.stringify({
           visina_popusta: Number(form.visina_popusta.trim()),
           visina_provizije: Number(form.visina_provizije.trim()),
+          donja_platforma_eur: Number(form.donja_platforma_eur.trim().replace(",", ".")),
           datumod1: datum(form.datumod1),
           datumdo1: datum(form.datumdo1),
           koeficijent1: broj(form.koeficijent1),
@@ -179,6 +187,25 @@ export default function ParametriObracunaPage() {
               disabled={saving}
               onChange={(e) => postavi("visina_provizije", e.target.value)}
             />
+          </section>
+
+          <section className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">Mesta za sedenje — doplata</h2>
+              <p className="text-xs text-muted-foreground">Doplata za izbor mesta za sedenje; važi za sve.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="donja_platforma_eur">Donja platforma (EUR)</Label>
+              <Input
+                id="donja_platforma_eur"
+                inputMode="decimal"
+                className="w-32"
+                placeholder="npr. 10"
+                value={form.donja_platforma_eur}
+                disabled={saving}
+                onChange={(e) => postavi("donja_platforma_eur", e.target.value)}
+              />
+            </div>
           </section>
 
           {([1, 2] as const).map((n) => {
