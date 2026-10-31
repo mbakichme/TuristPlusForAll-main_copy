@@ -2087,11 +2087,12 @@ export default function RezervacijePage() {
           {/* Ugovor */}
           <Card className={TON.blue.kartica}>
             <CardHeader className={cn(KOMPAKT_HEADER, TON.blue.zaglavlje)}>
-              <CardTitle className="text-sm flex flex-wrap items-center gap-x-2 gap-y-1">
+              <CardTitle className="text-sm flex items-center gap-2 min-w-0">
                 <SekcijaIkona ton="blue"><FileText />
-                </SekcijaIkona>Ugovor
+                </SekcijaIkona>
+                <span className="shrink-0">Ugovor</span>
                 {ucitanUgovor && (
-                  <span aria-label="Pregled učitanog ugovora" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium text-foreground">
+                  <span aria-label="Pregled učitanog ugovora" className="ml-1 flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium text-foreground">
                     {([
                       ucitanUgovor.kljuc,
                       ucitanUgovor.putnik,
