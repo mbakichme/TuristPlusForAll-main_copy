@@ -1342,14 +1342,17 @@ export default function RezervacijePage() {
   const smestajIzabran = smestaji.find((s) => String(s.id) === boravak.smestaj);
   useEffect(() => {
     if (izabraniUgovor || !subagent.trim() || !parametriObr) return;
+    // stvarni procenat popusta na smeštaj: iz procenta, ili iz iznosa (EUR) / bruto smeštaja
+    const bruto = num(cene.cenaSmestaj) * qty(cene.kolSmestaj);
+    const popustPct = procenat(cene.popustSmestajPct) ?? (bruto > 0 ? (num(cene.popustSmestaj) / bruto) * 100 : 0);
     let pct: number | null;
     if (smestajIzabran?.popular) pct = smestajIzabran.provizija;
-    else if ((procenat(cene.popustSmestajPct) ?? 0) > parametriObr.visina_popusta) pct = parametriObr.visina_provizije;
+    else if (popustPct > parametriObr.visina_popusta) pct = parametriObr.visina_provizije;
     else pct = subagentProvizija;
     if (pct == null) return;
     updCene({ provizijaSmestajPct: String(pct) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subagent, subagentProvizija, smestajIzabran?.popular, smestajIzabran?.provizija, cene.popustSmestajPct, parametriObr, izabraniUgovor]);
+  }, [subagent, subagentProvizija, smestajIzabran?.popular, smestajIzabran?.provizija, cene.popustSmestajPct, cene.popustSmestaj, cene.cenaSmestaj, cene.kolSmestaj, parametriObr, izabraniUgovor]);
 
   useEffect(() => {
     const request = ++uplateRequest.current;
