@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, LogOut, ShieldCheck, Settings,
   Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus,
   FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage,
-  Eye, ShoppingBag, Banknote, Palette, Sigma, Bell, Store, ArrowRightLeft, Ban, Calculator
+  Eye, ShoppingBag, Banknote, Palette, Sigma, Bell, Store, ArrowRightLeft, Ban, Calculator, Armchair
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -139,6 +139,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/prevoz-limit" icon={Armchair} label="Limiti prevoz" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
           </div>
@@ -549,6 +550,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/prevoz-limit" icon={Armchair} label="Limiti prevoz" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={false} onClick={closeMobile} />
                 </div>
