@@ -157,6 +157,13 @@ const isoToPrikaz = (v: string) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
   return m ? `${m[3]}.${m[2]}.${m[1]}` : "";
 };
+/** "02.09 - 12.09.2026" (godina samo na kraju kad su datumi iste godine) */
+const prikazPeriodaUgovora = (od: string | null | undefined, doDatum: string | null | undefined): string => {
+  const a = isoToPrikaz(datumZaInput(od) ?? "");
+  const b = isoToPrikaz(datumZaInput(doDatum) ?? "");
+  if (!a || !b) return "";
+  return a.slice(-4) === b.slice(-4) ? `${a.slice(0, 5)} - ${b}` : `${a} - ${b}`;
+};
 /** broj iz inputa; prazno → 0 */
 const num = (v: string) => {
   const x = parseFloat(v.replace(",", "."));
@@ -2080,9 +2087,30 @@ export default function RezervacijePage() {
           {/* Ugovor */}
           <Card className={TON.blue.kartica}>
             <CardHeader className={cn(KOMPAKT_HEADER, TON.blue.zaglavlje)}>
-              <CardTitle className="text-sm flex items-center gap-2">
+              <CardTitle className="text-sm flex flex-wrap items-center gap-x-2 gap-y-1">
                 <SekcijaIkona ton="blue"><FileText />
                 </SekcijaIkona>Ugovor
+                {ucitanUgovor && (
+                  <span aria-label="Pregled učitanog ugovora" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium text-foreground">
+                    {([
+                      ucitanUgovor.kljuc,
+                      ucitanUgovor.putnik,
+                      ucitanUgovor.mesto,
+                      ucitanUgovor.naziv,
+                      ucitanUgovor.soba,
+                      prikazPeriodaUgovora(ucitanUgovor.datumod, ucitanUgovor.datumdo),
+                    ].filter((v): v is string => !!v)).map((v, i) => (
+                      <span key={i} className="flex items-center gap-2">
+                        {i > 0 && <span aria-hidden className="text-muted-foreground/50">|</span>}
+                        <span className="truncate" title={v}>{v}</span>
+                      </span>
+                    ))}
+                    <span aria-hidden className="text-muted-foreground/50">|</span>
+                    <span aria-live="polite" className={cn("tabular-nums", saldoEUR !== null && saldoEUR < 0 && "text-destructive")}>
+                      {izborUcitava || uplateUcitavaju ? "Učitavanje…" : saldoEUR !== null ? `${nf2.format(saldoEUR)} €${saldo !== null && !izborUcitava ? ` (${nf2.format(saldo)} din)` : ""}` : "—"}
+                    </span>
+                  </span>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent className={KOMPAKT_CONTENT}>
@@ -2197,34 +2225,6 @@ export default function RezervacijePage() {
                   </Popover>
                 </Fld>
               </div>
-              {ucitanUgovor && (
-                <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/30" aria-label="Pregled učitanog ugovora">
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1 md:grid-cols-4 xl:grid-cols-8">
-                    {([
-                      ["Broj ugovora", ucitanUgovor.kljuc],
-                      ["Nosilac", ucitanUgovor.putnik],
-                      ["Mesto", ucitanUgovor.mesto],
-                      ["Smeštaj", ucitanUgovor.naziv],
-                      ["Datum od", isoToPrikaz(datumZaInput(ucitanUgovor.datumod))],
-                      ["Datum do", isoToPrikaz(datumZaInput(ucitanUgovor.datumdo))],
-                      ["Soba", ucitanUgovor.soba],
-                    ] as const).map(([label, value]) => (
-                      <div key={label} className="min-w-0">
-                        <dt className="text-xs text-muted-foreground">{label}</dt>
-                        <dd className="truncate text-sm font-medium" title={value || undefined}>{value || "—"}</dd>
-                      </div>
-                    ))}
-                    <div className="min-w-0" aria-live="polite">
-                      <dt className="text-xs text-muted-foreground">Saldo</dt>
-                      <dd className={cn("text-sm font-bold tabular-nums", saldoEUR !== null && saldoEUR < 0 && "text-destructive")}>
-                        {izborUcitava || uplateUcitavaju ? "Učitavanje…" : saldoEUR !== null ? `${nf2.format(saldoEUR)} €` : "—"}
-                      </dd>
-                      <dd className="text-xs tabular-nums text-muted-foreground">{!izborUcitava && saldo !== null ? `${nf2.format(saldo)} din` : ""}</dd>
-                    </div>
-                  </dl>
-                  <p className="mt-1.5 text-xs text-muted-foreground">Podaci učitanog ugovora · saldo prema trenutnom obračunu. Dodatne stavke i uplate se čuvaju direktno; ostala polja se čuvaju dugmetom „Sačuvaj“. {zakljucano && "Polja su zaključana — kliknite „Izmeni“ za izmenu."}{izmena && " Polja su otključana — kliknite „Sačuvaj“ za snimanje izmena."}</p>
-                </div>
-              )}
             </CardContent>
           </Card>
 
