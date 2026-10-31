@@ -117,6 +117,8 @@ def _belgrade_now() -> datetime:
 # Doplate za mesta za sedenje (EUR) — kolone parametri_obracuna
 MESTA_SEDENJA_POLJA = ("donja_platforma_eur", "gornja_platforma_eur", "dole_za_stolom_eur",
                        "dole_zadnji_red_eur", "gore_izlog_eur", "gore_sto_eur", "sarage_eur")
+# Prefiksi izračunatih dodatnih usluga (frontend ih računa i šalje pri snimanju; backend ih zamenjuje)
+IZRACUNATE_PREFIKS = ("TRANSFER - ", "PLAĆENO MESTO - ")
 
 
 def get_engine():
@@ -4730,15 +4732,16 @@ def create_app(static_dir: str) -> FastAPI:
         }
 
     def rez_transferi_upisi(conn, kljuc: str, transferi: list[RezTransferStavka]):
-        """Zamena TRANSFER stavki ugovora (dodatne.id = broj ugovora iz ključa).
-        Redovi sa usluga 'TRANSFER - …' se brišu pa ponovo upisuju; nulti iznosi se preskaču."""
+        """Zamena izračunatih stavki ugovora (TRANSFER i PLAĆENO MESTO; dodatne.id = broj ugovora iz ključa).
+        Redovi sa tim prefiksima se brišu pa ponovo upisuju; nulti iznosi se preskaču."""
         broj_str = kljuc.strip().strip("/").split("/", 1)[0]
         if not re.fullmatch(r"[0-9]+", broj_str):
             raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
         broj = int(broj_str)
         conn.execute(text(
-            "DELETE FROM dodatne WHERE id = :id AND LEFT(usluga, 11) = 'TRANSFER - '"
-        ), {"id": broj})
+            "DELETE FROM dodatne WHERE id = :id AND (LEFT(usluga, :n1) = :p1 OR LEFT(usluga, :n2) = :p2)"
+        ), {"id": broj, "p1": IZRACUNATE_PREFIKS[0], "n1": len(IZRACUNATE_PREFIKS[0]),
+            "p2": IZRACUNATE_PREFIKS[1], "n2": len(IZRACUNATE_PREFIKS[1])})
         for t in transferi:
             if not t.eur:
                 continue

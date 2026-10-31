@@ -63,6 +63,15 @@ function prikaziKarticaNeunetu(kljuc: number, ugovor: string) {
   });
 }
 const MESTO_SEDENJA = ["DONJA PLATFORMA", "GORNJA PLATFORMA", "DOLE ZA STOLOM", "DOLE ZADNJI RED", "GORE IZLOG", "GORE STO", "ŠARAGE"];
+// Doplata (EUR) po mestu za sedenje → kolona u parametri_obracuna
+const DOPLATA_MESTA: Record<string, string> = {
+  "DONJA PLATFORMA": "donja_platforma_eur", "GORNJA PLATFORMA": "gornja_platforma_eur",
+  "DOLE ZA STOLOM": "dole_za_stolom_eur", "DOLE ZADNJI RED": "dole_zadnji_red_eur",
+  "GORE IZLOG": "gore_izlog_eur", "GORE STO": "gore_sto_eur", "ŠARAGE": "sarage_eur",
+};
+// Dodatne usluge koje se računaju iz tabele Prevoz (ne unose ručno) — zamenjuju se pri snimanju
+const IZRACUNATE_PREFIKSI = ["TRANSFER - ", "PLAĆENO MESTO - "];
+const jeIzracunata = (usluga: string | null | undefined) => IZRACUNATE_PREFIKSI.some((p) => (usluga ?? "").startsWith(p));
 
 /** Select sa pretragom i opcijom „Prazno“ (Radix Select ne dozvoljava value=""). */
 function PretraznaSelect({ value, opcije, placeholder, ariaLabel, onChange, disabled }: {
@@ -585,7 +594,7 @@ export default function RezervacijePage() {
   const [adlStrukture, setAdlStrukture] = useState<number | null>(null);
   // koeficijent strukture (kolona koeficijent, red sa max ADL) — količina smeštaja; cena iz Grafika je po osobi
   const [koefStrukture, setKoefStrukture] = useState<number | null>(null);
-  const [parametriObr, setParametriObr] = useState<{ visina_popusta: number; visina_provizije: number } | null>(null);
+  const [parametriObr, setParametriObr] = useState<{ visina_popusta: number; visina_provizije: number } & Partial<Record<string, number>> | null>(null);
 
   // pretraga subagenata iz tabele subagenti (po nazivu, mestu, osobi, telefonu…)
   useEffect(() => {
@@ -1083,11 +1092,38 @@ export default function RezervacijePage() {
     return out;
   }, [prevozRedovi, saputnici, polasci, destinacije, destinacijaZaSve, destinacijaSacuvana]);
 
-  // Prikaz dodatnih usluga = sačuvane stavke bez TRANSFER redova + izračunati TRANSFER-i
-  // (TRANSFER redovi iz baze se zamenjuju pri Sačuvaj, pa se ne prikazuju dvaput).
+  // PLAĆENO MESTO: po mestu za sedenje zbir doplata za putnike koji su izabrali mesto i „Plaćeno“
+  // (nosilac + saputnici). Iznos po mestu = parametri obračuna (EUR) × broj putnika. Iznos 0 → ne prikazuje se.
+  const placenaMestaStavke = useMemo<NonNullable<UgovorDetail["dodatne"]>>(() => {
+    if (!parametriObr) return [];
+    const brojPoMestu = new Map<string, number>();
+    const redovi = [
+      prevozRedovi["nosilac"],
+      ...saputnici.filter((s) => s.ime.trim()).map((s) => prevozRedovi[s.uid]),
+    ];
+    for (const red of redovi) {
+      const mesto = (red?.mestoSedenja ?? "").trim();
+      if (!red?.placeno || !mesto) continue;
+      brojPoMestu.set(mesto, (brojPoMestu.get(mesto) ?? 0) + 1);
+    }
+    const out: NonNullable<UgovorDetail["dodatne"]> = [];
+    let redni = 0;
+    for (const [mesto, broj] of brojPoMestu) {
+      const kljuc = DOPLATA_MESTA[mesto];
+      const iznos = kljuc ? parametriObr[kljuc] ?? 0 : 0;
+      if (!iznos) continue;
+      redni += 1;
+      // negativan stavka_id = izračunata stavka (nije u tabeli dodatne); ključ reda u React listi
+      out.push({ stavka_id: -(100 + redni), usluga: `PLAĆENO MESTO - ${mesto}`, eur: Math.round(broj * iznos * 100) / 100, din: null });
+    }
+    return out;
+  }, [prevozRedovi, saputnici, parametriObr]);
+
+  // Prikaz dodatnih usluga = sačuvane stavke bez izračunatih redova + izračunate (TRANSFER, PLAĆENO MESTO)
+  // (izračunati redovi iz baze se zamenjuju pri Sačuvaj, pa se ne prikazuju dvaput).
   const sveDodatne = useMemo(
-    () => [...dodatneStavke.filter((s) => !(s.usluga ?? "").startsWith("TRANSFER - ")), ...transferStavke],
-    [dodatneStavke, transferStavke],
+    () => [...dodatneStavke.filter((s) => !jeIzracunata(s.usluga)), ...transferStavke, ...placenaMestaStavke],
+    [dodatneStavke, transferStavke, placenaMestaStavke],
   );
   const sveDodatneSume = sveDodatne.reduce((suma, stavka) => ({
     eur: suma.eur + (stavka.eur ?? 0),
@@ -1157,7 +1193,7 @@ export default function RezervacijePage() {
 
   // Parametri obračuna (visina popusta / visina provizije) — jednom pri učitavanju
   useEffect(() => {
-    apiFetch<{ visina_popusta: number; visina_provizije: number }>("/parametri-obracuna")
+    apiFetch<{ visina_popusta: number; visina_provizije: number } & Partial<Record<string, number>>>("/parametri-obracuna")
       .then(setParametriObr)
       .catch(() => setParametriObr(null));
   }, []);
@@ -1686,7 +1722,7 @@ export default function RezervacijePage() {
       izlazak: prevozRedovi["nosilac"]?.mestoIzlaska ?? "",
       napomenaPrevoz: boravak.napomenaPrevoz,
       nacinPlacanja: placanje,
-      transferi: transferStavke.map((t) => ({ usluga: t.usluga ?? "", eur: t.eur ?? 0 })),
+      transferi: [...transferStavke, ...placenaMestaStavke].map((t) => ({ usluga: t.usluga ?? "", eur: t.eur ?? 0 })),
       cene: {
         cenaSmestajEUR: num(cene.cenaSmestaj), kolSmestajEUR: qty(cene.kolSmestaj),
         cenaSmestajRSD: num(cene.cenaSmestajRSD), kolSmestajRSD: qty(cene.kolSmestajRSD),
@@ -2562,7 +2598,7 @@ export default function RezervacijePage() {
                         }}
                       />
                     )}
-                    {!izabraniUgovor && transferStavke.length === 0 ? (
+                    {!izabraniUgovor && sveDodatne.length === 0 ? (
                       <p className="px-4 py-4 text-sm text-muted-foreground">Izaberite ugovor za pregled dodatnih stavki.</p>
                     ) : (
                       <Table>
