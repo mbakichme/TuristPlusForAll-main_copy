@@ -382,6 +382,28 @@ const KOMPAKT_TAB = "mt-3 space-y-3 [&_input]:h-8 [&_button[role=combobox]]:h-8 
 const KOMPAKT_HEADER = "px-4 pt-3 pb-2";
 const KOMPAKT_CONTENT = "px-4 pb-3";
 
+// Boja po sekciji: leva traka kartice + tonirano zaglavlje + kolor pločica ikone
+type Ton = "blue" | "violet" | "emerald" | "sky" | "orange" | "rose" | "amber" | "teal" | "indigo";
+const TON: Record<Ton, { kartica: string; zaglavlje: string; plocica: string }> = {
+  blue: { kartica: "border-l-4 border-l-blue-500", zaglavlje: "bg-blue-50/70", plocica: "bg-blue-100 text-blue-700" },
+  violet: { kartica: "border-l-4 border-l-violet-500", zaglavlje: "bg-violet-50/70", plocica: "bg-violet-100 text-violet-700" },
+  emerald: { kartica: "border-l-4 border-l-emerald-500", zaglavlje: "bg-emerald-50/70", plocica: "bg-emerald-100 text-emerald-700" },
+  sky: { kartica: "border-l-4 border-l-sky-500", zaglavlje: "bg-sky-50/70", plocica: "bg-sky-100 text-sky-700" },
+  orange: { kartica: "border-l-4 border-l-orange-500", zaglavlje: "bg-orange-50/70", plocica: "bg-orange-100 text-orange-700" },
+  rose: { kartica: "border-l-4 border-l-rose-500", zaglavlje: "bg-rose-50/70", plocica: "bg-rose-100 text-rose-700" },
+  amber: { kartica: "border-l-4 border-l-amber-500", zaglavlje: "bg-amber-50/70", plocica: "bg-amber-100 text-amber-700" },
+  teal: { kartica: "border-l-4 border-l-teal-500", zaglavlje: "bg-teal-50/70", plocica: "bg-teal-100 text-teal-700" },
+  indigo: { kartica: "border-l-4 border-l-indigo-500", zaglavlje: "bg-indigo-50/70", plocica: "bg-indigo-100 text-indigo-700" },
+};
+
+function SekcijaIkona({ ton, children }: { ton: Ton; children: ReactNode }) {
+  return (
+    <span className={cn("inline-flex size-6 shrink-0 items-center justify-center rounded-md [&>svg]:size-3.5", TON[ton].plocica)}>
+      {children}
+    </span>
+  );
+}
+
 function Fld({
   label, children, className, labelClassName,
 }: { label: string; children: ReactNode; className?: string; labelClassName?: string }) {
@@ -2056,10 +2078,11 @@ export default function RezervacijePage() {
         {/* ════════════════ TAB: ARANŽMAN ════════════════ */}
         <TabsContent value="aranzman" className={KOMPAKT_TAB}>
           {/* Ugovor */}
-          <Card>
-            <CardHeader className={KOMPAKT_HEADER}>
+          <Card className={TON.blue.kartica}>
+            <CardHeader className={cn(KOMPAKT_HEADER, TON.blue.zaglavlje)}>
               <CardTitle className="text-sm flex items-center gap-2">
-                <FileText className="w-4 h-4 text-primary" />Ugovor
+                <SekcijaIkona ton="blue"><FileText />
+                </SekcijaIkona>Ugovor
               </CardTitle>
             </CardHeader>
             <CardContent className={KOMPAKT_CONTENT}>
@@ -2206,10 +2229,10 @@ export default function RezervacijePage() {
           </Card>
 
           {/* Putnici */}
-          <Card>
-            <CardHeader className={KOMPAKT_HEADER}>
+          <Card className={TON.violet.kartica}>
+            <CardHeader className={cn(KOMPAKT_HEADER, TON.violet.zaglavlje)}>
               <CardTitle className="text-sm flex items-center gap-2">
-                <Users className="w-4 h-4 text-primary" />Putnici
+                <SekcijaIkona ton="violet"><Users /></SekcijaIkona>Putnici
               </CardTitle>
             </CardHeader>
             <CardContent className={cn(KOMPAKT_CONTENT, "space-y-3")}>
@@ -2358,10 +2381,10 @@ export default function RezervacijePage() {
           </Card>
 
           {/* Boravak i smeštaj */}
-          <Card>
-            <CardHeader className={KOMPAKT_HEADER}>
+          <Card className={TON.emerald.kartica}>
+            <CardHeader className={cn(KOMPAKT_HEADER, TON.emerald.zaglavlje)}>
               <CardTitle className="text-sm flex items-center gap-2">
-                <BedDouble className="w-4 h-4 text-primary" />Boravak i smeštaj
+                <SekcijaIkona ton="emerald"><BedDouble /></SekcijaIkona>Boravak i smeštaj
                 {!zakljucano && (
                   <Button
                     type="button"
@@ -2487,10 +2510,10 @@ export default function RezervacijePage() {
         {/* ════════════════ TAB: OBRAČUN ════════════════ */}
         <TabsContent value="obracun" className={KOMPAKT_TAB}>
           {/* Smeštaj · Prevoz · Osiguranje — tri reda u jednoj kartici */}
-          <Card>
-            <CardHeader className={KOMPAKT_HEADER}>
-              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                <BedDouble className="w-4 h-4 text-current" />Smeštaj · Prevoz · Osiguranje
+          <Card className={TON.sky.kartica}>
+            <CardHeader className={cn(KOMPAKT_HEADER, TON.sky.zaglavlje)}>
+              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-sky-800">
+                <SekcijaIkona ton="sky"><BedDouble /></SekcijaIkona>Smeštaj · Prevoz · Osiguranje
               </CardTitle>
             </CardHeader>
             <CardContent className={cn(KOMPAKT_CONTENT, "space-y-2")}>
@@ -2570,11 +2593,11 @@ export default function RezervacijePage() {
           </Card>
 
           {/* Dodatne usluge */}
-          <Card>
-            <CardHeader className={cn(KOMPAKT_HEADER, "flex-row flex-wrap items-center justify-between gap-3 space-y-0")}>
+          <Card className={TON.orange.kartica}>
+            <CardHeader className={cn(KOMPAKT_HEADER, TON.orange.zaglavlje, "flex-row flex-wrap items-center justify-between gap-3 space-y-0")}>
               <div className="space-y-0.5">
-                <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                  <Receipt className="w-4 h-4 text-current" />Dodatne usluge
+                <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-800">
+                  <SekcijaIkona ton="orange"><Receipt /></SekcijaIkona>Dodatne usluge
                 </CardTitle>
                 <CardDescription className="text-xs">{izabraniUgovor ? `Ugovor ${izabraniUgovor} — ` : ""}stavke se čuvaju direktno u ugovoru</CardDescription>
               </div>
@@ -2690,10 +2713,10 @@ export default function RezervacijePage() {
           </Card>
 
           {/* Popust */}
-          <Card>
-            <CardHeader className={KOMPAKT_HEADER}>
-              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                <Info className="w-4 h-4 text-current" />Popust
+          <Card className={TON.rose.kartica}>
+            <CardHeader className={cn(KOMPAKT_HEADER, TON.rose.zaglavlje)}>
+              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-rose-800">
+                <SekcijaIkona ton="rose"><Info /></SekcijaIkona>Popust
                 <span className="ml-1 text-xs font-normal normal-case tracking-normal text-muted-foreground">procenat ili iznos — izmena iznosa briše procenat</span>
               </CardTitle>
             </CardHeader>
@@ -2756,10 +2779,10 @@ export default function RezervacijePage() {
           </AlertDialog>
 
           {/* Provizija */}
-          <Card>
-            <CardHeader className={KOMPAKT_HEADER}>
-              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                <Wallet className="w-4 h-4 text-current" />Provizija
+          <Card className={TON.amber.kartica}>
+            <CardHeader className={cn(KOMPAKT_HEADER, TON.amber.zaglavlje)}>
+              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-amber-800">
+                <SekcijaIkona ton="amber"><Wallet /></SekcijaIkona>Provizija
                 <span className="ml-1 text-xs font-normal normal-case tracking-normal text-muted-foreground">procenat ili iznos; ispod ukupan obračun aranžmana</span>
               </CardTitle>
             </CardHeader>
@@ -2863,10 +2886,10 @@ export default function RezervacijePage() {
 
         {/* ════════════════ TAB: PREVOZ ════════════════ */}
         <TabsContent value="prevoz" className="mt-4">
-          <Card>
-            <CardHeader>
+          <Card className={TON.teal.kartica}>
+            <CardHeader className={TON.teal.zaglavlje}>
               <CardTitle className="text-base flex items-center gap-2">
-                <Bus className="w-5 h-5 text-primary" />Prevoz
+                <SekcijaIkona ton="teal"><Bus /></SekcijaIkona>Prevoz
               </CardTitle>
               <CardDescription>Destinacija, mesta ulaska i sedišta po putniku</CardDescription>
             </CardHeader>
@@ -3042,10 +3065,10 @@ export default function RezervacijePage() {
 
         {/* ════════════════ TAB: UPLATE ════════════════ */}
         <TabsContent value="uplate" className="mt-4">
-          <Card>
-            <CardHeader>
+          <Card className={TON.indigo.kartica}>
+            <CardHeader className={TON.indigo.zaglavlje}>
               <CardTitle className="text-base flex items-center gap-2">
-                <Wallet className="w-5 h-5 text-primary" />Uplate
+                <SekcijaIkona ton="indigo"><Wallet /></SekcijaIkona>Uplate
               </CardTitle>
               <CardDescription>Evidencija uplata za ovu rezervaciju</CardDescription>
             </CardHeader>
