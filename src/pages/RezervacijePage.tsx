@@ -507,7 +507,7 @@ function PanelaSazetka({ children, className, kompaktno }: { children: ReactNode
 
 /** Red popusta/provizije: Procenat (%), Iznos EUR, Iznos RSD + ukupno po redu (neto, desno). */
 function ProcenatRed({
-  naslov, pct, iznosEUR, iznosRSD, netoEUR, netoRSD, onPct, onIznosEUR, onIznosRSD, disabled,
+  naslov, pct, iznosEUR, iznosRSD, netoEUR, netoRSD, onPct, onIznosEUR, onIznosRSD, disabled, testId,
 }: {
   naslov: string;
   pct: string;
@@ -519,6 +519,7 @@ function ProcenatRed({
   onIznosEUR: (v: string) => void;
   onIznosRSD: (v: string) => void;
   disabled?: boolean;
+  testId?: string;
 }) {
   return (
     <div>
@@ -529,6 +530,7 @@ function ProcenatRed({
             <Input
               inputMode="decimal"
               aria-label={`${naslov} — procenat (%)`}
+              data-testid={testId}
               value={pct}
               onChange={(e) => onPct(e.target.value)}
               placeholder="0"
@@ -2793,6 +2795,7 @@ export default function RezervacijePage() {
             <CardContent className={cn(KOMPAKT_CONTENT, "space-y-2")}>
               <ProcenatRed
                 naslov="Smeštaj"
+                testId="provizija-smestaj-pct"
                 pct={cene.provizijaSmestajPct}
                 iznosEUR={cene.provizijaSmestaj}
                 iznosRSD={cene.provizijaSmestajRSD}
