@@ -50,6 +50,16 @@ def init_dodatne_usluge(engine):
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
+        # opciona veza stavke ugovora sa katalogom (ON DELETE SET NULL — stavka ostaje sa svojim iznosima)
+        conn.execute(text("ALTER TABLE dodatne ADD COLUMN IF NOT EXISTS dodatna_usluga_id INTEGER"))
+        conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dodatne_dodatna_usluga_fk') THEN
+                    ALTER TABLE dodatne ADD CONSTRAINT dodatne_dodatna_usluga_fk
+                        FOREIGN KEY (dodatna_usluga_id) REFERENCES dodatne_usluge(id) ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
 
 
 def _red(row):

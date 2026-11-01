@@ -581,20 +581,22 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS nacin_placanja VARCHAR(20)"
         ))
-        # Dodatne stavke — id je broj ugovora i nije jedinstven.
+        # Dodatne stavke — ugovor = ceo ključ ugovora (npr. 213/26); id (broj) je zamenjen
+        # jer dva ugovora iste brojke iz različitih godina dele stavke.
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS dodatne (
+                ugovor VARCHAR(30) DEFAULT NULL,
                 usluga VARCHAR(150) DEFAULT NULL,
                 eur DOUBLE PRECISION DEFAULT NULL,
-                din DOUBLE PRECISION DEFAULT NULL,
-                id INTEGER DEFAULT NULL
+                din DOUBLE PRECISION DEFAULT NULL
             )
         """))
+        conn.execute(text("ALTER TABLE dodatne ADD COLUMN IF NOT EXISTS ugovor VARCHAR(30) DEFAULT NULL"))
         conn.execute(text("ALTER TABLE dodatne ADD COLUMN IF NOT EXISTS stavka_id SERIAL"))
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_dodatne_stavka_id ON dodatne(stavka_id)"
         ))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dodatne_id ON dodatne(id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dodatne_ugovor ON dodatne(ugovor)"))
         # Knjigovodstvo — uplate (struktura po starom sistemu: kljuc = broj uplate PK,
         # broj = dokument broj kao string, id = veza na ugovor/fakturu NIJE jedinstven)
         conn.execute(text("""
@@ -1241,6 +1243,7 @@ class DodatnaOriginal(BaseModel):
 
 class DodatnaCreate(DodatnaOriginal):
     usluga: str
+    dodatna_usluga_id: Optional[int] = None
 
 
 class DodatnaUpdate(DodatnaCreate):
@@ -4735,23 +4738,22 @@ def create_app(static_dir: str) -> FastAPI:
         }
 
     def rez_transferi_upisi(conn, kljuc: str, transferi: list[RezTransferStavka]):
-        """Zamena izračunatih stavki ugovora (TRANSFER i PLAĆENO MESTO; dodatne.id = broj ugovora iz ključa).
+        """Zamena izračunatih stavki ugovora (TRANSFER i PLAĆENO MESTO; dodatne.ugovor = ceo ključ).
         Redovi sa tim prefiksima se brišu pa ponovo upisuju; nulti iznosi se preskaču."""
-        broj_str = kljuc.strip().strip("/").split("/", 1)[0]
-        if not re.fullmatch(r"[0-9]+", broj_str):
+        ugovor = kljuc.strip().strip("/")
+        if not re.fullmatch(r"[0-9]+(/[0-9]+)?", ugovor):
             raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
-        broj = int(broj_str)
         conn.execute(text(
-            "DELETE FROM dodatne WHERE id = :id AND (LEFT(usluga, :n1) = :p1 OR LEFT(usluga, :n2) = :p2)"
-        ), {"id": broj, "p1": IZRACUNATE_PREFIKS[0], "n1": len(IZRACUNATE_PREFIKS[0]),
+            "DELETE FROM dodatne WHERE ugovor = :u AND (LEFT(usluga, :n1) = :p1 OR LEFT(usluga, :n2) = :p2)"
+        ), {"u": ugovor, "p1": IZRACUNATE_PREFIKS[0], "n1": len(IZRACUNATE_PREFIKS[0]),
             "p2": IZRACUNATE_PREFIKS[1], "n2": len(IZRACUNATE_PREFIKS[1])})
         for t in transferi:
             if not t.eur:
                 continue
             vals = _dodatna_values(DodatnaCreate(usluga=t.usluga, eur=t.eur, din=None))
             conn.execute(text(
-                "INSERT INTO dodatne (id, usluga, eur, din) VALUES (:id, :usluga, :eur, :din)"
-            ), {"id": broj, **vals})
+                "INSERT INTO dodatne (ugovor, usluga, eur, din) VALUES (:u, :usluga, :eur, :din)"
+            ), {"u": ugovor, **vals})
 
     @api.post("/rezervacije", status_code=201)
     def kreiraj_rezervaciju(body: RezervacijaIn, current_user: dict = Depends(get_current_user)):
@@ -4917,25 +4919,33 @@ def create_app(static_dir: str) -> FastAPI:
         ), {"k": kljuc}).fetchone()
         if not arow:
             raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
-        prefix = (arow.kljuc or "").split("/", 1)[0]
+        ugovor = (arow.kljuc or "").strip()
+        prefix = ugovor.split("/", 1)[0]
         if not re.fullmatch(r"[+-]?[0-9]+", prefix):
             raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
-        broj = int(prefix)
-        if not -(2**31) <= broj <= 2**31 - 1:
-            raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
-        return broj
+        return ugovor
+
+    def dodatna_katalog_proveri(conn, katalog_id: int | None):
+        if katalog_id is None:
+            return
+        postoji = conn.execute(text(
+            "SELECT 1 FROM dodatne_usluge WHERE id = :id"
+        ), {"id": katalog_id}).fetchone()
+        if not postoji:
+            raise HTTPException(status_code=400, detail="Dodatna usluga iz kataloga nije pronađena")
 
     @api.post("/ugovori/{kljuc:path}/dodatne", status_code=201)
     def create_dodatna(kljuc: str, body: DodatnaCreate,
                        current_user: dict = Depends(get_current_user)):
         values = _dodatna_values(body)
         with engine.begin() as conn:
-            broj = dodatne_contract(conn, kljuc, current_user)
+            ugovor = dodatne_contract(conn, kljuc, current_user)
+            dodatna_katalog_proveri(conn, body.dodatna_usluga_id)
             row = conn.execute(text("""
-                INSERT INTO dodatne (id, usluga, eur, din)
-                VALUES (:id, :usluga, :eur, :din)
-                RETURNING stavka_id, usluga, eur, din
-            """), {"id": broj, **values}).mappings().one()
+                INSERT INTO dodatne (ugovor, usluga, eur, din, dodatna_usluga_id)
+                VALUES (:ugovor, :usluga, :eur, :din, :katalog)
+                RETURNING stavka_id, usluga, eur, din, dodatna_usluga_id
+            """), {"ugovor": ugovor, "katalog": body.dodatna_usluga_id, **values}).mappings().one()
             result = dict(row)
             uid, uime = log_user(conn, current_user)
             zabelezi(conn, kljuc, OBLAST_OBRACUN, "usluga_dodata", uid, uime, [
@@ -4953,24 +4963,25 @@ def create_app(static_dir: str) -> FastAPI:
             if value is not None and not math.isfinite(value):
                 raise HTTPException(status_code=400, detail="Originalni iznos mora biti konačan broj")
         with engine.begin() as conn:
-            broj = dodatne_contract(conn, kljuc, current_user)
+            ugovor = dodatne_contract(conn, kljuc, current_user)
+            dodatna_katalog_proveri(conn, body.dodatna_usluga_id)
             row = conn.execute(text("""
-                UPDATE dodatne SET usluga = :usluga, eur = :eur, din = :din
-                WHERE stavka_id = :stavka_id AND id = :id
+                UPDATE dodatne SET usluga = :usluga, eur = :eur, din = :din, dodatna_usluga_id = :katalog
+                WHERE stavka_id = :stavka_id AND ugovor = :ugovor
                   AND usluga IS NOT DISTINCT FROM :original_usluga
                   AND eur IS NOT DISTINCT FROM :original_eur
                   AND din IS NOT DISTINCT FROM :original_din
-                RETURNING stavka_id, usluga, eur, din
+                RETURNING stavka_id, usluga, eur, din, dodatna_usluga_id
             """), {
-                "id": broj, "stavka_id": stavka_id, **values,
+                "ugovor": ugovor, "stavka_id": stavka_id, "katalog": body.dodatna_usluga_id, **values,
                 "original_usluga": body.original.usluga,
                 "original_eur": body.original.eur,
                 "original_din": body.original.din,
             }).mappings().first()
             if row is None:
                 exists = conn.execute(text(
-                    "SELECT stavka_id FROM dodatne WHERE stavka_id = :stavka_id AND id = :id"
-                ), {"stavka_id": stavka_id, "id": broj}).fetchone()
+                    "SELECT stavka_id FROM dodatne WHERE stavka_id = :stavka_id AND ugovor = :ugovor"
+                ), {"stavka_id": stavka_id, "ugovor": ugovor}).fetchone()
                 if exists:
                     raise HTTPException(status_code=409, detail="Stavka je u međuvremenu izmenjena")
                 raise HTTPException(status_code=404, detail="Stavka nije pronađena")
@@ -4992,19 +5003,19 @@ def create_app(static_dir: str) -> FastAPI:
             if value is not None and not math.isfinite(value):
                 raise HTTPException(status_code=400, detail="Originalni iznos mora biti konačan broj")
         with engine.begin() as conn:
-            broj = dodatne_contract(conn, kljuc, current_user)
+            ugovor = dodatne_contract(conn, kljuc, current_user)
             row = conn.execute(text("""
-                DELETE FROM dodatne WHERE stavka_id = :stavka_id AND id = :id
+                DELETE FROM dodatne WHERE stavka_id = :stavka_id AND ugovor = :ugovor
                   AND usluga IS NOT DISTINCT FROM :usluga
                   AND eur IS NOT DISTINCT FROM :eur
                   AND din IS NOT DISTINCT FROM :din
                 RETURNING stavka_id
-            """), {"stavka_id": stavka_id, "id": broj,
+            """), {"stavka_id": stavka_id, "ugovor": ugovor,
                     "usluga": body.usluga, "eur": body.eur, "din": body.din}).first()
             if row is None:
                 exists = conn.execute(text(
-                    "SELECT stavka_id FROM dodatne WHERE stavka_id = :s AND id = :i"
-                ), {"s": stavka_id, "i": broj}).first()
+                    "SELECT stavka_id FROM dodatne WHERE stavka_id = :s AND ugovor = :u"
+                ), {"s": stavka_id, "u": ugovor}).first()
                 raise HTTPException(status_code=409 if exists else 404,
                     detail="Stavka je u međuvremenu izmenjena" if exists else "Stavka nije pronađena")
             uid, uime = log_user(conn, current_user)
@@ -5020,7 +5031,7 @@ def create_app(static_dir: str) -> FastAPI:
         from decimal import Decimal, ROUND_HALF_UP
         from ugovor_pdf import generate_ugovor_pdf
         with engine.connect() as conn:
-            broj = dodatne_contract(conn, kljuc, current_user)
+            ugovor = dodatne_contract(conn, kljuc, current_user)
             row = conn.execute(text("SELECT * FROM aranzman WHERE kljuc = :k"),
                                {"k": kljuc}).mappings().one()
             data = dict(row)
@@ -5029,8 +5040,8 @@ def create_app(static_dir: str) -> FastAPI:
                 "SELECT * FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id"
             ), {"i": data["id"]}).mappings()]
             data["dodatne"] = [dict(p) for p in conn.execute(text(
-                "SELECT stavka_id, usluga, eur, din FROM dodatne WHERE id = :i ORDER BY stavka_id"
-            ), {"i": broj}).mappings()]
+                "SELECT stavka_id, usluga, eur, din FROM dodatne WHERE ugovor = :u ORDER BY stavka_id"
+            ), {"u": ugovor}).mappings()]
             agency = conn.execute(text("SELECT * FROM agencija WHERE id = 1")).mappings().first()
         if not data.get("danas"):
             raise HTTPException(status_code=422, detail="Ugovor nema datum izdavanja")
@@ -5075,12 +5086,11 @@ def create_app(static_dir: str) -> FastAPI:
                        datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka
                 FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id
             """), {"i": row.id}).fetchall()
-            # dodatne.id je broj ugovora, ne interni aranzman.id.
-            broj_ugovora = kljuc.split("/", 1)[0]
+            # dodatne.ugovor = ceo ključ ugovora (npr. 213/26), ne interni aranzman.id.
             dodatne = conn.execute(text("""
-                SELECT stavka_id, usluga, eur, din FROM dodatne WHERE id = :broj
+                SELECT stavka_id, usluga, eur, din, dodatna_usluga_id FROM dodatne WHERE ugovor = :k
                 ORDER BY usluga NULLS LAST, eur NULLS LAST, din NULLS LAST
-            """), {"broj": int(broj_ugovora)}).mappings().all() if broj_ugovora.isdigit() else []
+            """), {"k": kljuc}).mappings().all()
         d = dict(row._mapping)
         subagent = None
         if d.get("subagent_naziv"):

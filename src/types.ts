@@ -110,6 +110,14 @@ export interface DodatnaStavka {
   usluga: string | null;
   eur: number | null;
   din: number | null;
+  dodatna_usluga_id?: number | null;
+}
+
+export interface DodatnaUslugaKatalog {
+  id: number;
+  naziv: string;
+  iznos_eur: number;
+  iznos_din: number;
 }
 
 export interface UgovorDetail {

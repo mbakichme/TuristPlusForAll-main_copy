@@ -93,7 +93,7 @@ with engine.begin() as conn:
     ids = [row[0] for row in r.fetchall()]
     for aid in ids:
         conn.execute(text("DELETE FROM aranzman_dopuna WHERE aranzman_id = :i"), {"i": aid})
-    conn.execute(text("DELETE FROM dodatne WHERE id IN (''' + brojevi + r''') AND usluga IN ('PLAĆENO MESTO - GORE IZLOG', 'TRANSFER - TEST')"))
+    conn.execute(text("DELETE FROM dodatne WHERE ugovor IN (''' + klj_list + r''') AND usluga IN ('PLAĆENO MESTO - GORE IZLOG', 'TRANSFER - TEST')"))
     print("obrisano aranzman redova:", len(ids))
 '''
 subprocess.run(["uv", "run", "python", "-c", _sql_cleanup],
