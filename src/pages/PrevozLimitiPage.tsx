@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { apiFetch } from "../lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -23,15 +23,10 @@ import { toast } from "sonner";
 
 interface PrevozLimit {
   id: number;
-  naziv: string;
-  drzava_id: number | null;
-  drzava_naziv: string | null;
-  destinacija_id: number | null;
-  destinacija_naziv: string | null;
-  mesto_id: number | null;
-  mesto_naziv: string | null;
-  grupa_datuma_id: number | null;
-  grupa_datuma_naziv: string | null;
+  id_destinacije_prevoza: number;
+  destinacija_prevoz_naziv: string | null;
+  id_destinacije: number | null;
+  id_grupe_termina: number | null;
   datum: string | null; // ISO yyyy-mm-dd
   smer: string;
   limit: number;
@@ -39,16 +34,10 @@ interface PrevozLimit {
   ukupno: number;
 }
 
-interface Drzava { id: number; naziv: string }
-interface Destinacija { id: number; naziv: string; drzava: number | null }
-interface Mesto { id: number; naziv: string; destinacija: number | null; grupa_datuma: number | null; grupe: number[] }
-interface Grupa { id: number; naziv: string }
+interface DestinacijaPrevoz { id: number; naziv: string }
 
 interface FormState {
-  drzava_id: string;
-  destinacija_id: string;
-  mesto_id: string;
-  grupa_datuma_id: string;
+  id_destinacije_prevoza: string;
   datum: string; // yyyy-mm-dd
   smer: string;
   limit: string;
@@ -58,8 +47,7 @@ interface FormState {
 const NISTA = "nista";
 const SMEROVI = ["Odlazak", "Povratak"];
 const prazno: FormState = {
-  drzava_id: NISTA, destinacija_id: NISTA, mesto_id: NISTA, grupa_datuma_id: NISTA,
-  datum: "", smer: "Odlazak", limit: "", dodatna_mesta: "0",
+  id_destinacije_prevoza: NISTA, datum: "", smer: "Odlazak", limit: "", dodatna_mesta: "0",
 };
 
 // Ceo broj; dodatna mesta mogu biti negativna
@@ -77,37 +65,9 @@ function datumSr(iso: string | null): string {
   return `${d}.${m}.${y}`;
 }
 
-interface IzborProps {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  opcije: { id: number; naziv: string }[];
-  placeholder: string;
-  disabled?: boolean;
-}
-
-function Izbor({ label, value, onChange, opcije, placeholder, disabled }: IzborProps) {
-  return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger aria-label={label} className="h-9"><SelectValue placeholder={placeholder} /></SelectTrigger>
-        <SelectContent>
-          {opcije.map((o) => (
-            <SelectItem key={o.id} value={String(o.id)}>{o.naziv}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
 export default function PrevozLimitiPage() {
   const [items, setItems] = useState<PrevozLimit[]>([]);
-  const [drzave, setDrzave] = useState<Drzava[]>([]);
-  const [destinacije, setDestinacije] = useState<Destinacija[]>([]);
-  const [mesta, setMesta] = useState<Mesto[]>([]);
-  const [grupe, setGrupe] = useState<Grupa[]>([]);
+  const [destinacije, setDestinacije] = useState<DestinacijaPrevoz[]>([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -131,54 +91,22 @@ export default function PrevozLimitiPage() {
     }
   }
 
+  async function ucitajDestinacije() {
+    try {
+      setDestinacije(await apiFetch<DestinacijaPrevoz[]>("/destinacija-prevoz"));
+    } catch {
+      /* prikaz ostaje prazan */
+    }
+  }
+
   useEffect(() => {
     const t = setTimeout(() => { void ucitaj(q.trim()); }, 300);
     return () => clearTimeout(t);
   }, [q]);
 
   useEffect(() => {
-    apiFetch<Drzava[]>("/drzava").then(setDrzave).catch(() => {});
-    apiFetch<Destinacija[]>("/destinacija").then(setDestinacije).catch(() => {});
-    apiFetch<Mesto[]>("/mesto").then(setMesta).catch(() => {});
-    apiFetch<Grupa[]>("/period-grupa").then(setGrupe).catch(() => {});
+    void ucitajDestinacije();
   }, []);
-
-  // ── Zavisna polja: država → destinacija → mesto → grupa termina ──
-  const destZaDrzavu = useMemo(
-    () => destinacije.filter((d) => String(d.drzava) === form.drzava_id),
-    [destinacije, form.drzava_id],
-  );
-  const mestaZaDest = useMemo(
-    () => mesta.filter((m) => String(m.destinacija) === form.destinacija_id),
-    [mesta, form.destinacija_id],
-  );
-  const grupeZaMesto = useMemo(() => {
-    const m = mesta.find((x) => String(x.id) === form.mesto_id);
-    if (!m) return [];
-    const ids = new Set<number>(m.grupe ?? []);
-    if (m.grupa_datuma != null) ids.add(m.grupa_datuma);
-    return grupe.filter((g) => ids.has(g.id));
-  }, [mesta, grupe, form.mesto_id]);
-
-  // Promena roditelja resetuje decu (izbor mora ostati u skladu sa hijerarhijom)
-  function izaberiDrzavu(v: string) {
-    setForm({ ...form, drzava_id: v, destinacija_id: NISTA, mesto_id: NISTA, grupa_datuma_id: NISTA });
-  }
-  function izaberiDestinaciju(v: string) {
-    setForm({ ...form, destinacija_id: v, mesto_id: NISTA, grupa_datuma_id: NISTA });
-  }
-  function izaberiMesto(v: string) {
-    setForm({ ...form, mesto_id: v, grupa_datuma_id: NISTA });
-  }
-
-  const nazivPregled = useMemo(() => {
-    const dr = drzave.find((x) => String(x.id) === form.drzava_id)?.naziv;
-    const de = destinacije.find((x) => String(x.id) === form.destinacija_id)?.naziv;
-    const me = mesta.find((x) => String(x.id) === form.mesto_id)?.naziv;
-    const gr = grupe.find((x) => String(x.id) === form.grupa_datuma_id)?.naziv;
-    if (!dr || !de || !me || !gr || !form.datum) return "";
-    return `${dr}-${de}-${me}-${gr}-${datumSr(form.datum)}`;
-  }, [drzave, destinacije, mesta, grupe, form]);
 
   function otvoriNovi() {
     setEditing(null);
@@ -189,10 +117,7 @@ export default function PrevozLimitiPage() {
   function otvoriIzmenu(r: PrevozLimit) {
     setEditing(r);
     setForm({
-      drzava_id: r.drzava_id != null ? String(r.drzava_id) : NISTA,
-      destinacija_id: r.destinacija_id != null ? String(r.destinacija_id) : NISTA,
-      mesto_id: r.mesto_id != null ? String(r.mesto_id) : NISTA,
-      grupa_datuma_id: r.grupa_datuma_id != null ? String(r.grupa_datuma_id) : NISTA,
+      id_destinacije_prevoza: String(r.id_destinacije_prevoza),
       datum: r.datum ?? "",
       smer: r.smer,
       limit: String(r.limit),
@@ -203,9 +128,8 @@ export default function PrevozLimitiPage() {
 
   async function snimi() {
     if (saving) return;
-    if (form.drzava_id === NISTA || form.destinacija_id === NISTA || form.mesto_id === NISTA
-        || form.grupa_datuma_id === NISTA || !form.datum) {
-      toast.error("Izaberite državu, destinaciju, mesto, grupu termina i datum");
+    if (form.id_destinacije_prevoza === NISTA || !form.datum) {
+      toast.error("Izaberite destinaciju i datum");
       return;
     }
     const limit = celBroj(form.limit, false);
@@ -214,10 +138,7 @@ export default function PrevozLimitiPage() {
     if (dodatna == null) { toast.error("Dodatna mesta moraju biti ceo broj (može i negativan)"); return; }
 
     const body = {
-      drzava_id: Number(form.drzava_id),
-      destinacija_id: Number(form.destinacija_id),
-      mesto_id: Number(form.mesto_id),
-      grupa_datuma_id: Number(form.grupa_datuma_id),
+      id_destinacije_prevoza: Number(form.id_destinacije_prevoza),
       datum: form.datum,
       smer: form.smer,
       limit,
@@ -245,10 +166,11 @@ export default function PrevozLimitiPage() {
     if (generisi) return;
     setGenerisi(true);
     try {
-      const r = await apiFetch<{ dodato: number; postojeci: number; preskoceno: number }>(
+      const r = await apiFetch<{ destinacije_upisano: number; dodato: number }>(
         "/prevoz-limit/generisi", { method: "POST" },
       );
-      toast.success(`Dodato ${r.dodato}, već postoji ${r.postojeci}${r.preskoceno ? `, preskočeno ${r.preskoceno} (nedostaje destinacija ili država)` : ""}`);
+      toast.success(`Destinacije osvežene (${r.destinacije_upisano}), dodato limita: ${r.dodato}`);
+      await ucitajDestinacije();
       await ucitaj(q.trim());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Greška pri generisanju");
@@ -294,7 +216,7 @@ export default function PrevozLimitiPage() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               aria-label="Pretraga limita"
-              placeholder="Pretraga: država, destinacija, mesto, grupa, smer…"
+              placeholder="Pretraga: destinacija-grupa termina, smer…"
               className="pl-8 h-9"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -311,11 +233,7 @@ export default function PrevozLimitiPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Naziv</TableHead>
-                  <TableHead>Država</TableHead>
-                  <TableHead>Destinacija</TableHead>
-                  <TableHead>Mesto</TableHead>
-                  <TableHead>Grupa termina</TableHead>
+                  <TableHead>Destinacija-Grupa termina</TableHead>
                   <TableHead>Datum</TableHead>
                   <TableHead>Smer</TableHead>
                   <TableHead className="text-right">Limit</TableHead>
@@ -327,24 +245,26 @@ export default function PrevozLimitiPage() {
               <TableBody>
                 {items.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="text-xs text-muted-foreground max-w-[260px] truncate" title={r.naziv}>{r.naziv}</TableCell>
-                    <TableCell>{r.drzava_naziv ?? "—"}</TableCell>
-                    <TableCell>{r.destinacija_naziv ?? "—"}</TableCell>
-                    <TableCell>{r.mesto_naziv ?? "—"}</TableCell>
-                    <TableCell>{r.grupa_datuma_naziv ?? "—"}</TableCell>
+                    <TableCell className="max-w-[360px] truncate" title={r.destinacija_prevoz_naziv ?? ""}>
+                      {r.destinacija_prevoz_naziv ?? "—"}
+                    </TableCell>
                     <TableCell className="tabular-nums">{datumSr(r.datum)}</TableCell>
                     <TableCell><Badge variant="outline">{r.smer}</Badge></TableCell>
                     <TableCell className="text-right tabular-nums">{r.limit}</TableCell>
                     <TableCell className="text-right tabular-nums">
                       {r.dodatna_mesta > 0 ? `+${r.dodatna_mesta}` : r.dodatna_mesta}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums font-semibold">{r.ukupno}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{r.ukupno}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Izmeni limit ${r.naziv}`} onClick={() => otvoriIzmenu(r)}>
+                        <Button size="icon" variant="ghost" className="h-8 w-8"
+                          aria-label={`Izmeni limit ${r.destinacija_prevoz_naziv ?? r.id}`}
+                          onClick={() => otvoriIzmenu(r)}>
                           <Pencil className="w-4 h-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" aria-label={`Obriši limit ${r.naziv}`} onClick={() => setDeleteItem(r)}>
+                        <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive"
+                          aria-label={`Obriši limit ${r.destinacija_prevoz_naziv ?? r.id}`}
+                          onClick={() => setDeleteItem(r)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -358,26 +278,25 @@ export default function PrevozLimitiPage() {
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={(o) => { if (!saving) setDialogOpen(o); }}>
-        <DialogContent className="sm:max-w-xl bg-card">
+        <DialogContent className="bg-card sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? "Izmena limita prevoza" : "Novi limit prevoza"}</DialogTitle>
-            <DialogDescription>
-              Svako polje sužava sledeće: izaberite državu pa destinaciju, mesto i grupu termina.
-            </DialogDescription>
+            <DialogTitle>{editing ? "Izmena limita" : "Novi limit prevoza"}</DialogTitle>
           </DialogHeader>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Izbor label="Država" placeholder="Izaberite državu" value={form.drzava_id}
-              onChange={izaberiDrzavu} opcije={drzave} />
-            <Izbor label="Destinacija" placeholder={form.drzava_id === NISTA ? "Prvo izaberite državu" : "Izaberite destinaciju"}
-              value={form.destinacija_id} onChange={izaberiDestinaciju} opcije={destZaDrzavu}
-              disabled={form.drzava_id === NISTA} />
-            <Izbor label="Mesto" placeholder={form.destinacija_id === NISTA ? "Prvo izaberite destinaciju" : "Izaberite mesto"}
-              value={form.mesto_id} onChange={izaberiMesto} opcije={mestaZaDest}
-              disabled={form.destinacija_id === NISTA} />
-            <Izbor label="Grupa termina" placeholder={form.mesto_id === NISTA ? "Prvo izaberite mesto" : "Izaberite grupu termina"}
-              value={form.grupa_datuma_id}
-              onChange={(v) => setForm({ ...form, grupa_datuma_id: v })} opcije={grupeZaMesto}
-              disabled={form.mesto_id === NISTA} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1 sm:col-span-2">
+              <Label className="text-xs">Destinacija-Grupa termina</Label>
+              <Select value={form.id_destinacije_prevoza}
+                onValueChange={(v) => setForm({ ...form, id_destinacije_prevoza: v })}>
+                <SelectTrigger aria-label="Destinacija-Grupa termina" className="h-9">
+                  <SelectValue placeholder="Izaberite destinaciju" />
+                </SelectTrigger>
+                <SelectContent>
+                  {destinacije.map((d) => (
+                    <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-1">
               <Label className="text-xs" htmlFor="pl-datum">Datum</Label>
               <Input id="pl-datum" type="date" className="h-9" value={form.datum}
@@ -402,9 +321,6 @@ export default function PrevozLimitiPage() {
               <Input id="pl-dodatna" inputMode="numeric" className="h-9" value={form.dodatna_mesta}
                 onChange={(e) => setForm({ ...form, dodatna_mesta: e.target.value })} />
             </div>
-            <p className="sm:col-span-2 text-xs text-muted-foreground break-all">
-              Naziv: {nazivPregled || "— biće određen izborom veza i datuma"}
-            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Odustani</Button>
@@ -420,7 +336,7 @@ export default function PrevozLimitiPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Obrisati limit?</AlertDialogTitle>
             <AlertDialogDescription>
-              „{deleteItem?.naziv}“ biće trajno obrisan.
+              „{deleteItem?.destinacija_prevoz_naziv} · {datumSr(deleteItem?.datum ?? null)} · {deleteItem?.smer}“ biće trajno obrisan.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
