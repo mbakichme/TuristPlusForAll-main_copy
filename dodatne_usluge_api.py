@@ -83,3 +83,24 @@ def register_dodatne_usluge(api, engine, get_current_user):
                 RETURNING id, naziv, iznos_eur, iznos_din, created_at, updated_at
             """), {"naziv": body.naziv, "eur": body.iznos_eur, "din": body.iznos_din}).mappings().one()
         return _red(row)
+
+    @api.put("/dodatne-usluge/{item_id}")
+    def izmeni(item_id: int, body: DodatnaUslugaIn, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            row = conn.execute(text("""
+                UPDATE dodatne_usluge
+                SET naziv = :naziv, iznos_eur = :eur, iznos_din = :din, updated_at = NOW()
+                WHERE id = :id
+                RETURNING id, naziv, iznos_eur, iznos_din, created_at, updated_at
+            """), {"id": item_id, "naziv": body.naziv, "eur": body.iznos_eur, "din": body.iznos_din}).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Dodatna usluga nije pronađena")
+        return _red(row)
+
+    @api.delete("/dodatne-usluge/{item_id}")
+    def obrisi(item_id: int, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            res = conn.execute(text("DELETE FROM dodatne_usluge WHERE id = :id"), {"id": item_id})
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Dodatna usluga nije pronađena")
+        return {"status": "obrisano"}

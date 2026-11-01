@@ -10,8 +10,12 @@ import {
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Loader2, Receipt } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Receipt } from "lucide-react";
 import { toast } from "sonner";
 
 interface DodatnaUsluga {
@@ -24,15 +28,27 @@ interface DodatnaUsluga {
 const formatIznos = (v: number) =>
   v.toLocaleString("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+function parsiraj(vrednost: string): number | null {
+  const t = vrednost.trim().replace(",", ".");
+  if (t === "") return 0;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
 export default function DodatneUslugePage() {
   const [items, setItems] = useState<DodatnaUsluga[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<DodatnaUsluga | null>(null);
   const [naziv, setNaziv] = useState("");
   const [eur, setEur] = useState("");
   const [din, setDin] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const [deleteItem, setDeleteItem] = useState<DodatnaUsluga | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function ucitaj() {
     try {
@@ -47,18 +63,19 @@ export default function DodatneUslugePage() {
   useEffect(() => { void ucitaj(); }, []);
 
   function otvoriNovu() {
+    setEditing(null);
     setNaziv("");
     setEur("");
     setDin("");
     setDialogOpen(true);
   }
 
-  function parsiraj(vrednost: string): number | null {
-    const t = vrednost.trim().replace(",", ".");
-    if (t === "") return 0;
-    const n = Number(t);
-    if (!Number.isFinite(n) || n < 0) return null;
-    return Math.round(n * 100) / 100;
+  function otvoriIzmenu(u: DodatnaUsluga) {
+    setEditing(u);
+    setNaziv(u.naziv);
+    setEur(String(u.iznos_eur));
+    setDin(String(u.iznos_din));
+    setDialogOpen(true);
   }
 
   async function snimi() {
@@ -73,19 +90,37 @@ export default function DodatneUslugePage() {
       toast.error("Iznos mora biti broj veći ili jednak 0");
       return;
     }
+    const telo = JSON.stringify({ naziv: imeTrim, iznos_eur: iznosEur, iznos_din: iznosDin });
     setSaving(true);
     try {
-      await apiFetch("/dodatne-usluge", {
-        method: "POST",
-        body: JSON.stringify({ naziv: imeTrim, iznos_eur: iznosEur, iznos_din: iznosDin }),
-      });
-      toast.success("Dodatna usluga je dodata");
+      if (editing) {
+        await apiFetch(`/dodatne-usluge/${editing.id}`, { method: "PUT", body: telo });
+        toast.success("Dodatna usluga je sačuvana");
+      } else {
+        await apiFetch("/dodatne-usluge", { method: "POST", body: telo });
+        toast.success("Dodatna usluga je dodata");
+      }
       setDialogOpen(false);
       await ucitaj();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Čuvanje nije uspelo");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function obrisi() {
+    if (!deleteItem) return;
+    setDeleting(true);
+    try {
+      await apiFetch(`/dodatne-usluge/${deleteItem.id}`, { method: "DELETE" });
+      toast.success("Dodatna usluga je obrisana");
+      setDeleteItem(null);
+      await ucitaj();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Brisanje nije uspelo");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -121,6 +156,7 @@ export default function DodatneUslugePage() {
                   <TableHead>Naziv</TableHead>
                   <TableHead className="text-right">Iznos (EUR)</TableHead>
                   <TableHead className="text-right">Iznos (din)</TableHead>
+                  <TableHead className="text-right w-24">Akcije</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -129,6 +165,18 @@ export default function DodatneUslugePage() {
                     <TableCell className="font-medium">{u.naziv}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatIznos(u.iznos_eur)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatIznos(u.iznos_din)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8"
+                          aria-label={`Izmeni ${u.naziv}`} onClick={() => otvoriIzmenu(u)}>
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                          aria-label={`Obriši ${u.naziv}`} onClick={() => setDeleteItem(u)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -140,7 +188,7 @@ export default function DodatneUslugePage() {
       <Dialog open={dialogOpen} onOpenChange={(o) => { if (!saving) setDialogOpen(o); }}>
         <DialogContent className="sm:max-w-md bg-card">
           <DialogHeader>
-            <DialogTitle>Nova dodatna usluga</DialogTitle>
+            <DialogTitle>{editing ? "Izmena dodatne usluge" : "Nova dodatna usluga"}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-3">
@@ -171,6 +219,23 @@ export default function DodatneUslugePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteItem !== null} onOpenChange={(o) => { if (!o && !deleting) setDeleteItem(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Obrisati dodatnu uslugu?</AlertDialogTitle>
+            <AlertDialogDescription>
+              „{deleteItem?.naziv}“ biće trajno obrisana. Brisanje se ne može opozvati.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Odustani</AlertDialogCancel>
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); void obrisi(); }} disabled={deleting}>
+              Obriši
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

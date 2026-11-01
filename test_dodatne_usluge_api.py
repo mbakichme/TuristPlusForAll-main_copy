@@ -62,6 +62,23 @@ with httpx.Client(base_url=BASE, headers=H, timeout=30) as c:
 r = httpx.get(BASE + "/dodatne-usluge", timeout=30)
 check("GET bez tokena → 401", r.status_code == 401)
 
+with httpx.Client(base_url=BASE, headers=H, timeout=30) as c:
+    r = c.post("/dodatne-usluge", json={"naziv": f"{TEST_PREFIX}Izmena", "iznos_eur": 10, "iznos_din": 1000})
+    uid = r.json()["id"]
+    r = c.put(f"/dodatne-usluge/{uid}", json={"naziv": f"  {TEST_PREFIX}Izmenjeno ", "iznos_eur": 30.5, "iznos_din": 3600})
+    check("PUT 200 menja naziv i iznose (trim)",
+          r.status_code == 200 and r.json()["naziv"] == f"{TEST_PREFIX}Izmenjeno"
+          and r.json()["iznos_eur"] == 30.5 and r.json()["iznos_din"] == 3600.0)
+    check("PUT sa praznim nazivom → 422",
+          c.put(f"/dodatne-usluge/{uid}", json={"naziv": " ", "iznos_eur": 1, "iznos_din": 1}).status_code == 422)
+    check("PUT nepostojeći id → 404",
+          c.put("/dodatne-usluge/999999999", json={"naziv": "X", "iznos_eur": 1, "iznos_din": 1}).status_code == 404)
+    check("DELETE 200", c.delete(f"/dodatne-usluge/{uid}").status_code == 200)
+    check("DELETE ponovo → 404", c.delete(f"/dodatne-usluge/{uid}").status_code == 404)
+    check("PUT obrisanog → 404",
+          c.put(f"/dodatne-usluge/{uid}", json={"naziv": "X", "iznos_eur": 1, "iznos_din": 1}).status_code == 404)
+    check("DELETE bez tokena → 401", httpx.delete(f"{BASE}/dodatne-usluge/{uid}", timeout=30).status_code == 401)
+
 with eng.begin() as conn:
     deleted = conn.execute(text("DELETE FROM dodatne_usluge WHERE naziv LIKE :p"), {"p": TEST_PREFIX + "%"}).rowcount
 print(f"cleanup: obrisano test redova = {deleted}")
