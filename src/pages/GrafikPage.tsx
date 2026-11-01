@@ -1228,11 +1228,15 @@ export default function GrafikPage() {
       <Dialog open={slotOtvoren} onOpenChange={(o) => { if (!o) zatvoriSlotove(); }}>
         <DialogContent className="gap-5 rounded-2xl p-5 shadow-xl sm:max-w-lg sm:rounded-2xl sm:p-6">
           <DialogHeader className="text-left">
-            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-green-600/10 text-green-600">
-              <CalendarCheck2 className="h-6 w-6" aria-hidden="true" />
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-green-600/10 text-green-600">
+                <CalendarCheck2 className="h-6 w-6" aria-hidden="true" />
+              </div>
+              <div className="space-y-1">
+                <DialogTitle className="text-xl tracking-tight">Slobodan termin</DialogTitle>
+                <DialogDescription>Izaberite način rezervacije za odabrani boravak.</DialogDescription>
+              </div>
             </div>
-            <DialogTitle className="text-xl tracking-tight">Slobodan termin</DialogTitle>
-            <DialogDescription>Izaberite način rezervacije za odabrani boravak.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 rounded-xl border border-border/60 bg-muted/40 p-4">
             <div className="flex items-center gap-3">
