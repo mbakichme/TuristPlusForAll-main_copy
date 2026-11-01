@@ -1226,7 +1226,7 @@ export default function GrafikPage() {
 
       {/* Popup: slobodan termin → Klasična / Brza rezervacija */}
       <Dialog open={slotOtvoren} onOpenChange={(o) => { if (!o) zatvoriSlotove(); }}>
-        <DialogContent className="gap-5 rounded-2xl p-5 shadow-xl sm:max-w-lg sm:rounded-2xl sm:p-6">
+        <DialogContent className="gap-5 rounded-2xl bg-card p-5 shadow-xl sm:max-w-lg sm:rounded-2xl sm:p-6">
           <DialogHeader className="text-left">
             <div className="flex items-center gap-3">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-green-600/10 text-green-600">
