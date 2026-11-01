@@ -198,6 +198,7 @@ export default function PrevozLimitiPage() {
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-base flex items-center gap-2">
             <Armchair className="w-4 h-4" />Limiti prevoz
+            {!loading && <Badge variant="secondary" className="tabular-nums">{items.length}</Badge>}
           </CardTitle>
           <div className="flex gap-2">
             <Button size="sm" onClick={otvoriNovi}>
