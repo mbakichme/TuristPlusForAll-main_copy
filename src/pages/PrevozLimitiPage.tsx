@@ -18,7 +18,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Pencil, Trash2, Loader2, Armchair, Search, Wand2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Armchair, Search } from "lucide-react";
 import { toast } from "sonner";
 
 interface PrevozLimit {
@@ -74,7 +74,6 @@ export default function PrevozLimitiPage() {
   const [editing, setEditing] = useState<PrevozLimit | null>(null);
   const [form, setForm] = useState<FormState>(prazno);
   const [saving, setSaving] = useState(false);
-  const [generisi, setGenerisi] = useState(false);
   const [deleteItem, setDeleteItem] = useState<PrevozLimit | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -128,8 +127,29 @@ export default function PrevozLimitiPage() {
 
   async function snimi() {
     if (saving) return;
-    if (form.id_destinacije_prevoza === NISTA || !form.datum) {
-      toast.error("Izaberite destinaciju i datum");
+    if (form.id_destinacije_prevoza === NISTA) {
+      toast.error("Izaberite destinaciju prevoza");
+      return;
+    }
+    if (!editing) {
+      setSaving(true);
+      try {
+        const r = await apiFetch<{ dodato: number; postojalo: number }>(
+          "/prevoz-limit/kreiraj",
+          { method: "POST", body: JSON.stringify({ id_destinacije_prevoza: Number(form.id_destinacije_prevoza) }) },
+        );
+        toast.success(`Kreirano limita: ${r.dodato}${r.postojalo ? ` (već postojalo: ${r.postojalo})` : ""}`);
+        setDialogOpen(false);
+        await ucitaj(q.trim());
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Greška pri kreiranju");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    if (!form.datum) {
+      toast.error("Izaberite datum");
       return;
     }
     const limit = celBroj(form.limit, false);
@@ -146,36 +166,14 @@ export default function PrevozLimitiPage() {
     };
     setSaving(true);
     try {
-      if (editing) {
-        await apiFetch(`/prevoz-limit/${editing.id}`, { method: "PUT", body: JSON.stringify(body) });
-        toast.success("Limit je sačuvan");
-      } else {
-        await apiFetch("/prevoz-limit", { method: "POST", body: JSON.stringify(body) });
-        toast.success("Limit je dodat");
-      }
+      await apiFetch(`/prevoz-limit/${editing.id}`, { method: "PUT", body: JSON.stringify(body) });
+      toast.success("Limit je sačuvan");
       setDialogOpen(false);
       await ucitaj(q.trim());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Greška pri čuvanju");
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function pokreniGenerisanje() {
-    if (generisi) return;
-    setGenerisi(true);
-    try {
-      const r = await apiFetch<{ dodato: number }>(
-        "/prevoz-limit/generisi", { method: "POST" },
-      );
-      toast.success(`Dodato limita: ${r.dodato}`);
-      await ucitajDestinacije();
-      await ucitaj(q.trim());
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Greška pri generisanju");
-    } finally {
-      setGenerisi(false);
     }
   }
 
@@ -202,10 +200,6 @@ export default function PrevozLimitiPage() {
             <Armchair className="w-4 h-4" />Limiti prevoz
           </CardTitle>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={pokreniGenerisanje} disabled={generisi}>
-              {generisi ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Wand2 className="w-4 h-4 mr-1" />}
-              Generiši iz grupa termina
-            </Button>
             <Button size="sm" onClick={otvoriNovi}>
               <Plus className="w-4 h-4 mr-1" />Dodaj limit
             </Button>
@@ -227,7 +221,7 @@ export default function PrevozLimitiPage() {
             <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin" /></div>
           ) : items.length === 0 ? (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              {q.trim() ? "Nema limita za zadatu pretragu." : "Još nema unetih limita. Kliknite „Generiši iz grupa termina“."}
+              {q.trim() ? "Nema limita za zadatu pretragu." : "Još nema unetih limita. Kliknite „Dodaj limit“ i izaberite destinaciju prevoza."}
             </p>
           ) : (
             <Table>
@@ -284,11 +278,11 @@ export default function PrevozLimitiPage() {
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1 sm:col-span-2">
-              <Label className="text-xs">Destinacija-Grupa termina</Label>
+              <Label className="text-xs">Destinacija prevoza</Label>
               <Select value={form.id_destinacije_prevoza}
                 onValueChange={(v) => setForm({ ...form, id_destinacije_prevoza: v })}>
-                <SelectTrigger aria-label="Destinacija-Grupa termina" className="h-9">
-                  <SelectValue placeholder="Izaberite destinaciju" />
+                <SelectTrigger aria-label="Destinacija prevoza" className="h-9">
+                  <SelectValue placeholder="Izaberite destinaciju prevoza" />
                 </SelectTrigger>
                 <SelectContent>
                   {destinacije.map((d) => (
@@ -297,6 +291,7 @@ export default function PrevozLimitiPage() {
                 </SelectContent>
               </Select>
             </div>
+            {editing && (<>
             <div className="space-y-1">
               <Label className="text-xs" htmlFor="pl-datum">Datum</Label>
               <Input id="pl-datum" type="date" className="h-9" value={form.datum}
@@ -321,11 +316,12 @@ export default function PrevozLimitiPage() {
               <Input id="pl-dodatna" inputMode="numeric" className="h-9" value={form.dodatna_mesta}
                 onChange={(e) => setForm({ ...form, dodatna_mesta: e.target.value })} />
             </div>
+            </>)}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Odustani</Button>
             <Button onClick={snimi} disabled={saving}>
-              {saving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}Sačuvaj
+              {saving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}{editing ? "Sačuvaj" : "Kreiraj limite"}
             </Button>
           </DialogFooter>
         </DialogContent>

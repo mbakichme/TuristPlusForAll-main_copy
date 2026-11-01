@@ -40,6 +40,10 @@ class DestinacijaPrevozIn(BaseModel):
     grupe: list[int] = Field(..., min_length=1)
 
 
+class DestinacijaPrevozBrzoIn(BaseModel):
+    id_destinacije_prevoza: int
+
+
 class DestinacijaPrevozGrupeIn(BaseModel):
     grupe: list[int] = Field(..., min_length=1)
 
@@ -299,19 +303,35 @@ def register_prevoz_limit(api, engine, get_current_user):
                 raise HTTPException(status_code=404, detail="Limit nije pronađen")
         return {"status": "obrisano", "id": item_id}
 
-    @api.post("/prevoz-limit/generisi")
-    def generisi_prevoz_limit(_: dict = Depends(get_current_user)):
-        """Za svaku destinaciju prevoza i svaki period njenih grupa termina pravi Odlazak (datum_od)
-        i Povratak (datum_do). Postojeći redovi (destinacija, datum, smer) se ne diraju."""
+    @api.post("/prevoz-limit/kreiraj")
+    def kreiraj_limite_za_destinaciju(body: DestinacijaPrevozBrzoIn, _: dict = Depends(get_current_user)):
+        """Za izabranu destinaciju prevoza i sve njene grupe termina pravi red za svaki Odlazak
+        (datum_od) i Povratak (datum_do). Limit i dodatna mesta kreću od 0.
+        Postojeći red (destinacija, datum, smer) se ne menja i ne duplira."""
         with engine.begin() as conn:
+            _proveri_destinaciju_prevoza(conn, body.id_destinacije_prevoza)
+            ukupno = conn.execute(text("""
+                SELECT count(*) FROM (
+                    SELECT pd.datum_od AS datum, 'Odlazak' AS smer
+                    FROM destinacija_prevoz_grupa dpg
+                    JOIN period_datum pd ON pd.grupa_id = dpg.id_grupe_termina
+                    WHERE dpg.destinacija_prevoz_id = :dp
+                    UNION
+                    SELECT pd.datum_do, 'Povratak'
+                    FROM destinacija_prevoz_grupa dpg
+                    JOIN period_datum pd ON pd.grupa_id = dpg.id_grupe_termina
+                    WHERE dpg.destinacija_prevoz_id = :dp
+                ) t
+            """), {"dp": body.id_destinacije_prevoza}).scalar_one()
             dodato = 0
             for smer, kolona in (("Odlazak", "datum_od"), ("Povratak", "datum_do")):
                 res = conn.execute(text(f"""
                     INSERT INTO prevoz_limit (id_destinacije_prevoza, datum, smer, limit_mesta, dodatna_mesta)
-                    SELECT dpg.destinacija_prevoz_id, pd.{kolona}, :smer, 0, 0
+                    SELECT DISTINCT dpg.destinacija_prevoz_id, pd.{kolona}, :smer, 0, 0
                     FROM destinacija_prevoz_grupa dpg
                     JOIN period_datum pd ON pd.grupa_id = dpg.id_grupe_termina
+                    WHERE dpg.destinacija_prevoz_id = :dp
                     ON CONFLICT (id_destinacije_prevoza, datum, smer) DO NOTHING
-                """), {"smer": smer})
+                """), {"smer": smer, "dp": body.id_destinacije_prevoza})
                 dodato += res.rowcount
-        return {"status": "generisano", "dodato": dodato}
+        return {"status": "kreirano", "dodato": dodato, "postojalo": ukupno - dodato}
