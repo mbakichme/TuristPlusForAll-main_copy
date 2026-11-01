@@ -305,6 +305,26 @@ interface PrevozRed {
   placeno: boolean;
   zelja: boolean;
 }
+/** Sažetak u zaglavlju taba Prevoz: broj putnika na prevozu + plaćena mesta (samo mesta sa uplatom). */
+function PrevozSazetak({ stavke }: { stavke: { naPrevozu: boolean; mesto: string; placeno: boolean }[] }) {
+  const naPrevozu = stavke.filter((s) => s.naPrevozu).length;
+  const placeno = MESTO_SEDENJA
+    .map((m) => ({ mesto: m, broj: stavke.filter((s) => s.placeno && s.mesto === m).length }))
+    .filter((x) => x.broj > 0);
+  return (
+    <div className="flex flex-col items-end gap-1 text-right text-xs">
+      <p><span className="text-muted-foreground">Broj putnika na prevozu: </span><span className="font-semibold tabular-nums">{naPrevozu}</span></p>
+      {placeno.length > 0 && (
+        <p>
+          <span className="text-muted-foreground">Plaćeno: </span>
+          {placeno.map((x, i) => (
+            <span key={x.mesto} className="font-medium">{i > 0 && ", "}{x.mesto.charAt(0) + x.mesto.slice(1).toLowerCase()} ({x.broj})</span>
+          ))}
+        </p>
+      )}
+    </div>
+  );
+}
 /** Minimalni oblik reda iz registra prevoza (tabela polazak, GET /polazak). */
 interface PolazakUlazak {
   id: number;
@@ -1060,6 +1080,17 @@ export default function RezervacijePage() {
       osnovni: false as const,
     })),
   ], [nosilac.ime, saputnici]);
+
+  // sažetak prevoza (desni deo zaglavlja taba Prevoz): putnici sa bilo kojim prevozom i plaćena mesta
+  const prevozStavke = useMemo(() => putnici.map((p) => {
+    const red = prevozRedovi[p.uid];
+    const osoba = p.osnovni ? nosilac : saputnici.find((s) => s.uid === p.uid);
+    return {
+      naPrevozu: !!osoba && (osoba.ow || osoba.rt || osoba.sp),
+      mesto: red?.mestoSedenja ?? "",
+      placeno: !!red?.placeno,
+    };
+  }), [putnici, prevozRedovi, nosilac, saputnici]);
 
   // Mesta ulaska iz registra prevoza: opciono sužena na izabranu destinaciju — po nazivu,
   // jer je polazak.destinacija tekst, ne ID (ako nema poklapanja, ostaju svi redovi).
@@ -2895,10 +2926,15 @@ export default function RezervacijePage() {
         <TabsContent value="prevoz" className="mt-4">
           <Card className={TON.teal.kartica}>
             <CardHeader className={TON.teal.zaglavlje}>
-              <CardTitle className="text-base flex items-center gap-2">
-                <SekcijaIkona ton="teal"><Bus /></SekcijaIkona>Prevoz
-              </CardTitle>
-              <CardDescription>Destinacija, mesta ulaska i sedišta po putniku</CardDescription>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <SekcijaIkona ton="teal"><Bus /></SekcijaIkona>Prevoz
+                  </CardTitle>
+                  <CardDescription>Destinacija, mesta ulaska i sedišta po putniku</CardDescription>
+                </div>
+                <PrevozSazetak stavke={prevozStavke} />
+              </div>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2 items-start">
