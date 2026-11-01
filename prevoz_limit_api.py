@@ -1,6 +1,6 @@
 """Limiti prevoz i destinacije prevoza.
 
-  destinacija_prevoz:       jedan red po destinaciji (id_destinacije); naziv = naziv destinacije.
+  destinacija_prevoz:       više redova može imati istu destinaciju (id_destinacije); naziv = naziv destinacije.
   destinacija_prevoz_grupa: veza destinacija prevoza ↔ grupa termina. Grupa termina može biti
                             vezana samo za JEDNU destinaciju prevoza (UNIQUE na id_grupe_termina).
                             Grupe se biraju među grupama povezanim sa destinacijom (preko mesta).
@@ -57,10 +57,10 @@ def init_prevoz_limit(engine):
                 id_destinacije INTEGER NOT NULL,
                 naziv VARCHAR(300) NOT NULL,
                 created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW(),
-                CONSTRAINT destinacija_prevoz_destinacija_uniq UNIQUE (id_destinacije)
+                updated_at TIMESTAMP DEFAULT NOW()
             )
         """))
+        conn.execute(text("ALTER TABLE destinacija_prevoz DROP CONSTRAINT IF EXISTS destinacija_prevoz_destinacija_uniq"))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS destinacija_prevoz_grupa (
                 id SERIAL PRIMARY KEY,
@@ -211,9 +211,6 @@ def register_prevoz_limit(api, engine, get_current_user):
                                 {"i": body.id_destinacije}).first()
             if not dest:
                 raise HTTPException(status_code=400, detail="Nepoznata destinacija")
-            if conn.execute(text("SELECT 1 FROM destinacija_prevoz WHERE id_destinacije = :i"),
-                            {"i": body.id_destinacije}).first():
-                raise HTTPException(status_code=409, detail="Destinacija prevoza za ovu destinaciju već postoji")
             grupe = sorted(set(body.grupe))
             _proveri_grupe(conn, body.id_destinacije, grupe, None)
             new_id = conn.execute(text("""

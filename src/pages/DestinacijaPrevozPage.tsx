@@ -64,11 +64,8 @@ export default function DestinacijaPrevozPage() {
     apiFetch<Destinacija[]>("/destinacija").then(setDestinacije).catch(() => {});
   }, []);
 
-  // Destinacije koje već imaju destinaciju prevoza ne nude se pri kreiranju
-  const destinacijeZaIzbor = useMemo(() => {
-    const zauzete = new Set(items.map((i) => i.id_destinacije));
-    return destinacije.filter((d) => !zauzete.has(d.id));
-  }, [destinacije, items]);
+  // Ista destinacija može imati više destinacija prevoza (različite grupe termina)
+  const destinacijeZaIzbor = destinacije;
 
   async function ucitajGrupe(idDest: number, dpId: number | null) {
     setGrupeUcitavaju(true);
