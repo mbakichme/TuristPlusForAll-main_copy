@@ -1,13 +1,16 @@
-"""Limiti prevoz po destinaciji i grupi termina.
+"""Limiti prevoz i destinacije prevoza.
 
-  destinacija_prevoz: jedan red po (destinacija, grupa termina) — iz mesto_grupa + mesto.destinacija.
-                      naziv = "<naziv destinacije>-<naziv grupe termina>"
-  prevoz_limit:       jedan red po (destinacija_prevoz, datum, smer).
-                      Odlazak = datum_od perioda grupe, Povratak = datum_do perioda grupe.
+  destinacija_prevoz:       jedan red po destinaciji (id_destinacije); naziv = naziv destinacije.
+  destinacija_prevoz_grupa: veza destinacija prevoza ↔ grupa termina. Grupa termina može biti
+                            vezana samo za JEDNU destinaciju prevoza (UNIQUE na id_grupe_termina).
+                            Grupe se biraju među grupama povezanim sa destinacijom (preko mesta).
+  prevoz_limit:             jedan red po (destinacija prevoza, datum, smer).
+                            Odlazak = datum_od, Povratak = datum_do perioda grupa termina.
 
 Veze su samo ID-jevi (bez FK, po konvenciji projekta).
 """
 from datetime import date
+from typing import Optional
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -15,17 +18,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 SMEROVI = ("Odlazak", "Povratak")
-
-# Veza destinacija ↔ grupa termina: preko mesta (mesto_grupa + mesto.destinacija)
-DESTINACIJE_PREVOZ_SQL = """
-    SELECT DISTINCT m.destinacija AS id_destinacije, x.grupa_id AS id_grupe_termina,
-           d.naziv || '-' || pg.naziv AS naziv
-    FROM mesto_grupa x
-    JOIN mesto m ON m.id = x.mesto_id
-    JOIN destinacija d ON d.id = m.destinacija
-    JOIN period_grupa pg ON pg.id = x.grupa_id
-    WHERE m.destinacija IS NOT NULL
-"""
 
 
 class PrevozLimitIn(BaseModel):
@@ -43,17 +35,39 @@ class PrevozLimitIn(BaseModel):
         return value
 
 
+class DestinacijaPrevozIn(BaseModel):
+    id_destinacije: int
+    grupe: list[int] = Field(..., min_length=1)
+
+
+class DestinacijaPrevozGrupeIn(BaseModel):
+    grupe: list[int] = Field(..., min_length=1)
+
+    @field_validator("grupe")
+    @classmethod
+    def bez_duplikata(cls, value):
+        return sorted(set(value))
+
+
 def init_prevoz_limit(engine):
     with engine.begin() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS destinacija_prevoz (
                 id SERIAL PRIMARY KEY,
                 id_destinacije INTEGER NOT NULL,
-                id_grupe_termina INTEGER NOT NULL,
                 naziv VARCHAR(300) NOT NULL,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW(),
-                CONSTRAINT destinacija_prevoz_uniq UNIQUE (id_destinacije, id_grupe_termina)
+                CONSTRAINT destinacija_prevoz_destinacija_uniq UNIQUE (id_destinacije)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS destinacija_prevoz_grupa (
+                id SERIAL PRIMARY KEY,
+                destinacija_prevoz_id INTEGER NOT NULL,
+                id_grupe_termina INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW(),
+                CONSTRAINT destinacija_prevoz_grupa_uniq UNIQUE (id_grupe_termina)
             )
         """))
         conn.execute(text("""
@@ -68,46 +82,27 @@ def init_prevoz_limit(engine):
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """))
-        # Migracija sa stare šeme (država/destinacija/mesto/grupa po redu) na destinacija_prevoz
-        for kolona in ("naziv", "drzava_id", "destinacija_id", "mesto_id", "grupa_datuma_id"):
-            conn.execute(text(f"ALTER TABLE prevoz_limit DROP COLUMN IF EXISTS {kolona}"))
-        conn.execute(text("ALTER TABLE prevoz_limit ADD COLUMN IF NOT EXISTS id_destinacije_prevoza INTEGER"))
-        conn.execute(text("DROP INDEX IF EXISTS prevoz_limit_uniq"))
         conn.execute(text("""
             CREATE UNIQUE INDEX IF NOT EXISTS prevoz_limit_uniq
             ON prevoz_limit (id_destinacije_prevoza, datum, smer)
         """))
 
 
-def _sync_destinacije_prevoz(conn) -> int:
-    """Upisuje/osvežava destinacija_prevoz iz mesta i grupa termina. Vraća broj upisanih/izmenjenih."""
-    res = conn.execute(text(f"""
-        INSERT INTO destinacija_prevoz (id_destinacije, id_grupe_termina, naziv)
-        SELECT s.id_destinacije, s.id_grupe_termina, s.naziv
-        FROM ({DESTINACIJE_PREVOZ_SQL}) s
-        ON CONFLICT (id_destinacije, id_grupe_termina)
-        DO UPDATE SET naziv = EXCLUDED.naziv, updated_at = NOW()
-        WHERE destinacija_prevoz.naziv <> EXCLUDED.naziv
-    """))
-    return res.rowcount
-
-
 SELECT_SQL = """
     SELECT pl.id, pl.id_destinacije_prevoza, pl.datum, pl.smer, pl.limit_mesta, pl.dodatna_mesta,
            pl.created_at, pl.updated_at,
-           dp.naziv AS destinacija_prevoz_naziv, dp.id_destinacije, dp.id_grupe_termina
+           dp.naziv AS destinacija_prevoz_naziv, dp.id_destinacije
     FROM prevoz_limit pl
     LEFT JOIN destinacija_prevoz dp ON dp.id = pl.id_destinacije_prevoza
 """
 
 
-def _red(r):
+def _red_limita(r):
     return {
         "id": r.id,
         "id_destinacije_prevoza": r.id_destinacije_prevoza,
         "destinacija_prevoz_naziv": r.destinacija_prevoz_naziv,
         "id_destinacije": r.id_destinacije,
-        "id_grupe_termina": r.id_grupe_termina,
         "datum": r.datum.isoformat() if r.datum else None,
         "smer": r.smer,
         "limit": r.limit_mesta,
@@ -133,18 +128,125 @@ def _params(body: PrevozLimitIn) -> dict:
     }
 
 
+def _grupe_destinacije(conn, id_destinacije: int, dp_id: Optional[int]) -> set[int]:
+    """Grupe termina povezane sa destinacijom (preko mesta); proverava da li su slobodne."""
+    rows = conn.execute(text("""
+        SELECT DISTINCT pg.id, dpg.destinacija_prevoz_id
+        FROM mesto_grupa mg
+        JOIN mesto m ON m.id = mg.mesto_id
+        JOIN period_grupa pg ON pg.id = mg.grupa_id
+        LEFT JOIN destinacija_prevoz_grupa dpg ON dpg.id_grupe_termina = pg.id
+        WHERE m.destinacija = :d
+    """), {"d": id_destinacije}).fetchall()
+    return {r.id for r in rows}
+
+
+def _proveri_grupe(conn, id_destinacije: int, grupe: list[int], dp_id: Optional[int]) -> None:
+    dozvoljene = _grupe_destinacije(conn, id_destinacije, dp_id)
+    if not set(grupe) <= dozvoljene:
+        raise HTTPException(status_code=400, detail="Grupa termina nije povezana sa izabranom destinacijom")
+    zauzete = conn.execute(text("""
+        SELECT id_grupe_termina, destinacija_prevoz_id FROM destinacija_prevoz_grupa
+        WHERE id_grupe_termina = ANY(:g) AND (:dp IS NULL OR destinacija_prevoz_id <> :dp)
+    """), {"g": grupe, "dp": dp_id}).fetchall()
+    if zauzete:
+        raise HTTPException(status_code=409, detail="Neka grupa termina je već vezana za drugu destinaciju prevoza")
+
+
+def _upisi_grupe(conn, dp_id: int, grupe: list[int]) -> None:
+    conn.execute(text("DELETE FROM destinacija_prevoz_grupa WHERE destinacija_prevoz_id = :dp"), {"dp": dp_id})
+    for g in grupe:
+        conn.execute(text("""
+            INSERT INTO destinacija_prevoz_grupa (destinacija_prevoz_id, id_grupe_termina)
+            VALUES (:dp, :g)
+        """), {"dp": dp_id, "g": g})
+
+
 def register_prevoz_limit(api, engine, get_current_user):
     @api.get("/destinacija-prevoz")
     def list_destinacija_prevoz(_: dict = Depends(get_current_user)):
         with engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, id_destinacije, id_grupe_termina, naziv FROM destinacija_prevoz ORDER BY naziv"
-            )).fetchall()
+            rows = conn.execute(text("""
+                SELECT dp.id, dp.id_destinacije, dp.naziv, dp.created_at, dp.updated_at,
+                       COALESCE(json_agg(json_build_object('id', pg.id, 'naziv', pg.naziv)
+                                ORDER BY pg.naziv) FILTER (WHERE pg.id IS NOT NULL), '[]') AS grupe
+                FROM destinacija_prevoz dp
+                LEFT JOIN destinacija_prevoz_grupa dpg ON dpg.destinacija_prevoz_id = dp.id
+                LEFT JOIN period_grupa pg ON pg.id = dpg.id_grupe_termina
+                GROUP BY dp.id
+                ORDER BY dp.naziv
+            """)).fetchall()
         return [
-            {"id": r.id, "id_destinacije": r.id_destinacije,
-             "id_grupe_termina": r.id_grupe_termina, "naziv": r.naziv}
+            {"id": r.id, "id_destinacije": r.id_destinacije, "naziv": r.naziv,
+             "grupe": r.grupe,
+             "created_at": r.created_at.isoformat() if r.created_at else None,
+             "updated_at": r.updated_at.isoformat() if r.updated_at else None}
             for r in rows
         ]
+
+    @api.get("/destinacija-prevoz/grupe")
+    def grupe_za_destinaciju(id_destinacije: int, dp_id: Optional[int] = None,
+                             _: dict = Depends(get_current_user)):
+        """Grupe termina povezane sa destinacijom; zauzeta = vezana za drugu destinaciju prevoza."""
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT DISTINCT pg.id, pg.naziv, dpg.destinacija_prevoz_id
+                FROM mesto_grupa mg
+                JOIN mesto m ON m.id = mg.mesto_id
+                JOIN period_grupa pg ON pg.id = mg.grupa_id
+                LEFT JOIN destinacija_prevoz_grupa dpg ON dpg.id_grupe_termina = pg.id
+                WHERE m.destinacija = :d
+                ORDER BY pg.naziv
+            """), {"d": id_destinacije}).fetchall()
+        return [
+            {"id": r.id, "naziv": r.naziv,
+             "zauzeta": r.destinacija_prevoz_id is not None and r.destinacija_prevoz_id != dp_id}
+            for r in rows
+        ]
+
+    @api.post("/destinacija-prevoz", status_code=201)
+    def create_destinacija_prevoz(body: DestinacijaPrevozIn, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            dest = conn.execute(text("SELECT naziv FROM destinacija WHERE id = :i"),
+                                {"i": body.id_destinacije}).first()
+            if not dest:
+                raise HTTPException(status_code=400, detail="Nepoznata destinacija")
+            if conn.execute(text("SELECT 1 FROM destinacija_prevoz WHERE id_destinacije = :i"),
+                            {"i": body.id_destinacije}).first():
+                raise HTTPException(status_code=409, detail="Destinacija prevoza za ovu destinaciju već postoji")
+            grupe = sorted(set(body.grupe))
+            _proveri_grupe(conn, body.id_destinacije, grupe, None)
+            new_id = conn.execute(text("""
+                INSERT INTO destinacija_prevoz (id_destinacije, naziv)
+                VALUES (:d, :n) RETURNING id
+            """), {"d": body.id_destinacije, "n": dest.naziv}).scalar_one()
+            _upisi_grupe(conn, new_id, grupe)
+        return {"status": "kreirano", "id": new_id}
+
+    @api.put("/destinacija-prevoz/{item_id}")
+    def update_destinacija_prevoz(item_id: int, body: DestinacijaPrevozGrupeIn,
+                                  _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            dp = conn.execute(text("SELECT id_destinacije FROM destinacija_prevoz WHERE id = :i"),
+                              {"i": item_id}).first()
+            if not dp:
+                raise HTTPException(status_code=404, detail="Destinacija prevoza nije pronađena")
+            _proveri_grupe(conn, dp.id_destinacije, body.grupe, item_id)
+            _upisi_grupe(conn, item_id, body.grupe)
+            conn.execute(text("UPDATE destinacija_prevoz SET updated_at = NOW() WHERE id = :i"), {"i": item_id})
+        return {"status": "sacuvano", "id": item_id}
+
+    @api.delete("/destinacija-prevoz/{item_id}")
+    def delete_destinacija_prevoz(item_id: int, _: dict = Depends(get_current_user)):
+        """Briše destinaciju prevoza, njene veze sa grupama i sve njene limite."""
+        with engine.begin() as conn:
+            if not conn.execute(text("SELECT 1 FROM destinacija_prevoz WHERE id = :i"), {"i": item_id}).first():
+                raise HTTPException(status_code=404, detail="Destinacija prevoza nije pronađena")
+            broj_limita = conn.execute(text(
+                "DELETE FROM prevoz_limit WHERE id_destinacije_prevoza = :i"), {"i": item_id}).rowcount
+            conn.execute(text("DELETE FROM destinacija_prevoz_grupa WHERE destinacija_prevoz_id = :i"), {"i": item_id})
+            conn.execute(text("DELETE FROM destinacija_prevoz WHERE id = :i"), {"i": item_id})
+        return {"status": "obrisano", "id": item_id, "broj_limita": broj_limita}
 
     @api.get("/prevoz-limit")
     def list_prevoz_limit(q: str = "", _: dict = Depends(get_current_user)):
@@ -159,7 +261,7 @@ def register_prevoz_limit(api, engine, get_current_user):
                 text(SELECT_SQL + uslov + " ORDER BY pl.datum NULLS LAST, dp.naziv, pl.id"),
                 params,
             ).fetchall()
-        return [_red(r) for r in rows]
+        return [_red_limita(r) for r in rows]
 
     @api.post("/prevoz-limit", status_code=201)
     def create_prevoz_limit(body: PrevozLimitIn, _: dict = Depends(get_current_user)):
@@ -202,18 +304,17 @@ def register_prevoz_limit(api, engine, get_current_user):
 
     @api.post("/prevoz-limit/generisi")
     def generisi_prevoz_limit(_: dict = Depends(get_current_user)):
-        """Sinhronizuje destinacija_prevoz, pa za svaki period grupe pravi Odlazak (datum_od)
+        """Za svaku destinaciju prevoza i svaki period njenih grupa termina pravi Odlazak (datum_od)
         i Povratak (datum_do). Postojeći redovi (destinacija, datum, smer) se ne diraju."""
         with engine.begin() as conn:
-            destinacija_upisano = _sync_destinacije_prevoz(conn)
             dodato = 0
             for smer, kolona in (("Odlazak", "datum_od"), ("Povratak", "datum_do")):
                 res = conn.execute(text(f"""
                     INSERT INTO prevoz_limit (id_destinacije_prevoza, datum, smer, limit_mesta, dodatna_mesta)
-                    SELECT dp.id, pd.{kolona}, :smer, 0, 0
-                    FROM destinacija_prevoz dp
-                    JOIN period_datum pd ON pd.grupa_id = dp.id_grupe_termina
+                    SELECT dpg.destinacija_prevoz_id, pd.{kolona}, :smer, 0, 0
+                    FROM destinacija_prevoz_grupa dpg
+                    JOIN period_datum pd ON pd.grupa_id = dpg.id_grupe_termina
                     ON CONFLICT (id_destinacije_prevoza, datum, smer) DO NOTHING
                 """), {"smer": smer})
                 dodato += res.rowcount
-        return {"status": "generisano", "destinacije_upisano": destinacija_upisano, "dodato": dodato}
+        return {"status": "generisano", "dodato": dodato}

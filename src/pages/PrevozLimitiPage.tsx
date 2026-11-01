@@ -166,10 +166,10 @@ export default function PrevozLimitiPage() {
     if (generisi) return;
     setGenerisi(true);
     try {
-      const r = await apiFetch<{ destinacije_upisano: number; dodato: number }>(
+      const r = await apiFetch<{ dodato: number }>(
         "/prevoz-limit/generisi", { method: "POST" },
       );
-      toast.success(`Destinacije osvežene (${r.destinacije_upisano}), dodato limita: ${r.dodato}`);
+      toast.success(`Dodato limita: ${r.dodato}`);
       await ucitajDestinacije();
       await ucitaj(q.trim());
     } catch (e) {

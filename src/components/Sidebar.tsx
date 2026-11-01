@@ -139,6 +139,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/destinacija-prevoz" icon={Bus} label="Destinacija prevoz" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/prevoz-limit" icon={Armchair} label="Limiti prevoz" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
@@ -550,6 +551,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/prevoz" icon={Bus} label="Prevoz" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/destinacija-prevoz" icon={Bus} label="Destinacija prevoz" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/prevoz-limit" icon={Armchair} label="Limiti prevoz" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/kurs" icon={Banknote} label="Kurs" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={false} onClick={closeMobile} />
