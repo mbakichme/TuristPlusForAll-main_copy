@@ -27,6 +27,7 @@ from grafik_boje import kategorija_grafika
 from cenovnici_api import init_cenovnici, register_cenovnici
 from koeficijenti_api import init_koeficijenti, register_koeficijenti, osiguraj_auto_red
 from prevoz_limit_api import init_prevoz_limit, register_prevoz_limit
+from dodatne_usluge_api import init_dodatne_usluge, register_dodatne_usluge
 from zaduzenje_api import init_zaduzenje, register_zaduzenje
 from zabrana_api import init_zabrana, register_zabrana
 from saglasnost_pdf import init_saglasnost
@@ -1630,6 +1631,7 @@ def create_app(static_dir: str) -> FastAPI:
     init_cenovnici(engine)
     init_koeficijenti(engine)
     init_prevoz_limit(engine)
+    init_dodatne_usluge(engine)
     init_zaduzenje(engine)
     init_zabrana(engine)
     init_saglasnost(engine)
@@ -1643,6 +1645,7 @@ def create_app(static_dir: str) -> FastAPI:
     register_cenovnici(api, engine, get_current_user)
     register_koeficijenti(api, engine, get_current_user)
     register_prevoz_limit(api, engine, get_current_user)
+    register_dodatne_usluge(api, engine, get_current_user)
     register_zaduzenje(api, engine, get_current_user)
     register_dobavljaci(api, engine, get_current_user)
     register_banke(api, engine, get_current_user)

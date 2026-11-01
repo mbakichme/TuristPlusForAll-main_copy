@@ -25,6 +25,7 @@ import CenovniciPage from "./pages/CenovniciPage";
 import KoeficijentiPage from "./pages/KoeficijentiPage";
 import PrevozLimitiPage from "./pages/PrevozLimitiPage";
 import DestinacijaPrevozPage from "./pages/DestinacijaPrevozPage";
+import DodatneUslugePage from "./pages/DodatneUslugePage";
 import AgencijaPage from "./pages/AgencijaPage";
 import DokumentiPage from "./pages/DokumentiPage";
 import BojeGrafikPage from "./pages/BojeGrafikPage";
@@ -119,6 +120,7 @@ function ProtectedLayout() {
             <Route path="/agencija/cenovnici" element={<CenovniciPage />} />
             <Route path="/agencija/koeficijenti" element={<KoeficijentiPage />} />
             <Route path="/agencija/destinacija-prevoz" element={<DestinacijaPrevozPage />} />
+            <Route path="/agencija/dodatne-usluge" element={<DodatneUslugePage />} />
             <Route path="/agencija/prevoz-limit" element={<PrevozLimitiPage />} />
             <Route path="/knjigovodstvo/ugovori" element={<UgovoriPage />} />
             <Route path="/knjigovodstvo/ugovor" element={<UgovorDetaljPage />} />

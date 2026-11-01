@@ -125,7 +125,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !agencijaOpen ? "max-h-0 opacity-0" : "max-h-[640px] opacity-100"
+              !collapsed && !agencijaOpen ? "max-h-0 opacity-0" : "max-h-[720px] opacity-100"
             )}
           >
             <NavItem to="/agencija/tip-ponude" icon={Tag} label="Tipovi ponude" collapsed={collapsed} onClick={onNavClick} />
@@ -135,6 +135,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             <NavItem to="/agencija/mesto" icon={Map} label="Mesta" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/smestaj" icon={BedDouble} label="Smeštaj" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/sobe" icon={DoorOpen} label="Sobe" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/agencija/dodatne-usluge" icon={Receipt} label="Dodatne usluge" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/koeficijenti" icon={Sigma} label="Koeficijenti prodaje" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={collapsed} onClick={onNavClick} />
@@ -537,7 +538,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !agencijaOpen ? "max-h-0 opacity-0" : "max-h-[640px] opacity-100"
+                    !agencijaOpen ? "max-h-0 opacity-0" : "max-h-[720px] opacity-100"
                   )}
                 >
                   <NavItem to="/agencija/tip-ponude" icon={Tag} label="Tipovi ponude" collapsed={false} onClick={closeMobile} />
@@ -547,6 +548,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/agencija/mesto" icon={Map} label="Mesta" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/smestaj" icon={BedDouble} label="Smeštaj" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/sobe" icon={DoorOpen} label="Sobe" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/agencija/dodatne-usluge" icon={Receipt} label="Dodatne usluge" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/koeficijenti" icon={Sigma} label="Koeficijenti prodaje" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/periodi" icon={CalendarDays} label="Periodi" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/cenovnici" icon={Tag} label="Cenovnici" collapsed={false} onClick={closeMobile} />
