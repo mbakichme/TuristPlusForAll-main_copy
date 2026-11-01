@@ -20,6 +20,15 @@ from sqlalchemy.exc import IntegrityError
 SMEROVI = ("Odlazak", "Povratak")
 
 
+def _ocisti_naziv(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        raise ValueError("Naziv ne sme biti prazan")
+    return value
+
+
 class PrevozLimitIn(BaseModel):
     id_destinacije_prevoza: int
     datum: date
@@ -38,6 +47,12 @@ class PrevozLimitIn(BaseModel):
 class DestinacijaPrevozIn(BaseModel):
     id_destinacije: int
     grupe: list[int] = Field(..., min_length=1)
+    naziv: Optional[str] = Field(None, max_length=300)
+
+    @field_validator("naziv")
+    @classmethod
+    def naziv_ispravan(cls, value):
+        return _ocisti_naziv(value)
 
 
 class DestinacijaPrevozBrzoIn(BaseModel):
@@ -46,6 +61,12 @@ class DestinacijaPrevozBrzoIn(BaseModel):
 
 class DestinacijaPrevozGrupeIn(BaseModel):
     grupe: list[int] = Field(..., min_length=1)
+    naziv: Optional[str] = Field(None, max_length=300)
+
+    @field_validator("naziv")
+    @classmethod
+    def naziv_ispravan(cls, value):
+        return _ocisti_naziv(value)
 
     @field_validator("grupe")
     @classmethod
@@ -220,7 +241,7 @@ def register_prevoz_limit(api, engine, get_current_user):
             new_id = conn.execute(text("""
                 INSERT INTO destinacija_prevoz (id_destinacije, naziv)
                 VALUES (:d, :n) RETURNING id
-            """), {"d": body.id_destinacije, "n": dest.naziv}).scalar_one()
+            """), {"d": body.id_destinacije, "n": body.naziv or dest.naziv}).scalar_one()
             _upisi_grupe(conn, new_id, grupe)
         return {"status": "kreirano", "id": new_id}
 
@@ -234,7 +255,11 @@ def register_prevoz_limit(api, engine, get_current_user):
                 raise HTTPException(status_code=404, detail="Destinacija prevoza nije pronađena")
             _proveri_grupe(conn, dp.id_destinacije, body.grupe, item_id)
             _upisi_grupe(conn, item_id, body.grupe)
-            conn.execute(text("UPDATE destinacija_prevoz SET updated_at = NOW() WHERE id = :i"), {"i": item_id})
+            conn.execute(text("""
+                UPDATE destinacija_prevoz
+                SET naziv = COALESCE(:n, naziv), updated_at = NOW()
+                WHERE id = :i
+            """), {"n": body.naziv, "i": item_id})
         return {"status": "sacuvano", "id": item_id}
 
     @api.delete("/destinacija-prevoz/{item_id}")

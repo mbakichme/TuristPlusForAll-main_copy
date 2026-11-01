@@ -3,6 +3,7 @@ import { apiFetch } from "../lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
@@ -45,6 +46,7 @@ export default function DestinacijaPrevozPage() {
   const [grupeUcitavaju, setGrupeUcitavaju] = useState(false);
   const [izabrane, setIzabrane] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState(false);
+  const [naziv, setNaziv] = useState("");
 
   const [deleteItem, setDeleteItem] = useState<DestinacijaPrevoz | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -86,6 +88,7 @@ export default function DestinacijaPrevozPage() {
   function otvoriNovi() {
     setEditing(null);
     setIzabranaDest(NISTA);
+    setNaziv("");
     setGrupe([]);
     setIzabrane(new Set());
     setDialogOpen(true);
@@ -94,6 +97,7 @@ export default function DestinacijaPrevozPage() {
   async function otvoriIzmenu(r: DestinacijaPrevoz) {
     setEditing(r);
     setIzabranaDest(String(r.id_destinacije));
+    setNaziv(r.naziv);
     setIzabrane(new Set(r.grupe.map((g) => g.id)));
     setDialogOpen(true);
     await ucitajGrupe(r.id_destinacije, r.id);
@@ -101,6 +105,7 @@ export default function DestinacijaPrevozPage() {
 
   async function izaberiDestinaciju(v: string) {
     setIzabranaDest(v);
+    setNaziv(destinacije.find((d) => String(d.id) === v)?.naziv ?? "");
     setIzabrane(new Set());
     setGrupe([]);
     if (v !== NISTA) await ucitajGrupe(Number(v), null);
@@ -131,18 +136,23 @@ export default function DestinacijaPrevozPage() {
       toast.error("Izaberite bar jednu grupu termina");
       return;
     }
+    const nazivCisto = naziv.trim();
+    if (!nazivCisto) {
+      toast.error("Unesite naziv destinacije prevoza");
+      return;
+    }
     setSaving(true);
     try {
       const grupeIds = Array.from(izabrane);
       if (editing) {
         await apiFetch(`/destinacija-prevoz/${editing.id}`, {
-          method: "PUT", body: JSON.stringify({ grupe: grupeIds }),
+          method: "PUT", body: JSON.stringify({ grupe: grupeIds, naziv: nazivCisto }),
         });
         toast.success("Destinacija prevoza je sačuvana");
       } else {
         await apiFetch("/destinacija-prevoz", {
           method: "POST",
-          body: JSON.stringify({ id_destinacije: Number(izabranaDest), grupe: grupeIds }),
+          body: JSON.stringify({ id_destinacije: Number(izabranaDest), grupe: grupeIds, naziv: nazivCisto }),
         });
         toast.success("Destinacija prevoza je dodata");
       }
@@ -260,6 +270,13 @@ export default function DestinacijaPrevozPage() {
                   </SelectContent>
                 </Select>
               )}
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="dp-naziv">Naziv destinacije prevoza</Label>
+              <Input id="dp-naziv" className="h-9" maxLength={300} value={naziv}
+                placeholder="npr. KASANDRA – autobus"
+                onChange={(e) => setNaziv(e.target.value)} />
             </div>
 
             <div className="space-y-2">
