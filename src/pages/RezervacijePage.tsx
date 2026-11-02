@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, ChevronDown, CreditCard, Download, FilePenLine, FileSignature, Loader2,
-  FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
+  FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2,
   Users, Wallet, ArrowRightLeft, Printer, ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -3610,9 +3610,6 @@ export default function RezervacijePage() {
             ? <Loader2 className="mr-1.5 size-4 animate-spin" />
             : izabraniUgovor && !izmena ? <FilePenLine className="mr-1.5 size-4" /> : <CalendarPlus className="mr-1.5 size-4" />}
           {rezSeCuva ? "Čuvanje…" : izabraniUgovor && !izmena ? "Izmeni" : "Sačuvaj"}
-        </Button>
-        <Button variant="outline" onClick={akcija("Odustani")}>
-          <X className="mr-1.5 size-4" />Odustani
         </Button>
         <div
           data-testid="saldo-traka"
