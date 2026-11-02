@@ -54,17 +54,17 @@ class UgovorPDFAcceptance(unittest.TestCase):
         with self.document() as doc:
             text = self.text(doc)
             for expected in (
-                "UGOVOR / PRIJAVA BROJ 2424/26", "NOSILAC ARANŽMANA", "SAPUTNICI",
-                "PUTOVANJE I SMEŠTAJ", "OBRAČUN ZA NAPLATU", "DODATNE USLUGE / OSTALO",
-                "PLAĆANJE — NBS IPS QR", "IZJAVE I USLOVI PUTOVANJA",
+                "PRIJAVA/UGOVOR Br.: 2424/26", "Datum izdavanja: 15.12.2025", "PUTNICI",
+                "OBRAČUN", "REKAPITULACIJA OBRAČUNA", "DODATNE USLUGE / OSTALO", "PREVOZ I POLAZAK",
+                "Podnosilac prijave", "IZJAVE I USLOVI PUTOVANJA",
                 "RAKIĆ MARINA", "05.04.1970", "P123456", "Dubljanska 22", "062229121",
                 "marina@example.test", "KOVAČEVIĆ DINA", "25.02.1980", "P987654", "ADULT",
                 "Grčka", "VRASNA PARALIA", "DAFNI", "1/4", "MEZ", "Soba 7", "RR",
-                "02.07.2026", "12.07.2026", "Prevoz OW: NE", "Prevoz RT: DA", "Viza: NE",
-                "Beograd", "Povratak", "Niš", "Odlazak", "Javna napomena š č ć ž đ <bezbedno>",
+                "02.07.2026", "12.07.2026", "Prevoz OW", "Prevoz RT", "Viza", "Niš", "Odlazak",
+                "Beograd", "Povratak", "Javna napomena š č ć ž đ <bezbedno>",
                 "860,00", "172,00", "620,00", "68,00", "688,00", "80.544,16", "117.07",
-                "15.12.2025", "Doplata pogled more — 10,00 EUR / 500,00 RSD",
-                "Potpis putnika", "Za Agenciju", "Ugovor je punovažan bez pecata",
+                "Doplata pogled more — 10,00 EUR / 500,00 RSD",
+                "Potpis stranke", "Potpis službenika", "Ugovor je punovažan bez pecata",
             ):
                 self.assertIn(expected, text)
             for clause in LEGAL_CLAUSES:
@@ -150,7 +150,7 @@ class UgovorPDFAcceptance(unittest.TestCase):
                 text = self.text(doc)
                 for clause in LEGAL_CLAUSES:
                     self.assertIn(clause, text)
-                self.assertIn("Potpis putnika", text)
+                self.assertIn("Potpis stranke", text)
                 self.assertIn("80.544,16", text)
                 payload = build_ugovor_ips_qr(contract, self.agency)
                 decoded = []
