@@ -3992,7 +3992,7 @@ def create_app(static_dir: str) -> FastAPI:
             "ime": delovi[0] if delovi else "",
             "prezime": delovi[1] if len(delovi) > 1 else "",
             "adresa": _s(arow.get("adresa")),
-            "email": _s(arow.get("email")),
+            "email": _s(arow.get("refno")),
             "telefon": _s(arow.get("telefon")),
         })
         for p in dopuni:
