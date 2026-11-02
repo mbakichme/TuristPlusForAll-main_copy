@@ -29,9 +29,9 @@ from predracun_pdf import FONT_DIR_CANDIDATES, _ensure_fonts, _logo_path, fmt_nu
 INK = colors.HexColor("#111111")
 MUTED = colors.HexColor("#444444")
 RULE = colors.HexColor("#777777")
-MONO = "Mono"
-MONO_B = "MonoB"
-_MONO_READY = False
+SANS = "Inter"
+SANS_B = "InterBold"
+_SANS_READY = False
 LEGAL_CLAUSES = (
     "Organizator će jedino za uplaćeni aranžman u celosti izdati svoj vaučer 7 dana pre korišćenja usluge, koji je jedini važeći dokument za korišćenje usluge i koji se mora od strane putnika uručiti ovlašćenom agentu ili predstavniku agencije na destinaciji i pruži usluge isključivo licima navedenim u vaučeru.",
     "Svojim potpisom potvrđujem da su mi neposredno uručeni cenovnik/program putovanja i Opšti uslovi putovanja organizatora i da mi je ponuđeno putno i zdravstveno osiguranje.",
@@ -42,21 +42,21 @@ LEGAL_CLAUSES = (
 QR_WARNING = "NBS IPS QR nije dostupan: proverite račun primaoca (18 cifara), naziv agencije i pozitivan iznos u RSD."
 
 
-def _ensure_mono():
-    """Monospace font za obrazac (Liberation Mono ima č ć š ž đ). Fallback: Courier."""
-    global _MONO_READY, MONO, MONO_B
-    if _MONO_READY:
+def _ensure_sans():
+    """Inter (moderan sans-serif, ima č ć š ž đ). Fallback: Helvetica."""
+    global _SANS_READY, SANS, SANS_B
+    if _SANS_READY:
         return
     for base in FONT_DIR_CANDIDATES:
-        reg = os.path.join(base, "LiberationMono-Regular.ttf")
-        bold = os.path.join(base, "LiberationMono-Bold.ttf")
+        reg = os.path.join(base, "Inter-Regular.ttf")
+        bold = os.path.join(base, "Inter-Bold.ttf")
         if os.path.exists(reg) and os.path.exists(bold):
-            pdfmetrics.registerFont(TTFont(MONO, reg))
-            pdfmetrics.registerFont(TTFont(MONO_B, bold))
+            pdfmetrics.registerFont(TTFont(SANS, reg))
+            pdfmetrics.registerFont(TTFont(SANS_B, bold))
             break
     else:
-        MONO, MONO_B = "Courier", "Courier-Bold"
-    _MONO_READY = True
+        SANS, SANS_B = "Helvetica", "Helvetica-Bold"
+    _SANS_READY = True
 
 
 def _decimal(value):
@@ -173,21 +173,21 @@ def _flag(value):
 def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     """Render supplied raw data and historical-rate totals, without network calls."""
     _ensure_fonts()
-    _ensure_mono()
+    _ensure_sans()
     raw = _raw(ugovor)
     calc, eur, rsd, kurs = _amounts(ugovor)
     width, height = A4
     margin = 30
     body_width = width - 2 * margin
     styles = {
-        "mono": ParagraphStyle("mono", fontName=MONO, fontSize=8.5, leading=10.5, textColor=INK),
-        "monoB": ParagraphStyle("monoB", fontName=MONO_B, fontSize=8.5, leading=10.5, textColor=INK),
-        "right": ParagraphStyle("right", fontName=MONO, fontSize=8.5, leading=10.5, textColor=INK, alignment=TA_RIGHT),
-        "rightB": ParagraphStyle("rightB", fontName=MONO_B, fontSize=9, leading=11, textColor=INK, alignment=TA_RIGHT),
-        "small": ParagraphStyle("small", fontName=MONO, fontSize=7.5, leading=9, textColor=MUTED),
-        "legal": ParagraphStyle("legal", fontName=MONO, fontSize=6.6, leading=7.9, textColor=INK, spaceAfter=1.5),
-        "section": ParagraphStyle("section", fontName=MONO_B, fontSize=9, leading=11, textColor=INK, spaceBefore=6, spaceAfter=2, keepWithNext=True),
-        "title": ParagraphStyle("title", fontName=MONO_B, fontSize=12.5, leading=15, textColor=INK, spaceBefore=4, spaceAfter=6),
+        "mono": ParagraphStyle("mono", fontName=SANS, fontSize=8.5, leading=11, textColor=INK),
+        "monoB": ParagraphStyle("monoB", fontName=SANS_B, fontSize=8.5, leading=11, textColor=INK),
+        "right": ParagraphStyle("right", fontName=SANS, fontSize=8.5, leading=11, textColor=INK, alignment=TA_RIGHT),
+        "rightB": ParagraphStyle("rightB", fontName=SANS_B, fontSize=9, leading=11, textColor=INK, alignment=TA_RIGHT),
+        "small": ParagraphStyle("small", fontName=SANS, fontSize=7.5, leading=9.5, textColor=MUTED),
+        "legal": ParagraphStyle("legal", fontName=SANS, fontSize=6.8, leading=8.4, textColor=INK, spaceAfter=1.5),
+        "section": ParagraphStyle("section", fontName=SANS_B, fontSize=9, leading=11, textColor=INK, spaceBefore=6, spaceAfter=2, keepWithNext=True),
+        "title": ParagraphStyle("title", fontName=SANS_B, fontSize=13, leading=16, textColor=INK, spaceBefore=4, spaceAfter=6),
     }
 
     def p(text, style="mono"):
@@ -244,7 +244,7 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
         c.restoreState()
 
     def page_footer(c, doc):
-        c.setFont(MONO, 7.5)
+        c.setFont(SANS, 7.5)
         c.setFillColor(MUTED)
         c.drawString(margin, 20, f"Ugovor/prijava {_text(raw.get('kljuc'))}")
         c.drawRightString(width - margin, 20, f"Strana {doc.page}")
