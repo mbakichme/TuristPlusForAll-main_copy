@@ -133,7 +133,8 @@ def _draw_scissors(canv, x, y):
 
 
 def build_priznanica_pdf(uplata: dict, aranzman: dict | None,
-                         agencija: dict | None, logo_data_url: str | None) -> bytes:
+                         agencija: dict | None, logo_data_url: str | None,
+                         preostalo_eur: float | None = None) -> bytes:
     _ensure_fonts()
 
     page_w, page_h = A4
@@ -264,6 +265,11 @@ def build_priznanica_pdf(uplata: dict, aranzman: dict | None,
             ])
         if termin:
             detail_rows.append([field("TERMIN BORAVKA", termin), ""])
+        if preostalo_eur is not None:
+            preostalo_style = ParagraphStyle("preostalo", fontName="LibB", fontSize=10,
+                                             leading=13, alignment=2)
+            detail_rows.append(["", Paragraph(
+                f"Preostalo za uplatu: {esc(_fmt(preostalo_eur))} EUR", preostalo_style)])
         details = clean_table(detail_rows, [content_w * 0.5, content_w * 0.5])
         details.setStyle(TableStyle([
             ("RIGHTPADDING", (0, 0), (0, -1), 18),

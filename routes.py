@@ -4345,20 +4345,26 @@ def create_app(static_dir: str) -> FastAPI:
             )).fetchone()
             # uplate.id = aranzman.kljuc bez "/26" → podaci o terminu i smeštaju
             ar = conn.execute(text("""
-                SELECT kljuc, putnik, adresa, naziv, mesto,
-                       to_char(datumod, 'DD.MM.YYYY') AS od,
-                       to_char(datumdo, 'DD.MM.YYYY') AS do
-                FROM aranzman
-                WHERE split_part(kljuc, '/', 1) = :broj
-                ORDER BY id DESC LIMIT 1
-            """), {"broj": str(u.id)}).fetchone()
+                SELECT a.*,
+                       to_char(a.datumod, 'DD.MM.YYYY') AS od,
+                       to_char(a.datumdo, 'DD.MM.YYYY') AS do
+                FROM aranzman a
+                WHERE split_part(a.kljuc, '/', 1) = :broj
+                ORDER BY a.id DESC LIMIT 1
+            """), {"broj": str((u._mapping.get("faktura") or "").strip() or u.id)}).mappings().first()
+        # Preostalo za uplatu (EUR) = naplata ugovora − zbir uplata (isto kao Pregled uplata)
+        preostalo_eur = None
+        if ar:
+            uplate_ug = _uplate_za_ugovor(ar["kljuc"])
+            uplaceno_eur = sum((r.get("suma_eur") or 0) for r in uplate_ug)
+            preostalo_eur = round(calc_ugovor_values(dict(ar))["naplata"] - uplaceno_eur, 2)
 
         logo_data_url = None
         if logo_row and logo_row.slika:
             mime = logo_row.slika_mime or "image/png"
             logo_data_url = f"data:{mime};base64,{logo_row.slika}"
         uplata = dict(u._mapping)
-        aranzman = dict(ar._mapping) if ar else None
+        aranzman = dict(ar) if ar else None
         if not (uplata.get("ime") or "").strip() and aranzman:
             uplata["ime"] = aranzman.get("putnik")
         if not (uplata.get("adresa") or "").strip() and aranzman:
@@ -4368,6 +4374,7 @@ def create_app(static_dir: str) -> FastAPI:
             aranzman=aranzman,
             agencija=dict(ag._mapping) if ag else None,
             logo_data_url=logo_data_url,
+            preostalo_eur=preostalo_eur,
         )
         fname = f"Priznanica_{kljuc}.pdf"
         return Response(

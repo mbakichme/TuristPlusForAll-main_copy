@@ -120,6 +120,9 @@ def build_uplate_pdf(putnik: str | None, adresa: str | None, ugovor: str,
     ugovor_style = ParagraphStyle(
         "ugovor", fontName="Lib", fontSize=8.5, leading=11, alignment=0, textColor=BLACK,
     )
+    saldo_style = ParagraphStyle(
+        "saldo", fontName="Lib", fontSize=10, leading=13, alignment=2, textColor=BLACK,
+    )
     # kolone sa slobodnim tekstom — Paragraph da se dugačke vrednosti prelome
     cell_l = ParagraphStyle("cell_l", fontName="Lib", fontSize=8.5, leading=10.5, alignment=0, textColor=BLACK)
 
@@ -152,6 +155,9 @@ def build_uplate_pdf(putnik: str | None, adresa: str | None, ugovor: str,
             Paragraph(str(r.get("obradio") or "").strip(), cell_l),
             _fmt_int(r.get("kljuc")),
         ])
+
+    # saldo / za uplatu = vrednost aranžmana − zbir uplata (EUR), prikazuje se ispod tabele
+    saldo = round(vrednost_eur - sum_eur, 2) if vrednost_eur is not None else None
 
     data.append([
         "U K U P N O :", "",
@@ -204,6 +210,11 @@ def build_uplate_pdf(putnik: str | None, adresa: str | None, ugovor: str,
         Paragraph(f"Ugovor: {ugovor}", ugovor_style),
         Spacer(1, 14),
         table,
+        Spacer(1, 10),
+        Paragraph(
+            f"<b>Saldo / Za uplatu:</b>&nbsp;&nbsp;{_fmt(saldo) + ' EUR' if saldo is not None else '—'}",
+            saldo_style,
+        ),
     ]
 
     def draw_page(canv, doc):
