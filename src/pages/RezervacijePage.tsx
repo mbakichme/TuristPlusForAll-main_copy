@@ -1973,9 +1973,6 @@ export default function RezervacijePage() {
   const brutoRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) + sveDodatneSume.din + num(cene.osiguranjeRSD);
   const popustEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) - (netoSmestajEUR ?? 0) - (netoPrevozEUR ?? 0);
   const popustRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) - (netoSmestajRSD ?? 0) - (netoPrevozRSD ?? 0);
-  // Doplate = zbir svih stavki obračuna (bruto − popust − provizija), bez posebnog prikaza stavki.
-  const doplateEUR = round2(brutoEURUkupno - popustEURUkupno - provizijaEURUkupno);
-  const doplateRSD = round2(brutoRSDUkupno - popustRSDUkupno - provizijaRSDUkupno);
 
   // Svaka valuta se sabira nezavisno; osiguranje je deo ukupne cene.
   const ukupnoAranzmanEUR =
@@ -2965,10 +2962,9 @@ export default function RezervacijePage() {
                       <span className="text-muted-foreground">Provizija</span>
                       <span className="text-right">− {nf2.format(provizijaEURUkupno)} €</span>
                       <span className="text-right">− {nf2.format(provizijaRSDUkupno)} din</span>
-                      <span className="col-span-3 mt-1 border-t border-border/60" />
-                      <span className="font-semibold">Doplate</span>
-                      <span className="text-right font-semibold">{nf2.format(doplateEUR)} €</span>
-                      <span className="text-right font-semibold">{nf2.format(doplateRSD)} din</span>
+                      <span className="text-muted-foreground">Dodatne usluge</span>
+                      <span className="text-right">+ {nf2.format(sveDodatneSume.eur)} €</span>
+                      <span className="text-right">+ {nf2.format(sveDodatneSume.din)} din</span>
                     </div>
 
                   </div>
