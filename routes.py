@@ -5124,7 +5124,7 @@ def create_app(static_dir: str) -> FastAPI:
                        mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
                        datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka,
                        destinacija_ow_id, destinacija_polaska_id, destinacija_povratka_id
-
+                FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id
             """), {"i": row.id}).fetchall()
             # dodatne.ugovor = ceo ključ ugovora (npr. 213/26), ne interni aranzman.id.
             dodatne = conn.execute(text("""

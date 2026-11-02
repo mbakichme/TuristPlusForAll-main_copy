@@ -31,18 +31,19 @@ NAPOMENA_2 = "TEST UI napomena izmenjena"
 def main():
     token = create_access_token({"sub": "1"})  # never printed
     api = httpx.Client(base_url=API, headers={"Authorization": "Bearer " + token}, timeout=30)
-    destinacije = api.get("/destinacija").json()
-    dest_naziv = destinacije[0]["naziv"]
+    dp = api.get("/destinacija-prevoz").json()[0]  # destinacija prevoza (ID + naziv)
+    dest_naziv, dest_id = dp["naziv"], dp["id"]
     kljuc = None
     ok = True
 
     nosilac = {"ime": IME, "datumRodjenja": "1990-01-01", "pasos": "T1234567",
+               "uzrast": "ADL",
                "ow": True, "rt": False, "sp": False, "smer": "Polazak",
                "adresa": "Test adresa 1", "telefon": "0601234567", "email": "",
                "mestoSedenja": "GORE STO", "placeno": True, "zelja": False,
-               "datumOw": "2026-11-30", "destinacijaOw": dest_naziv,
-               "datumPolaska": "", "destinacijaPolaska": "",
-               "datumPovratka": "", "destinacijaPovratka": ""}
+               "datumOw": "2026-11-30", "destinacijaOwId": dest_id, "destinacijaOw": "",
+               "datumPolaska": "", "destinacijaPolaskaId": None, "destinacijaPolaska": "",
+               "datumPovratka": "", "destinacijaPovratkaId": None, "destinacijaPovratka": ""}
     body = {"tiprezervacije": "Klasična rezervacija", "timelimit": None,
             "nosilac": nosilac, "saputnici": [],
             "boravak": {"datumOd": "2026-12-01", "datumDo": "2026-12-08", "smestajId": None,

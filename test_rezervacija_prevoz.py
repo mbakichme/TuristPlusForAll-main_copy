@@ -8,7 +8,9 @@ Provere:
 5. Polja smera koji nije uključen se čiste (NULL) — ne ostaju stare vrednosti
 6. čišćenje test redova (aranzman + aranzman_dopuna)
 
-Test koristi zaseban naziv smeštaja i sobu, pa ne sudara sa stvarnim podacima.
+Destinacije se šalju kao ID (destinacija_prevoz.id), naziv se čita iz GET-a.
+Test koristi postojeće destinacije prevoza (ne kreira nove) i zaseban naziv
+smeštaja i sobu, pa ne sudara sa stvarnim podacima.
 """
 import json
 import os
@@ -35,6 +37,13 @@ def req(path, method="GET", body=None):
     r = urllib.request.Request(f"{BASE}{path}", data=data, headers=hdr, method=method)
     with urllib.request.urlopen(r, timeout=30) as resp:
         return json.load(resp)
+
+
+# Destinacije prevoza su referentni podaci — koristimo postojeće (ciklično ako ih ima manje od 3)
+_dps = req("/destinacija-prevoz")
+if not _dps:
+    raise SystemExit("Nema nijedne destinacije prevoza u bazi")
+D_OW, D_POL, D_POV = (_dps[i % len(_dps)] for i in range(3))
 
 
 def provera(naziv, dobijeno, ocekivano):
@@ -67,22 +76,26 @@ def payload(nosilac, saputnik, napomena_prevoz):
 
 def nosilac_base(**kw):
     base = {"ime": ime_nosioca, "datumRodjenja": "1990-01-01", "pasos": "T1234567",
+            "uzrast": "ADL",
             "ow": False, "rt": False, "sp": False, "smer": "",
             "adresa": "Test adresa 1", "telefon": "0601234567", "email": "",
             "mestoSedenja": "", "placeno": False, "zelja": False,
-            "datumOw": "", "destinacijaOw": "", "datumPolaska": "", "destinacijaPolaska": "",
-            "datumPovratka": "", "destinacijaPovratka": ""}
+            "datumOw": "", "destinacijaOwId": None,
+            "datumPolaska": "", "destinacijaPolaskaId": None,
+            "datumPovratka": "", "destinacijaPovratkaId": None}
     base.update(kw)
     return base
 
 
 def saputnik_base(**kw):
     base = {"ime": "TEST PREVOZ SAPUTNIK", "datumRodjenja": "1992-02-02", "pasos": "",
+            "uzrast": "ADL",
             "ow": False, "rt": False, "sp": False, "smer": "",
             "adresa": "", "telefon": "", "email": "", "ulazak": "",
             "mestoSedenja": "", "placeno": False, "zelja": False,
-            "datumOw": "", "destinacijaOw": "", "datumPolaska": "", "destinacijaPolaska": "",
-            "datumPovratka": "", "destinacijaPovratka": ""}
+            "datumOw": "", "destinacijaOwId": None,
+            "datumPolaska": "", "destinacijaPolaskaId": None,
+            "datumPovratka": "", "destinacijaPovratkaId": None}
     base.update(kw)
     return base
 
@@ -90,10 +103,12 @@ def saputnik_base(**kw):
 try:
     # 1. POST — nosilac OW, saputnik RT
     n = nosilac_base(ow=True, smer="Polazak", datumOw="2026-11-30",
-                     destinacijaOw="TEST DEST OW", mestoSedenja="Prednje",
+                     destinacijaOwId=D_OW["id"], mestoSedenja="Prednje",
                      placeno=True, zelja=False)
-    s = saputnik_base(rt=True, datumPolaska="2026-11-30", destinacijaPolaska="TEST DEST POL",
-                      datumPovratka="2026-12-08", destinacijaPovratka="TEST DEST POV",
+    s = saputnik_base(rt=True, datumPolaska="2026-11-30",
+                      destinacijaPolaskaId=D_POL["id"],
+                      datumPovratka="2026-12-08",
+                      destinacijaPovratkaId=D_POV["id"],
                       mestoSedenja="Zadnje", placeno=False, zelja=True)
     r = req("/rezervacije", "POST", payload(n, s, "TEST napomena prevoz"))
     kljuc = r["kljuc"]
@@ -104,7 +119,8 @@ try:
     d = req(f"/ugovori/{urllib.parse.quote(kljuc, safe='')}")
     print("2. GET nosilac")
     provera("datum_ow", d["datum_ow"], "2026-11-30")
-    provera("destinacija_ow", d["destinacija_ow"], "TEST DEST OW")
+    provera("destinacija_ow", d["destinacija_ow"], D_OW["naziv"])
+    provera("destinacija_ow_id", d["destinacija_ow_id"], D_OW["id"])
     provera("mesto_sedenja", d["mesto_sedenja"], "Prednje")
     provera("placeno_prevoz", d["placeno_prevoz"], True)
     provera("zelja_prevoz", d["zelja_prevoz"], False)
@@ -118,28 +134,27 @@ try:
     sp = sap[0]
     print("2b. GET saputnik")
     provera("saputnik datum_polaska", sp["datum_polaska"], "2026-11-30")
-    provera("saputnik destinacija_polaska", sp["destinacija_polaska"], "TEST DEST POL")
-    provera("saputnik datum_povratka", sp["datum_povratka"], "2026-12-08")
-    provera("saputnik destinacija_povratka", sp["destinacija_povratka"], "TEST DEST POV")
-    provera("saputnik mesto_sedenja", sp["mesto_sedenja"], "Zadnje")
-    provera("saputnik zelja_prevoz", sp["zelja_prevoz"], True)
-    provera("saputnik datum_ow (RT → NULL)", sp["datum_ow"], None)
+    provera("saputnik destinacija_polaska", sp["destinacija_polaska"], D_POL["naziv"])
+    provera("saputnik destinacija_polaska_id", sp["destinacija_polaska_id"], D_POL["id"])
+    provera("saputnik destinacija_povratka", sp["destinacija_povratka"], D_POV["naziv"])
+    provera("saputnik destinacija_povratka_id", sp["destinacija_povratka_id"], D_POV["id"])
 
-    # 4 + 5. PUT — nosilac OW→RT, saputnik RT→OW
-    n2 = nosilac_base(rt=True, datumPolaska="2026-12-01", destinacijaPolaska="TEST DEST POL 2",
-                      datumPovratka="2026-12-08", destinacijaPovratka="TEST DEST POV 2",
-                      mestoSedenja="Sredina", placeno=False, zelja=True,
-                      # stari OW podaci ostaju u formi — backend ih mora očistiti
-                      datumOw="2026-11-30", destinacijaOw="TEST DEST OW")
-    s2 = saputnik_base(ow=True, smer="Polazak", datumOw="2026-12-01", destinacijaOw="TEST DEST OW 2",
-                       mestoSedenja="Prednje", placeno=True, zelja=False,
-                       datumPolaska="2026-11-30", destinacijaPolaska="TEST DEST POL")
+    # 4. PUT — nosilac OW → RT, saputnik RT → OW
+    n2 = nosilac_base(rt=True, smer="Povratak", datumPolaska="2026-12-01",
+                      destinacijaPolaskaId=D_POL["id"], datumPovratka="2026-12-08",
+                      destinacijaPovratkaId=D_POV["id"],
+                      mestoSedenja="Sredina", placeno=False, zelja=True)
+    s2 = saputnik_base(ow=True, smer="Polazak", datumOw="2026-12-01",
+                       destinacijaOwId=D_OW["id"], mestoSedenja="Prednje",
+                       placeno=True, zelja=False,
+                       datumPolaska="2026-11-30", destinacijaPolaskaId=D_POL["id"])
     req(f"/rezervacije/{urllib.parse.quote(kljuc, safe='')}", "PUT",
         payload(n2, s2, "TEST napomena izmenjena"))
     print("4. PUT izmena")
     d2 = req(f"/ugovori/{urllib.parse.quote(kljuc, safe='')}")
     provera("nosilac datum_polaska", d2["datum_polaska"], "2026-12-01")
-    provera("nosilac destinacija_povratka", d2["destinacija_povratka"], "TEST DEST POV 2")
+    provera("nosilac destinacija_povratka", d2["destinacija_povratka"], D_POV["naziv"])
+    provera("nosilac destinacija_povratka_id", d2["destinacija_povratka_id"], D_POV["id"])
     provera("nosilac mesto_sedenja", d2["mesto_sedenja"], "Sredina")
     provera("nosilac placeno_prevoz", d2["placeno_prevoz"], False)
     provera("nosilac zelja_prevoz", d2["zelja_prevoz"], True)
@@ -147,9 +162,11 @@ try:
     print("5. Čišćenje neuključenog smera")
     provera("nosilac datum_ow (sada RT → NULL)", d2["datum_ow"], None)
     provera("nosilac destinacija_ow (sada RT → NULL)", d2["destinacija_ow"], None)
+    provera("nosilac destinacija_ow_id (sada RT → NULL)", d2["destinacija_ow_id"], None)
     sap2 = [p for p in d2["putnici_detalji"] if p["saputnik"] == "TEST PREVOZ SAPUTNIK"][0]
     provera("saputnik datum_ow", sap2["datum_ow"], "2026-12-01")
-    provera("saputnik destinacija_ow", sap2["destinacija_ow"], "TEST DEST OW 2")
+    provera("saputnik destinacija_ow", sap2["destinacija_ow"], D_OW["naziv"])
+    provera("saputnik destinacija_ow_id", sap2["destinacija_ow_id"], D_OW["id"])
     provera("saputnik datum_polaska (sada OW → NULL)", sap2["datum_polaska"], None)
     provera("saputnik destinacija_povratka (NULL)", sap2["destinacija_povratka"], None)
     provera("saputnik placeno_prevoz", sap2["placeno_prevoz"], True)
