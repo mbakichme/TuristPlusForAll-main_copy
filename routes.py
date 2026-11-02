@@ -498,6 +498,9 @@ def init_db(engine):
                 ("destinacija_polaska", "VARCHAR(200)"),
                 ("datum_povratka", "DATE"),
                 ("destinacija_povratka", "VARCHAR(200)"),
+                ("destinacija_ow_id", "INTEGER"),
+                ("destinacija_polaska_id", "INTEGER"),
+                ("destinacija_povratka_id", "INTEGER"),
             ):
                 conn.execute(text(f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS {kolona} {tip}"))
         conn.execute(text(
@@ -1310,10 +1313,15 @@ class RezPutnikIn(BaseModel):
     placeno: bool = False
     zelja: bool = False
     datumOw: Optional[str] = None  # ISO yyyy-mm-dd (važi ako ow)
-    destinacijaOw: str = ""  # naziv destinacije (važi ako ow)
+    # destinacija prevoza = destinacija_prevoz.id (važi ako smer uključen); naziv se
+    # upisuje u tekstualnu kolonu iz tabele. Bez ID-ja pada na tekst (legacy).
+    destinacijaOwId: Optional[int] = None
+    destinacijaOw: str = ""
     datumPolaska: Optional[str] = None  # RT
+    destinacijaPolaskaId: Optional[int] = None
     destinacijaPolaska: str = ""
     datumPovratka: Optional[str] = None
+    destinacijaPovratkaId: Optional[int] = None
     destinacijaPovratka: str = ""
 
 
@@ -1440,21 +1448,39 @@ def _rez_datum(v: Optional[str], field: str):
         raise HTTPException(status_code=400, detail=f"{field} mora biti datum u formatu YYYY-MM-DD")
 
 
-def _rez_prevoz_polja(s: "RezPutnikIn") -> dict:
+def _rez_dp_naziv(conn, dp_id: Optional[int]) -> Optional[str]:
+    """destinacija_prevoz.id → naziv (za tekstualnu kolonu); nepostojeći → 400."""
+    if dp_id is None:
+        return None
+    r = conn.execute(text("SELECT naziv FROM destinacija_prevoz WHERE id = :i"),
+                     {"i": dp_id}).fetchone()
+    if not r:
+        raise HTTPException(status_code=400, detail="Destinacija prevoza ne postoji")
+    return (r.naziv or "").strip()[:200] or None
+
+
+def _rez_prevoz_polja(s: "RezPutnikIn", conn) -> dict:
     """Polja taba Prevoz po putniku → kolone (aranzman za nosioca, aranzman_dopuna
     za saputnike). Datumi/destinacije se čuvaju samo kad je odgovarajući smer
-    (OW / RT) uključen, inače NULL."""
+    (OW / RT) uključen, inače NULL. Destinacija = *_id (destinacija_prevoz.id) +
+    naziv u tekstualnoj koloni."""
     ow, rt = bool(s.ow), bool(s.rt)
+    ow_id = s.destinacijaOwId if ow else None
+    pol_id = s.destinacijaPolaskaId if rt else None
+    pov_id = s.destinacijaPovratkaId if rt else None
     return {
         "mesto_sedenja": _rez_str(s.mestoSedenja, 50),
         "placeno_prevoz": 1 if s.placeno else 0,
         "zelja_prevoz": 1 if s.zelja else 0,
         "datum_ow": _rez_datum(s.datumOw, "Datum OW") if ow else None,
-        "destinacija_ow": _rez_str(s.destinacijaOw, 200) if ow else None,
+        "destinacija_ow_id": ow_id,
+        "destinacija_ow": _rez_dp_naziv(conn, ow_id) if ow_id is not None else (_rez_str(s.destinacijaOw, 200) if ow else None),
         "datum_polaska": _rez_datum(s.datumPolaska, "Datum polaska RT") if rt else None,
-        "destinacija_polaska": _rez_str(s.destinacijaPolaska, 200) if rt else None,
+        "destinacija_polaska_id": pol_id,
+        "destinacija_polaska": _rez_dp_naziv(conn, pol_id) if pol_id is not None else (_rez_str(s.destinacijaPolaska, 200) if rt else None),
         "datum_povratka": _rez_datum(s.datumPovratka, "Datum povratka RT") if rt else None,
-        "destinacija_povratka": _rez_str(s.destinacijaPovratka, 200) if rt else None,
+        "destinacija_povratka_id": pov_id,
+        "destinacija_povratka": _rez_dp_naziv(conn, pov_id) if pov_id is not None else (_rez_str(s.destinacijaPovratka, 200) if rt else None),
     }
 
 
@@ -4506,7 +4532,7 @@ def create_app(static_dir: str) -> FastAPI:
         """), {"suf": suf}).scalar_one()
         return f"{int(max_broj) + 1}/{suf}"
 
-    def rez_saputnici_snimak(saputnici: list[RezPutnikIn]) -> list[dict]:
+    def rez_saputnici_snimak(saputnici: list[RezPutnikIn], conn) -> list[dict]:
         """Saputnici iz forme u obliku aranzman_dopuna kolona — za diff u logu."""
         out = []
         for s in saputnici:
@@ -4526,7 +4552,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "telefon": (s.telefon or "").strip()[:300],
                 "ulazak": _rez_str(s.ulazak, 200),
                 "mesto_izlaska": _rez_str(s.mestoIzlaska, 200) or _rez_str(s.ulazak, 200),
-                **_rez_prevoz_polja(s),
+                **_rez_prevoz_polja(s, conn),
             })
         return out
 
@@ -4547,17 +4573,19 @@ def create_app(static_dir: str) -> FastAPI:
             if not s.ime.strip():
                 continue
             st = nasledjeno.get(s.ime.strip().upper())
-            pv = _rez_prevoz_polja(s)
+            pv = _rez_prevoz_polja(s, conn)
             conn.execute(text("""
                 INSERT INTO aranzman_dopuna
                     (aranzman_id, saputnik, rodjen, pasos, prevozow, prevozrt, smer,
                      adresa, grad, email, telefon, ulazak, mesto_izlaska, uzrast, viza,
                      mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
-                     datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka)
+                     datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka,
+                     destinacija_ow_id, destinacija_polaska_id, destinacija_povratka_id)
                 VALUES (:aid, :ime, :rodjen, :pasos, :ow, :rt, :smer,
                         :adresa, :grad, :email, :telefon, :ulazak, :mesto_izlaska, :uzrast, :viza,
                         :mesto_sedenja, :placeno_prevoz, :zelja_prevoz, :datum_ow, :destinacija_ow,
-                        :datum_polaska, :destinacija_polaska, :datum_povratka, :destinacija_povratka)
+                        :datum_polaska, :destinacija_polaska, :datum_povratka, :destinacija_povratka,
+                        :destinacija_ow_id, :destinacija_polaska_id, :destinacija_povratka_id)
             """), {
                 "aid": aranzman_id,
                 "ime": s.ime.strip()[:200],
@@ -4745,7 +4773,7 @@ def create_app(static_dir: str) -> FastAPI:
             "obradio": f"{(urow.first_name or '').strip()} {(urow.last_name or '').strip()}".strip(),
             "napomena_prevoz": _rez_str(body.napomenaPrevoz, 500),
             "nacin_placanja": body.nacinPlacanja if body.nacinPlacanja in ("delimicno", "u_celosti") else None,
-            **_rez_prevoz_polja(n),
+            **_rez_prevoz_polja(n, conn),
         }
 
     def rez_transferi_upisi(conn, kljuc: str, transferi: list[RezTransferStavka]):
@@ -4798,7 +4826,7 @@ def create_app(static_dir: str) -> FastAPI:
                     for oblast, promene in podeli_po_oblastima({}, vals).items():
                         zabelezi(conn, kljuc, oblast, "kreirana", uid, uime, promene)
                     zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "kreirana", uid, uime,
-                             diff_saputnike([], rez_saputnici_snimak(body.saputnici)))
+                             diff_saputnike([], rez_saputnici_snimak(body.saputnici, conn)))
                 return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
             except IntegrityError:
                 # UNIQUE(kljuc) — import je ubacio isti broj u međuvremenu;
@@ -4840,7 +4868,7 @@ def create_app(static_dir: str) -> FastAPI:
             for oblast, promene in podeli_po_oblastima(stari, vals).items():
                 zabelezi(conn, kljuc, oblast, "izmena", uid, uime, promene)
             zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "izmena", uid, uime,
-                     diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici)))
+                     diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici, conn)))
         return {"ok": True, "kljuc": kljuc, "message": "Izmene su sačuvane"}
 
     @api.get("/keptp/ugovor/{kljuc:path}")
@@ -5094,8 +5122,9 @@ def create_app(static_dir: str) -> FastAPI:
                 SELECT saputnik, uzrast, prevozow, prevozrt, viza, ulazak, mesto_izlaska, smer,
                        adresa, grad, email, telefon, rodjen, pasos,
                        mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
-                       datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka
-                FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id
+                       datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka,
+                       destinacija_ow_id, destinacija_polaska_id, destinacija_povratka_id
+
             """), {"i": row.id}).fetchall()
             # dodatne.ugovor = ceo ključ ugovora (npr. 213/26), ne interni aranzman.id.
             dodatne = conn.execute(text("""
@@ -5140,6 +5169,9 @@ def create_app(static_dir: str) -> FastAPI:
             "destinacija_polaska": p.destinacija_polaska,
             "datum_povratka": p.datum_povratka.isoformat() if p.datum_povratka else None,
             "destinacija_povratka": p.destinacija_povratka,
+            "destinacija_ow_id": p.destinacija_ow_id,
+            "destinacija_polaska_id": p.destinacija_polaska_id,
+            "destinacija_povratka_id": p.destinacija_povratka_id,
         } for p in dopuni]
         putnici = [str(d.get("putnik") or "").strip()]
         putnici += [p["saputnik"] for p in putnici_detalji if p["saputnik"]]
@@ -5174,6 +5206,9 @@ def create_app(static_dir: str) -> FastAPI:
             "destinacija_polaska": d.get("destinacija_polaska"),
             "datum_povratka": d["datum_povratka"].isoformat() if d.get("datum_povratka") else None,
             "destinacija_povratka": d.get("destinacija_povratka"),
+            "destinacija_ow_id": d.get("destinacija_ow_id"),
+            "destinacija_polaska_id": d.get("destinacija_polaska_id"),
+            "destinacija_povratka_id": d.get("destinacija_povratka_id"),
             "napomena_prevoz": d.get("napomena_prevoz"),
             "destinacija_prevoz_id": d.get("destinacija_prevoz_id"),
             "nacin_placanja": d.get("nacin_placanja"),

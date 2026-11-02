@@ -105,6 +105,9 @@ export interface PutnikDetalj {
   destinacija_polaska?: string | null;
   datum_povratka?: string | null;
   destinacija_povratka?: string | null;
+  destinacija_ow_id?: number | null;
+  destinacija_polaska_id?: number | null;
+  destinacija_povratka_id?: number | null;
 }
 
 export interface DodatnaStavka {
@@ -150,6 +153,9 @@ export interface UgovorDetail {
   destinacija_polaska?: string | null;
   datum_povratka?: string | null;
   destinacija_povratka?: string | null;
+  destinacija_ow_id?: number | null;
+  destinacija_polaska_id?: number | null;
+  destinacija_povratka_id?: number | null;
   napomena_prevoz?: string | null;
   destinacija_prevoz_id?: number | null;
   nacin_placanja?: string | null;

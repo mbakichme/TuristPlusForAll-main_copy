@@ -28,7 +28,8 @@ PREVOZ_POLJA = {"prevozow", "prevozrt", "smer", "cenaow", "kolow", "cenart",
 OBRACUN_POLJA = {"cenaaranz", "kolaranz", "cenaaranzd", "osiguranje", "osiguranje1",
                  "popustar", "popustpr", "procenatar", "procenatpr", "nacin_placanja"}
 # kolone koje se ne loguju (tehnička polja, menjaju se pri svakom snimanju)
-IGNORISANA_POLJA = {"kljuc", "danas", "obradio"}
+IGNORISANA_POLJA = {"kljuc", "danas", "obradio",
+                    "destinacija_ow_id", "destinacija_polaska_id", "destinacija_povratka_id"}
 BOOL_POLJA = {"prevozow", "prevozrt", "placeno_prevoz", "zelja_prevoz"}
 
 LABELE = {

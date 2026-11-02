@@ -135,6 +135,13 @@ const datumZaInput = (v: string | null | undefined) => {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : "";
 };
 const brojUString = (v: number | null | undefined) => v == null ? "" : String(v);
+// destinacija prevoza iz ugovora → id (string) za Select; legacy red bez id-ja: traži po nazivu
+const dpIdIzUgovora = (lista: DestinacijaPrevoz[], id: number | null | undefined, naziv: string | null | undefined) => {
+  if (id != null) return String(id);
+  const n = (naziv ?? "").trim();
+  const nadjen = n ? lista.find((x) => x.naziv.trim() === n) : undefined;
+  return nadjen ? String(nadjen.id) : "";
+};
 const formattersKalendara = {
   formatCaption: (month: Date) => `${MESECI[month.getMonth()]} ${month.getFullYear()}`,
   formatWeekdayName: (day: Date) => DANI[day.getDay()],
@@ -942,12 +949,12 @@ export default function RezervacijePage() {
       setTimeLimitSat(tl ? tl[4] : "12");
       setPrevozDetaljiOtvoreni({});
       const nosilacOw = !!d.prevozow;
-      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", uzrast: d.uzrast ?? "", adresa: d.adresa ?? "", grad: d.grad ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: d.destinacija_ow ?? "", datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: d.destinacija_polaska ?? "", destinacijaPovratka: d.destinacija_povratka ?? "" });
+      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", uzrast: d.uzrast ?? "", adresa: d.adresa ?? "", grad: d.grad ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: dpIdIzUgovora(destinacijePrevoz, d.destinacija_ow_id, d.destinacija_ow), datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: dpIdIzUgovora(destinacijePrevoz, d.destinacija_polaska_id, d.destinacija_polaska), destinacijaPovratka: dpIdIzUgovora(destinacijePrevoz, d.destinacija_povratka_id, d.destinacija_povratka) });
       const dopuna = (d.putnici_detalji ?? []).filter((p) => !!p.saputnik?.trim());
       const dodati = dopuna.map((p) => {
         const uid = `s${++uidRef.current}`;
         const ow = !!p.prevozow;
-        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", uzrast: p.uzrast ?? "", adresa: p.adresa ?? "", grad: p.grad ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: p.destinacija_ow ?? "", datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: p.destinacija_polaska ?? "", destinacijaPovratka: p.destinacija_povratka ?? "" };
+        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", uzrast: p.uzrast ?? "", adresa: p.adresa ?? "", grad: p.grad ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: dpIdIzUgovora(destinacijePrevoz, p.destinacija_ow_id, p.destinacija_ow), datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: dpIdIzUgovora(destinacijePrevoz, p.destinacija_polaska_id, p.destinacija_polaska), destinacijaPovratka: dpIdIzUgovora(destinacijePrevoz, p.destinacija_povratka_id, p.destinacija_povratka) };
       });
       setSaputnici(dodati);
       setDodatneStavke(d.dodatne ?? []);
@@ -1800,11 +1807,11 @@ export default function RezervacijePage() {
       placeno: !!red?.placeno,
       zelja: !!red?.zelja,
       datumOw: o.ow ? o.datumOw : "",
-      destinacijaOw: o.ow ? o.destinacijaOw : "",
+      destinacijaOwId: o.ow ? idIliNull(o.destinacijaOw) : null,
       datumPolaska: o.rt ? o.datumPolaska : "",
-      destinacijaPolaska: o.rt ? o.destinacijaPolaska : "",
+      destinacijaPolaskaId: o.rt ? idIliNull(o.destinacijaPolaska) : null,
       datumPovratka: o.rt ? o.datumPovratka : "",
-      destinacijaPovratka: o.rt ? o.destinacijaPovratka : "",
+      destinacijaPovratkaId: o.rt ? idIliNull(o.destinacijaPovratka) : null,
     });
     const payload = {
       tiprezervacije: tipRezervacije,
@@ -3068,8 +3075,8 @@ export default function RezervacijePage() {
                                   updOsoba({
                                     datumPolaska: osoba.datumPolaska || boravak.datumOd,
                                     datumPovratka: osoba.datumPovratka || boravak.datumDo,
-                                    destinacijaPolaska: osoba.destinacijaPolaska || (dpIzabrana?.naziv ?? ""),
-                                    destinacijaPovratka: osoba.destinacijaPovratka || (dpIzabrana?.naziv ?? ""),
+                                    destinacijaPolaska: osoba.destinacijaPolaska || (dpIzabrana ? String(dpIzabrana.id) : ""),
+                                    destinacijaPovratka: osoba.destinacijaPovratka || (dpIzabrana ? String(dpIzabrana.id) : ""),
                                   });
                                 }
                               }}
@@ -3132,7 +3139,7 @@ export default function RezervacijePage() {
                                   <Select value={osoba.destinacijaOw} onValueChange={(v) => updOsoba({ destinacijaOw: v })} disabled={zakljucano}>
                                     <SelectTrigger className="w-full" aria-label={`Destinacija OW — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju prevoza" /></SelectTrigger>
                                     <SelectContent>
-                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
+                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>)}
                                     </SelectContent>
                                   </Select>
                                 </Fld>
@@ -3145,7 +3152,7 @@ export default function RezervacijePage() {
                                   <Select value={osoba.destinacijaPolaska} onValueChange={(v) => updOsoba({ destinacijaPolaska: v })} disabled={zakljucano}>
                                     <SelectTrigger className="w-full" aria-label={`Destinacija polaska — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju prevoza" /></SelectTrigger>
                                     <SelectContent>
-                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
+                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>)}
                                     </SelectContent>
                                   </Select>
                                 </Fld>
@@ -3154,7 +3161,7 @@ export default function RezervacijePage() {
                                   <Select value={osoba.destinacijaPovratka} onValueChange={(v) => updOsoba({ destinacijaPovratka: v })} disabled={zakljucano}>
                                     <SelectTrigger className="w-full" aria-label={`Destinacija povratka — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju prevoza" /></SelectTrigger>
                                     <SelectContent>
-                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
+                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>)}
                                     </SelectContent>
                                   </Select>
                                 </Fld>
