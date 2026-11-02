@@ -6155,8 +6155,11 @@ def create_app(static_dir: str) -> FastAPI:
             ).mappings().first()
         if not ar:
             raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+        ag = dict(ag)
+        ag["banke"] = _banke_izdavaoca(ag)
+        ag["logo_data_url"] = _logo_data_url_iz_baze()
         pdf = build_saglasnost_pdf(
-            dict(ag), ar["kljuc"], _belgrade_now().strftime("%d.%m.%Y"), (ar["putnik"] or "").strip()
+            ag, ar["kljuc"], _belgrade_now().strftime("%d.%m.%Y"), (ar["putnik"] or "").strip()
         )
         return Response(
             content=pdf,

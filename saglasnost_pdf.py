@@ -3,19 +3,38 @@
 A4 portrait, crno-belo. Zaglavlje, naziv i licenca dolaze iz tabele `agencija`
 (Osnovni podaci); broj saglasnosti = broj ugovora; davalac = nosilac aranžmana.
 """
+import base64
+import binascii
 import io
 from xml.sax.saxutils import escape
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph
 from sqlalchemy import text
 
+from predracun_pdf import _logo_path
 from uplate_pdf import _ensure_fonts
 
 W, H = A4
 M = 60
+
+
+def _logo(data_url: str | None):
+    """Logo agencije (data URL iz baze) ili statički fallback; None ako ne može da se učita."""
+    try:
+        if data_url and "," in data_url:
+            logo = ImageReader(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1], validate=True)))
+        else:
+            src = _logo_path()
+            logo = ImageReader(src) if src else None
+        if logo:
+            logo.getSize()
+        return logo
+    except (ValueError, TypeError, binascii.Error, OSError):
+        return None
 
 
 def init_saglasnost(engine) -> None:
@@ -36,15 +55,25 @@ def build_saglasnost_pdf(ag: dict, broj: str, datum: str, ime: str) -> bytes:
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle(f"Saglasnost {broj}")
 
-    # --- zaglavlje: agencija levo, licenca i mesto/datum desno -------------
+    # --- zaglavlje: logo + agencija levo, licenca i mesto/datum desno ----------
     y = H - 50
+    tx = M
+    logo = _logo(ag.get("logo_data_url"))
+    if logo:
+        iw, ih = logo.getSize()
+        lh = 50
+        lw = min(120, lh * iw / ih)
+        c.drawImage(logo, M, H - 40 - lh, width=lw, height=lh, mask="auto")
+        tx = M + lw + 12
     c.setFont("LibB", 10)
-    c.drawString(M, y, naziv)
+    c.drawString(tx, y, naziv)
     c.setFont("Lib", 9)
     if adresa or grad:
-        c.drawString(M, y - 14, f"Adresa: {adresa}, {grad}".replace(" ,", ","))
+        c.drawString(tx, y - 14, f"Adresa: {adresa}, {grad}".replace(" ,", ","))
     if telefoni:
-        c.drawString(M, y - 28, f"Telefon: {telefoni}")
+        c.drawString(tx, y - 28, f"Telefon: {telefoni}")
+    for i, banka in enumerate(ag.get("banke") or []):
+        c.drawString(tx, y - 42 - 14 * i, banka)
     c.setFont("Lib", 9)
     c.drawRightString(W - M, y, f"Licenca: {ag.get('licenca') or '—'}")
     c.drawRightString(W - M, y - 14, f"{mesto.upper()}, {datum}")
