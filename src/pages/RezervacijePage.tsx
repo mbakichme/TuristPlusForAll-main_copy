@@ -3060,7 +3060,19 @@ export default function RezervacijePage() {
                               aria-expanded={!!prevozDetaljiOtvoreni[p.uid] && (osoba.ow || osoba.rt)}
                               aria-controls={`prevoz-detalji-${p.uid}`}
                               title={osoba.ow || osoba.rt ? "Detalji prevoza" : "Prvo izaberite OW ili RT"}
-                              onClick={() => setPrevozDetaljiOtvoreni((prev) => ({ ...prev, [p.uid]: !prev[p.uid] }))}
+                              onClick={() => {
+                                const otvara = !prevozDetaljiOtvoreni[p.uid];
+                                setPrevozDetaljiOtvoreni((prev) => ({ ...prev, [p.uid]: otvara }));
+                                // pri otvaranju RT panela: prazna polja se popunjavaju iz rezervacije (datumi boravka + izabrana destinacija prevoza)
+                                if (otvara && osoba.rt) {
+                                  updOsoba({
+                                    datumPolaska: osoba.datumPolaska || boravak.datumOd,
+                                    datumPovratka: osoba.datumPovratka || boravak.datumDo,
+                                    destinacijaPolaska: osoba.destinacijaPolaska || (dpIzabrana?.naziv ?? ""),
+                                    destinacijaPovratka: osoba.destinacijaPovratka || (dpIzabrana?.naziv ?? ""),
+                                  });
+                                }
+                              }}
                             >
                               <Plus className={cn("size-4 transition-transform", prevozDetaljiOtvoreni[p.uid] && "rotate-45")} />
                             </Button>
@@ -3118,9 +3130,9 @@ export default function RezervacijePage() {
                                 <DatumField label="Datum OW" className="w-full sm:w-40" value={osoba.datumOw} onChange={(v) => updOsoba({ datumOw: v })} disabled={zakljucano} />
                                 <Fld label="Destinacija OW" className="w-full sm:w-64">
                                   <Select value={osoba.destinacijaOw} onValueChange={(v) => updOsoba({ destinacijaOw: v })} disabled={zakljucano}>
-                                    <SelectTrigger className="w-full" aria-label={`Destinacija OW — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju OW" /></SelectTrigger>
+                                    <SelectTrigger className="w-full" aria-label={`Destinacija OW — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju prevoza" /></SelectTrigger>
                                     <SelectContent>
-                                      {destinacije.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
+                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
                                     </SelectContent>
                                   </Select>
                                 </Fld>
@@ -3131,18 +3143,18 @@ export default function RezervacijePage() {
                                 <DatumField label="Datum polaska" value={osoba.datumPolaska} onChange={(v) => updOsoba({ datumPolaska: v })} disabled={zakljucano} />
                                 <Fld label="Destinacija polaska">
                                   <Select value={osoba.destinacijaPolaska} onValueChange={(v) => updOsoba({ destinacijaPolaska: v })} disabled={zakljucano}>
-                                    <SelectTrigger className="w-full" aria-label={`Destinacija polaska — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju polaska" /></SelectTrigger>
+                                    <SelectTrigger className="w-full" aria-label={`Destinacija polaska — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju prevoza" /></SelectTrigger>
                                     <SelectContent>
-                                      {destinacije.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
+                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
                                     </SelectContent>
                                   </Select>
                                 </Fld>
                                 <DatumField label="Datum povratka" value={osoba.datumPovratka} onChange={(v) => updOsoba({ datumPovratka: v })} disabled={zakljucano} />
                                 <Fld label="Destinacija povratka">
                                   <Select value={osoba.destinacijaPovratka} onValueChange={(v) => updOsoba({ destinacijaPovratka: v })} disabled={zakljucano}>
-                                    <SelectTrigger className="w-full" aria-label={`Destinacija povratka — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju povratka" /></SelectTrigger>
+                                    <SelectTrigger className="w-full" aria-label={`Destinacija povratka — ${p.ime}`}><SelectValue placeholder="Izaberite destinaciju prevoza" /></SelectTrigger>
                                     <SelectContent>
-                                      {destinacije.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
+                                      {destinacijePrevoz.map((d) => <SelectItem key={d.id} value={d.naziv}>{d.naziv}</SelectItem>)}
                                     </SelectContent>
                                   </Select>
                                 </Fld>
