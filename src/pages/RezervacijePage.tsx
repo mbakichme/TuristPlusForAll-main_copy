@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  BadgeCheck, Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, ChevronDown, CreditCard, Download, FilePenLine, FileSignature, Loader2,
+  Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, ChevronDown, CreditCard, Download, FilePenLine, FileSignature, Loader2,
   FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
   Users, Wallet, ArrowRightLeft, Printer,
 } from "lucide-react";
@@ -3513,9 +3513,6 @@ export default function RezervacijePage() {
 
       {/* Zajedničke akcije ostaju dostupne na svim tabovima. */}
       <div className="sticky bottom-0 z-10 -mx-6 flex flex-wrap gap-2 border-t bg-background/95 px-6 py-3 backdrop-blur">
-        <Button variant="outline" onClick={akcija("Potvrda")}>
-          <BadgeCheck className="mr-1.5 size-4" />Potvrda
-        </Button>
         <Button
           variant="outline"
           disabled={!izabraniUgovor || ugovorPdfUcitava}
