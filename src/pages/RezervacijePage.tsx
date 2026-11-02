@@ -31,7 +31,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { apiFetch, getToken } from "../lib/api";
-import type { CekStavka, Destinacija, DodatnaStavka, KarticaPodaci, Mesto, Smestaj, Soba, UgovorDetail, UgovorRow, UgovoriResponse, UplataRow } from "../types";
+import type { CekStavka, Destinacija, DestinacijaPrevoz, DodatnaStavka, KarticaPodaci, Mesto, Smestaj, Soba, UgovorDetail, UgovorRow, UgovoriResponse, UplataRow, ZauzecePrevoza } from "../types";
 import { cn } from "@/lib/utils";
 import { CekPopup } from "@/components/CekPopup";
 import { AdministrativnaZabranaPopup } from "@/components/AdministrativnaZabranaPopup";
@@ -305,23 +305,33 @@ interface PrevozRed {
   placeno: boolean;
   zelja: boolean;
 }
-/** Sažetak u zaglavlju taba Prevoz: broj putnika na prevozu + plaćena mesta (samo mesta sa uplatom). */
-function PrevozSazetak({ stavke }: { stavke: { naPrevozu: boolean; mesto: string; placeno: boolean }[] }) {
-  const naPrevozu = stavke.filter((s) => s.naPrevozu).length;
-  const placeno = MESTO_SEDENJA
-    .map((m) => ({ mesto: m, broj: stavke.filter((s) => s.placeno && s.mesto === m).length }))
-    .filter((x) => x.broj > 0);
+/** Sažetak u zaglavlju taba Prevoz: po smeru (Odlazak = datumod, Povratak = datumdo) broj putnika sa RT prevozom
+ *  preko svih rezervacija za izabranu destinaciju prevoza + limit i plaćena mesta (samo mesta sa uplatom). */
+interface SazetakSmera { smer: "Odlazak" | "Povratak"; datum: string; putnici: number; limit: number | null; placeno: { mesto: string; broj: number }[] }
+const datumDMY = (iso: string) => { const [y, m, d] = iso.split("-"); return `${d}.${m}.${y}`; };
+function PrevozSazetak({ redovi, poruka }: { redovi: SazetakSmera[]; poruka: string | null }) {
+  if (redovi.length === 0) {
+    return poruka ? <p className="text-xs text-muted-foreground">{poruka}</p> : null;
+  }
   return (
     <div className="flex flex-col items-end gap-1 text-right text-xs">
-      <p><span className="text-muted-foreground">Broj putnika na prevozu: </span><span className="font-semibold tabular-nums">{naPrevozu}</span></p>
-      {placeno.length > 0 && (
-        <p>
-          <span className="text-muted-foreground">Plaćeno: </span>
-          {placeno.map((x, i) => (
-            <span key={x.mesto} className="font-medium">{i > 0 && ", "}{x.mesto.charAt(0) + x.mesto.slice(1).toLowerCase()} ({x.broj})</span>
-          ))}
-        </p>
-      )}
+      {redovi.map((r) => (
+        <div key={r.smer} className="flex flex-col items-end">
+          <p>
+            <span className="text-muted-foreground">Broj putnika na prevozu — {r.smer} {datumDMY(r.datum)}: </span>
+            <span className="font-semibold tabular-nums">{r.putnici}</span>
+            {r.limit !== null && <span className="text-muted-foreground"> / limit {r.limit}</span>}
+          </p>
+          {r.placeno.length > 0 && (
+            <p>
+              <span className="text-muted-foreground">Plaćeno: </span>
+              {r.placeno.map((x, i) => (
+                <span key={x.mesto} className="font-medium">{i > 0 && ", "}{x.mesto.charAt(0) + x.mesto.slice(1).toLowerCase()} ({x.broj})</span>
+              ))}
+            </p>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -774,6 +784,7 @@ export default function RezervacijePage() {
   const [smestaji, setSmestaji] = useState<Smestaj[]>([]);
   const [sobe, setSobe] = useState<Soba[]>([]);
   const [destinacije, setDestinacije] = useState<Destinacija[]>([]);
+  const [destinacijePrevoz, setDestinacijePrevoz] = useState<DestinacijaPrevoz[]>([]);
   const [kurs, setKurs] = useState<{ kurs: number | null; datum: string } | null>(null);
 
   useEffect(() => {
@@ -781,9 +792,10 @@ export default function RezervacijePage() {
     Promise.all([
       apiFetch<Mesto[]>("/mesto"), apiFetch<Smestaj[]>("/smestaj"),
       apiFetch<Soba[]>("/sobe"), apiFetch<Destinacija[]>("/destinacija"),
-    ]).then(([m, s, sobeData, d]) => {
+      apiFetch<DestinacijaPrevoz[]>("/destinacija-prevoz"),
+    ]).then(([m, s, sobeData, d, dp]) => {
       if (cancelled) return;
-      setMesta(m); setSmestaji(s); setSobe(sobeData); setDestinacije(d);
+      setMesta(m); setSmestaji(s); setSobe(sobeData); setDestinacije(d); setDestinacijePrevoz(dp);
       setReferenceSpremne(true);
     }).catch(() => { if (!cancelled) toast.error("Učitavanje podataka za rezervaciju nije uspelo"); });
     apiFetch<{ kurs: number | null; datum: string }>("/kurs").then(setKurs).catch(() => {});
@@ -791,16 +803,17 @@ export default function RezervacijePage() {
     return () => { cancelled = true; };
   }, []);
 
-  // Izbor destinacije je vezan za mesto: prati destinaciju povezanu sa izabranim mestom (boravak.mesto).
-  // Kod učitanog ugovora veza se pauzira dok se mesto ne promeni — sačuvana destinacija
+  // Izbor destinacije (tab Prevoz) je vezan za mesto: prati destinaciju prevoza čija je destinacija ista kao destinacija mesta
+  // (boravak.mesto). Kod učitanog ugovora veza se pauzira dok se mesto ne promeni — sačuvana destinacija
   // ugovora se ne pregaza automatski vezom mesta.
   useEffect(() => {
     if (mestoUgovoraRef.current !== null && boravak.mesto === mestoUgovoraRef.current) return;
     mestoUgovoraRef.current = null;
     if (!boravak.mesto || boravak.mesto === CUVAR) { setDestinacijaZaSve(""); return; }
     const m = mesta.find((x) => String(x.id) === boravak.mesto);
-    setDestinacijaZaSve(m?.destinacija ? String(m.destinacija) : "");
-  }, [boravak.mesto, mesta]);
+    const dp = m?.destinacija ? destinacijePrevoz.find((x) => x.id_destinacije === m.destinacija) : undefined;
+    setDestinacijaZaSve(dp ? String(dp.id) : "");
+  }, [boravak.mesto, mesta, destinacijePrevoz]);
 
   // Registar prevoza — mesta ulaska (tabela polazak): jedan poziv pri montiranju,
   // uz mogućnost ponavljanja iz taba Prevoz ako učitavanje ne uspe.
@@ -919,8 +932,11 @@ export default function RezervacijePage() {
       setSobaSacuvana(sobaId ? null : (d.soba ?? "").trim() || null);
       setMestoSacuvano(mestoId ? null : (d.mesto ?? "").trim() || null);
       const destinacijaId = destinacije.find((x) => naziv(x.naziv) === naziv(d.destinacija))?.id;
-      setDestinacijaSacuvana(destinacijaId ? null : (d.destinacija ?? "").trim() || null);
-      setDestinacijaZaSve(destinacijaId ? String(destinacijaId) : (d.destinacija ?? "").trim() ? CUVAR : "");
+      // Izbor destinacije = destinacija prevoza; stari ugovori bez veze → prva destinacija prevoza sa istom destinacijom
+      const dpSacuvan = d.destinacija_prevoz_id && destinacijePrevoz.some((x) => x.id === d.destinacija_prevoz_id) ? d.destinacija_prevoz_id : null;
+      const dpId = dpSacuvan ?? destinacijePrevoz.find((x) => x.id_destinacije === destinacijaId)?.id ?? null;
+      setDestinacijaSacuvana(dpId ? null : (d.destinacija ?? "").trim() || null);
+      setDestinacijaZaSve(dpId ? String(dpId) : (d.destinacija ?? "").trim() ? CUVAR : "");
       const tl = /^(\d{2})\.(\d{2})\.(\d{4}) (\d{2}):\d{2}$/.exec(d.timelimit ?? "");
       setTimeLimitDatum(tl && tip === "Predrezervacija" ? new Date(+tl[3], +tl[2] - 1, +tl[1]) : undefined);
       setTimeLimitSat(tl ? tl[4] : "12");
@@ -1081,26 +1097,65 @@ export default function RezervacijePage() {
     })),
   ], [nosilac.ime, saputnici]);
 
-  // sažetak prevoza (desni deo zaglavlja taba Prevoz): putnici sa bilo kojim prevozom i plaćena mesta
-  const prevozStavke = useMemo(() => putnici.map((p) => {
-    const red = prevozRedovi[p.uid];
+  // izabrana destinacija prevoza + destinacija (naziv ugovora) povezana sa njom
+  const dpIzabrana = useMemo(
+    () => destinacijePrevoz.find((x) => String(x.id) === destinacijaZaSve) ?? null,
+    [destinacijePrevoz, destinacijaZaSve],
+  );
+  const nazivDestinacije = useMemo(
+    () => (dpIzabrana ? destinacije.find((x) => x.id === dpIzabrana.id_destinacije)?.naziv ?? null : null),
+    [dpIzabrana, destinacije],
+  );
+
+  // zauzeće prevoza iz svih rezervacija (Odlazak = datumod, Povratak = datumdo); tekuća se izuzima i dodaje iz forme
+  const [zauzeca, setZauzeca] = useState<{ odlazak: ZauzecePrevoza; povratak: ZauzecePrevoza } | null>(null);
+  const dpBroj = dpIzabrana?.id ?? null;
+  useEffect(() => {
+    if (dpBroj === null || !boravak.datumOd || !boravak.datumDo) { setZauzeca(null); return; }
+    let cancelled = false;
+    const upit = (smer: "Odlazak" | "Povratak", datum: string) => apiFetch<ZauzecePrevoza>(
+      `/prevoz-limit/zauzece?${new URLSearchParams({ id_destinacije_prevoza: String(dpBroj), datum, smer, exclude_kljuc: izabraniUgovor ?? "" })}`,
+    );
+    Promise.all([upit("Odlazak", boravak.datumOd), upit("Povratak", boravak.datumDo)])
+      .then(([odlazak, povratak]) => { if (!cancelled) setZauzeca({ odlazak, povratak }); })
+      .catch(() => { if (!cancelled) { setZauzeca(null); toast.error("Učitavanje zauzeća prevoza nije uspelo"); } });
+    return () => { cancelled = true; };
+  }, [dpBroj, boravak.datumOd, boravak.datumDo, izabraniUgovor]);
+
+  // putnici ove rezervacije sa RT prevozom (nosilac + saputnici sa imenom) — dodaju se na zauzeće iz baze
+  const mojiRt = useMemo(() => putnici.flatMap((p) => {
     const osoba = p.osnovni ? nosilac : saputnici.find((s) => s.uid === p.uid);
-    return {
-      naPrevozu: !!osoba && (osoba.ow || osoba.rt || osoba.sp),
-      mesto: red?.mestoSedenja ?? "",
-      placeno: !!red?.placeno,
-    };
+    if (!osoba || !osoba.rt || (!p.osnovni && !osoba.ime.trim())) return [];
+    const red = prevozRedovi[p.uid];
+    return [{ mesto: (red?.mestoSedenja ?? "").trim().toUpperCase(), placeno: !!red?.placeno }];
   }), [putnici, prevozRedovi, nosilac, saputnici]);
 
-  // Mesta ulaska iz registra prevoza: opciono sužena na izabranu destinaciju — po nazivu,
+  const sazetakPrevoza = useMemo<SazetakSmera[]>(() => {
+    if (!zauzeca) return [];
+    const spoji = (z: ZauzecePrevoza): SazetakSmera => {
+      const mesta = new Map<string, number>();
+      for (const x of z.placeno) mesta.set(x.mesto, (mesta.get(x.mesto) ?? 0) + x.broj);
+      for (const m of mojiRt) if (m.placeno && m.mesto) mesta.set(m.mesto, (mesta.get(m.mesto) ?? 0) + 1);
+      return {
+        smer: z.smer,
+        datum: z.datum,
+        putnici: z.putnici + mojiRt.length,
+        limit: z.limit_mesta === null ? null : z.limit_mesta + (z.dodatna_mesta ?? 0),
+        placeno: [...mesta].filter(([, broj]) => broj > 0).map(([mesto, broj]) => ({ mesto, broj })).sort((a, b) => a.mesto.localeCompare(b.mesto, "sr")),
+      };
+    };
+    return [spoji(zauzeca.odlazak), spoji(zauzeca.povratak)];
+  }, [zauzeca, mojiRt]);
+  const sazetakPoruka = dpBroj === null ? "Izaberite destinaciju prevoza da biste videli zauzeće." : null;
+
+  // Mesta ulaska iz registra prevoza: opciono sužena na destinaciju izabrane destinacije prevoza — po nazivu,
   // jer je polazak.destinacija tekst, ne ID (ako nema poklapanja, ostaju svi redovi).
   // Jedinstveni, trimovani, neprazni, sortirani sr-lokalno.
   const mestaUlaskaOpcije = useMemo(() => {
     const naziv = (v: string | null | undefined) => (v ?? "").trim().toLocaleLowerCase();
-    const sel = destinacije.find((d) => String(d.id) === destinacijaZaSve);
     let redovi = polasci;
-    if (sel) {
-      const filtrirani = polasci.filter((p) => naziv(p.destinacija) === naziv(sel.naziv));
+    if (nazivDestinacije) {
+      const filtrirani = polasci.filter((p) => naziv(p.destinacija) === naziv(nazivDestinacije));
       if (filtrirani.length > 0) redovi = filtrirani;
     }
     const skup = new Set<string>();
@@ -1109,16 +1164,14 @@ export default function RezervacijePage() {
       if (v) skup.add(v);
     }
     return [...skup].sort((a, b) => a.localeCompare(b, "sr"));
-  }, [polasci, destinacije, destinacijaZaSve]);
+  }, [polasci, nazivDestinacije]);
 
   // TRANSFER stavke: po mestu ulaska zbir transfera svih putnika (nosilac + saputnici) iz registra prevoza.
   // Red registra = prvi po satu/id koji se poklapa sa mestom ulaska i izabranom destinacijom.
   // Zbir 0 → stavka se ne prikazuje (nestaje kad putnik pređe na mesto bez transfera).
   const transferStavke = useMemo<NonNullable<UgovorDetail["dodatne"]>>(() => {
     const naziv = (v: string | null | undefined) => (v ?? "").trim().toLocaleLowerCase();
-    const nazivDest = destinacijaZaSve === CUVAR
-      ? destinacijaSacuvana
-      : destinacije.find((x) => String(x.id) === destinacijaZaSve)?.naziv ?? null;
+    const nazivDest = destinacijaZaSve === CUVAR ? destinacijaSacuvana : nazivDestinacije;
     const satBroj = (v: string | null | undefined) => {
       const n = parseFloat(v ?? "");
       return Number.isNaN(n) ? Number.POSITIVE_INFINITY : n;
@@ -1152,7 +1205,7 @@ export default function RezervacijePage() {
       out.push({ stavka_id: -redni, usluga: `TRANSFER - ${mesto}`, eur: Math.round(eur * 100) / 100, din: null });
     }
     return out;
-  }, [prevozRedovi, saputnici, polasci, destinacije, destinacijaZaSve, destinacijaSacuvana]);
+  }, [prevozRedovi, saputnici, polasci, nazivDestinacije, destinacijaZaSve, destinacijaSacuvana]);
 
   // PLAĆENO MESTO: po mestu za sedenje zbir doplata za putnike koji su izabrali mesto i „Plaćeno“
   // (nosilac + saputnici). Iznos po mestu = parametri obračuna (EUR) × broj putnika. Iznos 0 → ne prikazuje se.
@@ -1731,7 +1784,7 @@ export default function RezervacijePage() {
     const smestajNaziv = boravak.smestaj === CUVAR ? smestajSacuvan : smestaji.find((s) => String(s.id) === boravak.smestaj)?.naziv ?? null;
     const sobaBroj = boravak.soba === CUVAR ? sobaSacuvana : sobe.find((b) => String(b.id) === boravak.soba)?.broj_sobe ?? null;
     const mestoNaziv = boravak.mesto === CUVAR ? mestoSacuvano : mesta.find((m) => String(m.id) === boravak.mesto)?.naziv ?? null;
-    const destinacijaNaziv = destinacijaZaSve === CUVAR ? destinacijaSacuvana : destinacije.find((x) => String(x.id) === destinacijaZaSve)?.naziv ?? null;
+    const destinacijaNaziv = destinacijaZaSve === CUVAR ? destinacijaSacuvana : nazivDestinacije;
     const idIliNull = (v: string) => (v && v !== CUVAR ? Number(v) : null);
     // popust/provizija: procenat ima prednost; inače direktno unet iznos (EUR pa RSD)
     const cenaRed = (pct: string, eur: string, rsd: string) => {
@@ -1782,7 +1835,7 @@ export default function RezervacijePage() {
         struktura: boravak.struktura.trim(),
         napomena: boravak.napomena, napomenaInterna: boravak.napomenaInterna,
       },
-      destinacijaId: idIliNull(destinacijaZaSve), destinacijaNaziv,
+      destinacijaId: dpIzabrana?.id_destinacije ?? null, destinacijaNaziv, destinacijaPrevozId: idIliNull(destinacijaZaSve),
       ulazak: prevozRedovi["nosilac"]?.mestoUlaska ?? "",
       izlazak: prevozRedovi["nosilac"]?.mestoIzlaska ?? "",
       napomenaPrevoz: boravak.napomenaPrevoz,
@@ -2933,17 +2986,17 @@ export default function RezervacijePage() {
                   </CardTitle>
                   <CardDescription>Destinacija, mesta ulaska i sedišta po putniku</CardDescription>
                 </div>
-                <PrevozSazetak stavke={prevozStavke} />
+                <PrevozSazetak redovi={sazetakPrevoza} poruka={sazetakPoruka} />
               </div>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2 items-start">
                 <Fld label="Izbor destinacije">
                   <Select value={destinacijaZaSve} onValueChange={(v) => { if (v !== CUVAR) setDestinacijaSacuvana(null); setDestinacijaZaSve(v); }} disabled={zakljucano}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite destinaciju" /></SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite destinaciju prevoza" /></SelectTrigger>
                     <SelectContent>
                       {destinacijaSacuvana && <SelectItem value={CUVAR}>{destinacijaSacuvana} (sačuvano)</SelectItem>}
-                      {destinacije.map((d) => (
+                      {destinacijePrevoz.map((d) => (
                         <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>
                       ))}
                     </SelectContent>

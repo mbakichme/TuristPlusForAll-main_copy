@@ -40,6 +40,8 @@ export interface AuthUser {
 export interface TipPonude { id: number; naziv: string; }
 export interface Drzava { id: number; id_cis?: string; naziv: string; naziv_cis?: string; }
 export interface Destinacija { id: number; naziv: string; drzava?: number; drzava_naziv?: string; status: number; organizator?: number; predstavnik?: number; naziv_cis?: string; }
+export interface DestinacijaPrevoz { id: number; id_destinacije: number; naziv: string; grupe: { id: number; naziv: string }[]; }
+export interface ZauzecePrevoza { datum: string; smer: "Odlazak" | "Povratak"; putnici: number; placeno: { mesto: string; broj: number }[]; limit_mesta: number | null; dodatna_mesta: number | null; }
 export interface Mesto { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; grupa_datuma?: number; grupa_datuma_naziv?: string; grupe?: number[]; grupe_nazivi?: string[]; status: number; organizator?: number; predstavnik?: number; grafik: number; cis?: string; }
 export interface TipSmestaja { id: number; naziv: string; }
 export interface Smestaj { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; mesto?: number; mesto_naziv?: string; tip_smestaja?: number; tip_smestaja_naziv?: string; grupa_datuma?: number | null; grupa_datuma_naziv?: string | null; status: number; organizator?: number; predstavnik?: number; grafik: number; granica_chd: number; prima_decu: boolean; ne_prima_ispod_godina: number | null; popular: boolean; provizija: number; }
@@ -149,6 +151,7 @@ export interface UgovorDetail {
   datum_povratka?: string | null;
   destinacija_povratka?: string | null;
   napomena_prevoz?: string | null;
+  destinacija_prevoz_id?: number | null;
   nacin_placanja?: string | null;
   osiguranje?: number | null; // RSD
   osiguranje1?: number | null; // EUR

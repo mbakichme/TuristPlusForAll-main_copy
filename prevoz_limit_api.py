@@ -360,3 +360,60 @@ def register_prevoz_limit(api, engine, get_current_user):
                 """), {"smer": smer, "dp": body.id_destinacije_prevoza})
                 dodato += res.rowcount
         return {"status": "kreirano", "dodato": dodato, "postojalo": ukupno - dodato}
+
+    @api.get("/prevoz-limit/zauzece")
+    def zauzece_prevoza(id_destinacije_prevoza: int, datum: date, smer: str,
+                        exclude_kljuc: str = "", _: dict = Depends(get_current_user)):
+        """Putnici sa RT prevozom preko SVIH rezervacija izabrane destinacije prevoza za datum.
+        Odlazak = datumod rezervacije, Povratak = datumdo. Tekuća rezervacija se izuzima
+        (exclude_kljuc) jer je njeni putnici frontend dodaje iz forme."""
+        if smer not in SMEROVI:
+            raise HTTPException(status_code=400, detail="Smer mora biti Odlazak ili Povratak")
+        with engine.connect() as conn:
+            red = conn.execute(text("""
+                WITH rez AS (
+                    SELECT a.id, COALESCE(a.prevozrt, 0) AS rt,
+                           a.mesto_sedenja, COALESCE(a.placeno_prevoz, 0) AS placeno
+                    FROM aranzman a
+                    WHERE a.destinacija_prevoz_id = :dp AND a.kljuc <> :ex
+                      AND CAST(CASE WHEN :smer = 'Odlazak' THEN a.datumod ELSE a.datumdo END AS date) = :d
+                ),
+                putnici AS (
+                    SELECT rt, mesto_sedenja, placeno FROM rez
+                    UNION ALL
+                    SELECT COALESCE(ad.prevozrt, 0), ad.mesto_sedenja, COALESCE(ad.placeno_prevoz, 0)
+                    FROM aranzman_dopuna ad JOIN rez r ON r.id = ad.aranzman_id
+                )
+                SELECT
+                    (SELECT count(*) FROM putnici WHERE rt = 1) AS putnici
+            """), {"dp": id_destinacije_prevoza, "ex": exclude_kljuc.strip(), "smer": smer, "d": datum}).one()
+            mesta = conn.execute(text("""
+                WITH rez AS (
+                    SELECT a.id FROM aranzman a
+                    WHERE a.destinacija_prevoz_id = :dp AND a.kljuc <> :ex
+                      AND CAST(CASE WHEN :smer = 'Odlazak' THEN a.datumod ELSE a.datumdo END AS date) = :d
+                ),
+                putnici AS (
+                    SELECT COALESCE(a.prevozrt, 0) AS rt, a.mesto_sedenja, COALESCE(a.placeno_prevoz, 0) AS placeno
+                    FROM aranzman a JOIN rez r ON r.id = a.id
+                    UNION ALL
+                    SELECT COALESCE(ad.prevozrt, 0), ad.mesto_sedenja, COALESCE(ad.placeno_prevoz, 0)
+                    FROM aranzman_dopuna ad JOIN rez r ON r.id = ad.aranzman_id
+                )
+                SELECT UPPER(TRIM(mesto_sedenja)) AS mesto, count(*) AS broj
+                FROM putnici
+                WHERE rt = 1 AND placeno = 1 AND TRIM(COALESCE(mesto_sedenja, '')) <> ''
+                GROUP BY 1 ORDER BY 1
+            """), {"dp": id_destinacije_prevoza, "ex": exclude_kljuc.strip(), "smer": smer, "d": datum}).fetchall()
+            lim = conn.execute(text(
+                "SELECT limit_mesta, dodatna_mesta FROM prevoz_limit "
+                "WHERE id_destinacije_prevoza = :dp AND datum = :d AND smer = :smer"
+            ), {"dp": id_destinacije_prevoza, "d": datum, "smer": smer}).first()
+        return {
+            "datum": datum.isoformat(),
+            "smer": smer,
+            "putnici": red.putnici,
+            "placeno": [{"mesto": m.mesto, "broj": m.broj} for m in mesta],
+            "limit_mesta": lim.limit_mesta if lim else None,
+            "dodatna_mesta": lim.dodatna_mesta if lim else None,
+        }

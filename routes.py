@@ -503,6 +503,10 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS napomena_prevoz VARCHAR(500)"
         ))
+        # Izbor destinacije (tab Prevoz) = destinacija_prevoz.id; ID bez FK (konvencija projekta)
+        conn.execute(text(
+            "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS destinacija_prevoz_id INTEGER"
+        ))
         # Uzrast nosioca (ADL / CHD / INF); saputnici imaju aranzman_dopuna.uzrast
         conn.execute(text(
             "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS uzrast VARCHAR(20) DEFAULT ''"
@@ -1367,8 +1371,9 @@ class RezervacijaIn(BaseModel):
     nosilac: RezPutnikIn
     saputnici: list[RezPutnikIn] = []
     boravak: RezBoravakIn
-    destinacijaId: Optional[int] = None
+    destinacijaId: Optional[int] = None  # destinacija (naziv ugovora) — ID iz tabele destinacija
     destinacijaNaziv: Optional[str] = None  # fallback van referentne liste
+    destinacijaPrevozId: Optional[int] = None  # Izbor destinacije (tab Prevoz) — ID iz destinacija_prevoz
     ulazak: str = ""  # mesto ulaska nosioca
     izlazak: str = ""  # mesto izlaska nosioca (prazno → mesto ulaska)
     napomenaPrevoz: str = ""  # polje pored "Izbor destinacije" (tab Prevoz)
@@ -4646,6 +4651,12 @@ def create_app(static_dir: str) -> FastAPI:
                 smestaj_id_val = r.id
         mesto_naziv = naziv_po_id("mesto", b.mestoId) or _rez_str(b.mestoNaziv, 200)
         destinacija_naziv = naziv_po_id("destinacija", body.destinacijaId) or _rez_str(body.destinacijaNaziv, 100)
+        destinacija_prevoz_id = None
+        if body.destinacijaPrevozId is not None:
+            if not conn.execute(text("SELECT 1 FROM destinacija_prevoz WHERE id = :i"),
+                                {"i": body.destinacijaPrevozId}).first():
+                raise HTTPException(status_code=400, detail="Destinacija prevoza ne postoji")
+            destinacija_prevoz_id = body.destinacijaPrevozId
         soba_broj = None
         if b.sobaId is not None:
             r = conn.execute(text("SELECT broj_sobe FROM sobe WHERE id = :i"), {"i": b.sobaId}).fetchone()
@@ -4705,7 +4716,7 @@ def create_app(static_dir: str) -> FastAPI:
             "smestaj_id": smestaj_id_val,
             "soba": soba_broj,
             "destinacija": destinacija_naziv,
-            "apartman": _rez_str(struktura_val, 10),
+            "destinacija_prevoz_id": destinacija_prevoz_id,
             "datumod": datetime(datum_od.year, datum_od.month, datum_od.day),
             "datumdo": datetime(datum_do.year, datum_do.month, datum_do.day),
             "datumoddo": f"{datum_od:%d.%m.%Y}-{datum_do:%d.%m.%Y}",
@@ -5164,6 +5175,7 @@ def create_app(static_dir: str) -> FastAPI:
             "datum_povratka": d["datum_povratka"].isoformat() if d.get("datum_povratka") else None,
             "destinacija_povratka": d.get("destinacija_povratka"),
             "napomena_prevoz": d.get("napomena_prevoz"),
+            "destinacija_prevoz_id": d.get("destinacija_prevoz_id"),
             "nacin_placanja": d.get("nacin_placanja"),
 
             "osiguranje1": d.get("osiguranje1"),
