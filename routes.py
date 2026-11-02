@@ -3951,6 +3951,110 @@ def create_app(static_dir: str) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{fname}"'},
         )
 
+    @api.get("/ugovori/{kljuc:path}/cis-link")
+    def ugovor_cis_link(kljuc: str, _: dict = Depends(get_current_user)):
+        """Link za CIS (e-dokumenti importData): podaci iz sačuvanog ugovora,
+        RGZ/JMBG/kod iz podešavanja agencije i programPutovanjaJID = mesto.cis."""
+        from urllib.parse import urlencode, quote
+        import datetime as _dt
+
+        kljuc_clean = kljuc.strip().strip("/")
+        with engine.connect() as conn:
+            arow = conn.execute(text("SELECT * FROM aranzman WHERE kljuc = :k"), {"k": kljuc_clean}).mappings().first()
+            if not arow:
+                raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            dopuni = conn.execute(text(
+                "SELECT saputnik, adresa, email, telefon FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id"
+            ), {"i": arow["id"]}).mappings().all()
+            mesto_cis = None
+            if arow.get("smestaj_id"):
+                mesto_cis = conn.execute(text(
+                    "SELECT m.cis FROM smestaj s JOIN mesto m ON m.id = s.mesto WHERE s.id = :s"
+                ), {"s": arow["smestaj_id"]}).scalar()
+            ag = conn.execute(text("SELECT * FROM agencija ORDER BY id LIMIT 1")).mappings().first()
+
+        if not (mesto_cis or "").strip():
+            raise HTTPException(status_code=400, detail="Mesto nema CIS oznaku (programPutovanjaJID) — unesite je u Mesta")
+        if not ag or not (ag.get("api_kljuc_cis") or "").strip():
+            raise HTTPException(status_code=400, detail="U podešavanjima agencije nedostaje CIS kod")
+
+        def _s(v) -> str:
+            return str(v).strip() if v not in (None, "") else ""
+
+        def _broj(v: float) -> str:
+            return str(int(v)) if float(v).is_integer() else f"{v:.2f}"
+
+        # Putnici: nosilac + saputnici (max 8)
+        putnici = []
+        putnik_full = _s(arow.get("putnik"))
+        delovi = putnik_full.split(" ", 1)
+        putnici.append({
+            "ime": delovi[0] if delovi else "",
+            "prezime": delovi[1] if len(delovi) > 1 else "",
+            "adresa": _s(arow.get("adresa")),
+            "email": _s(arow.get("email")),
+            "telefon": _s(arow.get("telefon")),
+        })
+        for p in dopuni:
+            ime_prez = _s(p["saputnik"]).split(" ", 1)
+            if not ime_prez[0]:
+                continue
+            putnici.append({
+                "ime": ime_prez[0],
+                "prezime": ime_prez[1] if len(ime_prez) > 1 else "",
+                "adresa": _s(p["adresa"]),
+                "email": _s(p["email"]),
+                "telefon": _s(p["telefon"]),
+            })
+        putnici = putnici[:8]
+
+        # Vrsta prevoza: isto pravilo kao ugovor (DA na prevozow/prevozrt = autobus)
+        da = lambda v: str(v or "").strip().lower() in ("1", "true", "da", "-1")
+        autobus = da(arow.get("prevozow")) or da(arow.get("prevozrt"))
+        vrsta_prevoza = 254 if autobus else 253
+
+        kurs = get_eur_middle()
+        calc = calc_ugovor_values(dict(arow))
+        cena_eur = round(float(calc["naplata"]), 2)
+        cena_rsd = round(cena_eur * kurs, 2) if kurs else None
+        od, do = arow.get("datumod"), arow.get("datumdo")
+        noci = (do - od).days if od and do else 0
+
+        params = [
+            ("programPutovanjaJID", mesto_cis.strip()),
+            ("brojUgovora", kljuc_clean.split("/")[0]),
+            ("putnici", str(len(putnici))),
+        ]
+        for i in range(8):
+            p = putnici[i] if i < len(putnici) else {"ime": "", "prezime": "", "adresa": "", "email": "", "telefon": ""}
+            n = i + 1
+            params += [(f"ime{n}", p["ime"]), (f"prezime{n}", p["prezime"]), (f"adresa{n}", p["adresa"]),
+                       (f"email{n}", p["email"]), (f"telefon{n}", p["telefon"])]
+        params += [
+            ("opstinaRGZSifra", _s(ag.get("opstina_rgz"))),
+            ("opstinaNaziv", _s(ag.get("opstina_naziv"))),
+            ("mestoRGZSifra", _s(ag.get("mesto_rgz"))),
+            ("mestoNaziv", _s(ag.get("mesto_naziv"))),
+            ("ulicaRGZSifra", _s(ag.get("ulica_rgz"))),
+            ("ulicaNaziv", _s(ag.get("ulica_naziv"))),
+            ("cenaStranaVal", _broj(cena_eur)),
+            ("valutaSifra", "251"),
+            ("nbsKurs", f"{kurs:.2f}" if kurs else ""),
+            ("cenaRSD", f"{cena_rsd:.2f}" if cena_rsd is not None else ""),
+            ("vrstaPrevozaSifra", str(vrsta_prevoza)),
+            ("datumPocetka", od.date().isoformat() if od else ""),
+            ("datumZavrsetka", do.date().isoformat() if do else ""),
+            ("gradOpstinaPolaska", _s(arow.get("mesto_izlaska")) or _s(arow.get("ulazak"))),
+            ("brojNocenja", str(noci)),
+            ("brojDana", str(noci + 1)),
+            ("vrstaUslugeSmestajaSifra", "1"),
+            ("nazivSmestajnihObjekata", _s(arow.get("naziv"))),
+            ("jmbg", _s(ag.get("jmbg"))),
+            ("code", _s(ag.get("api_kljuc_cis"))),
+        ]
+        url = "https://e-dokumenti.in.rs/importData.php?" + urlencode(params, quote_via=quote)
+        return {"url": url}
+
     # ── Knjigovodstvo: unos nove uplate ─────────────────────────────────────
     def _kartica_cisto(conn, k: "KarticaPodaci | None") -> dict:
         """Validira podatke kartice (samo kad je način = Kartica) i vraća čist dict."""

@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Ban, BedDouble, Bus, CalendarDays, CalendarPlus, Check, ChevronDown, CreditCard, Download, FilePenLine, FileSignature, Loader2,
   FilePlus, FileText, Handshake, History, Info, Landmark, Lock, LockOpen, Plus, Receipt, Search, Send, Ticket, Trash2, X,
-  Users, Wallet, ArrowRightLeft, Printer,
+  Users, Wallet, ArrowRightLeft, Printer, ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -726,6 +726,7 @@ export default function RezervacijePage() {
   /** broj sesije liste dodatnih stavki — raste pri svakom uspešnom učitavanju ugovora (čuvar protiv zastarelog brisanja) */
   const dodatneSesija = useRef(0);
   const [ugovorPdfUcitava, setUgovorPdfUcitava] = useState(false);
+  const [cisUcitava, setCisUcitava] = useState(false);
   const montirano = useRef(true);
   useEffect(() => {
     montirano.current = true;
@@ -1746,6 +1747,27 @@ export default function RezervacijePage() {
   }
 
   // Ugovor (PDF) — uvek se generiše iz SAČUVANOG ugovora, ne iz nesnimljenih izmena forme
+  async function otvoriCis() {
+    if (!izabraniUgovor || cisUcitava) return;
+    setCisUcitava(true);
+    try {
+      const token = getToken();
+      const res = await fetch(`/api/ugovori/${encodeURIComponent(izabraniUgovor)}/cis-link`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `HTTP ${res.status}`);
+      }
+      const { url } = (await res.json()) as { url: string };
+      window.open(url, "_blank", "noopener");
+    } catch (err) {
+      toast.error(err instanceof Error && err.message ? err.message : "Greška pri pripremi CIS linka");
+    } finally {
+      setCisUcitava(false);
+    }
+  }
+
   async function preuzmiUgovorPdf() {
     if (!izabraniUgovor || ugovorPdfUcitava) return;
     setUgovorPdfUcitava(true);
@@ -3524,6 +3546,15 @@ export default function RezervacijePage() {
         >
           {ugovorPdfUcitava ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <FileText className="mr-1.5 size-4" />}
           Ugovor
+        </Button>
+        <Button
+          variant="outline"
+          disabled={!izabraniUgovor || cisUcitava}
+          title={izabraniUgovor ? "Otvara CIS (e-dokumenti) sa podacima rezervacije" : "Izaberite sačuvan ugovor"}
+          onClick={() => void otvoriCis()}
+        >
+          {cisUcitava ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <ExternalLink className="mr-1.5 size-4" />}
+          CIS
         </Button>
         <Button variant="outline" onClick={akcija("Vaučer")}>
           <Ticket className="mr-1.5 size-4" />Vaučer
