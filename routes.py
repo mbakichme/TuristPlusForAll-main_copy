@@ -126,6 +126,28 @@ def get_engine():
     return db_config.get_engine()
 
 
+def _logo_data_url_iz_baze():
+    """Logo agencije iz tabele dokumenti (tip='logo') kao data URL; None ako nema."""
+    with get_engine().connect() as conn:
+        row = conn.execute(text(
+            "SELECT slika, slika_mime FROM dokumenti WHERE tip = 'logo'"
+        )).fetchone()
+    if not row or not row.slika:
+        return None
+    return f"data:{row.slika_mime or 'image/png'};base64,{row.slika}"
+
+
+def _banke_izdavaoca(a):
+    """Lista 'tekući račun (banka)' za sve popunjene račune iz Osnovnih podešavanja."""
+    out = []
+    for i in range(1, 5):
+        racun = (a.get(f"tekuci_racun{i}") or "").strip()
+        if racun:
+            banka = (a.get(f"banka{i}") or "").strip()
+            out.append(f"{racun} ({banka})" if banka else racun)
+    return out
+
+
 def init_db(engine):
     with engine.begin() as conn:
         ensure_kurs_table(conn)
@@ -5209,6 +5231,8 @@ def create_app(static_dir: str) -> FastAPI:
                                   if izdavalac.get(f"tekuci_racun{i}")), "")
         izdavalac["banka"] = next((izdavalac.get(f"banka{i}") for i in range(1, 5)
                                   if izdavalac.get(f"tekuci_racun{i}")), "")
+        izdavalac["banke"] = _banke_izdavaoca(izdavalac)
+        izdavalac["logo_data_url"] = _logo_data_url_iz_baze()
         pdf = generate_ugovor_pdf(data, izdavalac)
         safe_key = re.sub(r"[^0-9A-Za-z_-]", "-", kljuc)
         return Response(content=pdf, media_type="application/pdf",
@@ -5841,8 +5865,10 @@ def create_app(static_dir: str) -> FastAPI:
             "email1": a.get("email1") or "",
             "racun": racun_val,
             "banka": banka_val,
+            "licenca": a.get("licenca") or "",
+            "banke": _banke_izdavaoca(a),
+            "logo_data_url": _logo_data_url_iz_baze(),
         }
-        pdf_bytes = generate_predracun_pdf(pred, izdavalac)
         safe_broj = re.sub(r"[^0-9A-Za-z-]", "-", str(pred.get("broj_predracuna") or item_id))
         filename = f"Predracun_{safe_broj}.pdf"
         return Response(

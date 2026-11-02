@@ -155,14 +155,16 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     address = " ".join(str(agencija.get(k) or "") for k in ("ulica", "broj")).strip()
     place = " ".join(str(agencija.get(k) or "") for k in ("post_broj", "mesto")).strip()
     header_lines = [p(name, "section")]
+    banke = agencija.get("banke") or [
+        " ".join(filter(None, (str(agencija[f"tekuci_racun{i}"]), f"({agencija[f'banka{i}']})" if agencija.get(f"banka{i}") else "")))
+        for i in range(1, 5) if agencija.get(f"tekuci_racun{i}")
+    ] or [" ".join(filter(None, (str(agencija.get("racun") or ""), str(agencija.get("banka") or ""))))]
     for line in (
         ", ".join(x for x in (address, place) if x),
         ", ".join(str(agencija[k]) for k in ("telefon1", "email1") if agencija.get(k)),
         " | ".join(f"{label} {agencija[k]}" for k, label in (("pib", "PIB"), ("mb", "MB")) if agencija.get(k)),
-        " ".join(filter(None, (
-            str(agencija.get("racun") or "") or ", ".join(
-                str(agencija[k]) for k in ("tekuci_racun1", "tekuci_racun2", "tekuci_racun3", "tekuci_racun4")
-                if agencija.get(k)), str(agencija.get("banka") or "")))),
+        *banke,
+        f"Licenca: {agencija['licenca']}" if agencija.get("licenca") else "",
     ):
         if line:
             header_lines.append(p(line, "small"))

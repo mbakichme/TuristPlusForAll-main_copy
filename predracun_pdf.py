@@ -218,6 +218,17 @@ def _dots(c, x_from, x_to, y):
     c.setDash()
 
 
+def _logo_source(data_url: str | None):
+    """Logo iz baze (data URL, tip 'logo' u dokumenti); bez njega statički fallback."""
+    if data_url and "," in data_url:
+        import base64 as _b64
+        try:
+            return io.BytesIO(_b64.b64decode(data_url.split(",", 1)[1], validate=True))
+        except (ValueError, TypeError):
+            return None
+    return _logo_path()
+
+
 def _logo_path() -> str | None:
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
     for fname in LOGO_CANDIDATES:
@@ -251,7 +262,7 @@ def generate_predracun_pdf(pred: dict, agencija: dict) -> bytes:
     y = H - 52
     naziv = agencija.get("naziv") or agencija.get("poslovno_ime") or "Agencija"
     _c(c, M, y, naziv, "LibB", 16, INK)
-    logo = _logo_path()
+    logo = _logo_source(agencija.get("logo_data_url"))
     if logo:
         try:
             img = ImageReader(logo)
@@ -273,10 +284,15 @@ def generate_predracun_pdf(pred: dict, agencija: dict) -> bytes:
     ] if x)
     if pib_mb:
         y = _c(c, M, y, pib_mb, "Lib", 9.5, INK) - 13
-    racun = agencija.get("racun") or pred.get("racun") or ""
-    banka = agencija.get("banka") or ""
-    racun_txt = f"{racun}" + (f" ({banka})" if banka else "")
-    _c(c, M, y, racun_txt, "LibB", 10, INK)
+    banke = agencija.get("banke") or []
+    if not banke:
+        racun = agencija.get("racun") or pred.get("racun") or ""
+        banka = agencija.get("banka") or ""
+        banke = [f"{racun}" + (f" ({banka})" if banka else "")] if racun else []
+    for red in banke:
+        y = _c(c, M, y, red, "LibB", 10, INK) - 13
+    if agencija.get("licenca"):
+        y = _c(c, M, y, f"Licenca: {agencija['licenca']}", "Lib", 9.5, INK) - 13
 
     y -= 14
     c.setStrokeColor(LINE); c.setLineWidth(1)
@@ -372,6 +388,7 @@ def generate_predracun_pdf(pred: dict, agencija: dict) -> bytes:
         ty = _c(c, M, ty, f"Način plaćanja: {pred['nacin']}", "Lib", 9.5, INK) - 14
     if (pred.get("napomena") or "").strip():
         ty = _wrapped(c, M, ty, f"Napomena: {pred['napomena']}".strip(), "Lib", 9.5, INK, CW) - 1
+    racun = agencija.get("racun") or pred.get("racun") or ""
     ty = _c(c, M, ty, f"Uplatu izvršiti na račun broj {racun}, sa pozivom na broj {broj}"[:95], "Lib", 9.5, INK) - 14
     ty = _c(c, M, ty, "Dokument dostavljen e-mailom je validan bez potpisa i pečata", "Lib", 9.5, INK)
 
