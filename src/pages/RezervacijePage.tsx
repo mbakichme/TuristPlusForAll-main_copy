@@ -795,6 +795,8 @@ export default function RezervacijePage() {
   /** postojeća rezervacija: datumi, smeštaj, mesto i struktura se ne menjaju ni u režimu izmene */
   /** Boravak i smeštaj su uvek zaključani (i kad su prazni, i kod postojeće rezervacije) dok korisnik ne klikne „Otključaj“ */
   const [boravakOtkljucan, setBoravakOtkljucan] = useState(false);
+  /** ko je obradio rezervaciju (aranzman.obradio) — samo za prikaz */
+  const [rezObradio, setRezObradio] = useState("");
   const boravakZakljucan = zakljucano || !boravakOtkljucan;
   // opcije Tipa rezervacije — proširene sačuvanom vrednošću van standardnog spiska
   const [tipOpcije, setTipOpcije] = useState<string[]>(TIP_REZERVACIJE);
@@ -990,6 +992,7 @@ export default function RezervacijePage() {
       setDodatneStavke(d.dodatne ?? []);
       setDodatnaIzmena(null);
       setDodatniPopusti(d.dodatni_popusti ?? []);
+      setRezObradio(d.obradio?.trim() ?? "");
       setDpIzmena(null);
       setDpBrisanje(null);
       dodatneSesija.current += 1; // nova sesija liste dodatnih stavki
@@ -2721,6 +2724,11 @@ export default function RezervacijePage() {
               </div>
             </CardContent>
           </Card>
+          {izabraniUgovor && rezObradio && (
+            <p className="px-1 pt-2 text-xs text-muted-foreground" data-testid="rez-obradio">
+              Rezervaciju obradio: <span className="font-medium text-foreground">{rezObradio}</span>
+            </p>
+          )}
 
         </TabsContent>
 

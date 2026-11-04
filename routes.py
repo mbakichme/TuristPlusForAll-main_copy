@@ -5626,6 +5626,7 @@ def create_app(static_dir: str) -> FastAPI:
             "apartman": d.get("apartman"),
             "napomena": d.get("napomena"),
             "napomena1": d.get("napomena1"),
+            "obradio": d.get("obradio"),
             "ulazak": d.get("ulazak"),
             "mesto_izlaska": d.get("mesto_izlaska") or d.get("ulazak"),
             "cenaaranz": d.get("cenaaranz"),

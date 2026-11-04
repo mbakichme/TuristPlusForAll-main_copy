@@ -183,6 +183,7 @@ export interface UgovorDetail {
   apartman?: string | null;
   napomena?: string | null;
   napomena1?: string | null;
+  obradio?: string | null;
   ulazak?: string | null;
   mesto_izlaska?: string | null;
   cenaaranz?: number | null;
