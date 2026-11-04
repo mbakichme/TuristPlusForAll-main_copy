@@ -33,17 +33,23 @@ interface UserForm {
   username: string;
   password: string;
   user_type_id: string;
+  poslovnica_id: string;
 }
 
 const emptyForm: UserForm = {
   first_name: "", last_name: "", email: "", phone: "",
   address: "", city: "", status: "aktivan", username: "",
-  password: "", user_type_id: "",
+  password: "", user_type_id: "", poslovnica_id: "",
 };
+
+interface PoslovnicaOpcija { id: number; naziv: string; }
+
+const NEMA_POSLOVNICE = "nema";
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [userTypes, setUserTypes] = useState<UserType[]>([]);
+  const [poslovnice, setPoslovnice] = useState<PoslovnicaOpcija[]>([]);
   const [loading, setLoading] = useState(true);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -53,12 +59,14 @@ export default function UsersPage() {
 
   async function load() {
     try {
-      const [usersData, typesData] = await Promise.all([
+      const [usersData, typesData, posData] = await Promise.all([
         apiFetch<User[]>("/users"),
         apiFetch<UserType[]>("/user-types"),
+        apiFetch<{ poslovnice: PoslovnicaOpcija[] }>("/poslovnice"),
       ]);
       setUsers(usersData);
       setUserTypes(typesData);
+      setPoslovnice(posData.poslovnice);
     } catch {
       toast.error("Greška pri učitavanju");
     } finally {
@@ -86,6 +94,7 @@ export default function UsersPage() {
       address: u.address || "", city: u.city || "",
       status: u.status, username: u.username,
       password: "", user_type_id: u.user_type_id?.toString() || "",
+      poslovnica_id: u.poslovnica_id?.toString() || "",
     });
     setSheetOpen(true);
   }
@@ -111,6 +120,7 @@ export default function UsersPage() {
         status: form.status,
         username: form.username,
         user_type_id: form.user_type_id ? parseInt(form.user_type_id) : null,
+        poslovnica_id: form.poslovnica_id ? parseInt(form.poslovnica_id) : null,
       };
       if (form.password) body.password = form.password;
       if (!editing) body.password = form.password;
@@ -175,6 +185,7 @@ export default function UsersPage() {
                   <TableHead>Email / Korisničko ime</TableHead>
                   <TableHead>Tip</TableHead>
                   <TableHead>Kontakt</TableHead>
+                  <TableHead>Poslovnica</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-24 text-right">Akcije</TableHead>
                 </TableRow>
@@ -211,6 +222,9 @@ export default function UsersPage() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {u.phone || "—"}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {u.poslovnica_naziv || <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>
                       <Badge variant={u.status === "aktivan" ? "default" : "secondary"} className="text-xs">
@@ -283,6 +297,23 @@ export default function UsersPage() {
                 <SelectContent>
                   {userTypes.map((t) => (
                     <SelectItem key={t.id} value={t.id.toString()}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Poslovnica</Label>
+              <Select
+                value={form.poslovnica_id || NEMA_POSLOVNICE}
+                onValueChange={(v) => setField("poslovnica_id", v === NEMA_POSLOVNICE ? "" : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Izaberi poslovnicu..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NEMA_POSLOVNICE}>— Bez poslovnice —</SelectItem>
+                  {poslovnice.map((p) => (
+                    <SelectItem key={p.id} value={p.id.toString()}>{p.naziv}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

@@ -34,9 +34,15 @@ interface SobaForm {
   opis: string;
   opis_dodatno: string;
   veliki_opis: string;
+  opis_ugovor: string;
 }
 
-const emptyForm: SobaForm = { veza_id_smestaj: "", broj_sobe: "", tip: "", status: "1", opis: "", opis_dodatno: "", veliki_opis: "" };
+const OPIS_UGOVOR_OPCIJE = [
+  "Direktan pogled more", "Bočni pogled more", "Economy", "Economy UT", "Economy IT",
+  "Economy ZT", "Economy PT", "Economy PZ", "Economy MTPZ", "Economy VTPZ", "Graden",
+];
+
+const emptyForm: SobaForm = { veza_id_smestaj: "", broj_sobe: "", tip: "", status: "1", opis: "", opis_dodatno: "", veliki_opis: "", opis_ugovor: "" };
 
 export default function SobePage() {
   const [items, setItems] = useState<Soba[]>([]);
@@ -176,6 +182,7 @@ export default function SobePage() {
       opis: item.opis || "",
       opis_dodatno: item.opis_dodatno || "",
       veliki_opis: item.veliki_opis || "",
+      opis_ugovor: item.opis_ugovor || "",
     });
     setSheetOpen(true);
   }
@@ -196,6 +203,7 @@ export default function SobePage() {
         opis: form.opis,
         opis_dodatno: form.opis_dodatno,
         veliki_opis: form.veliki_opis,
+        opis_ugovor: form.opis_ugovor,
       };
       if (editing) {
         await apiFetch(`/sobe/${editing.id}`, { method: "PUT", body: JSON.stringify(payload) });
@@ -379,6 +387,16 @@ export default function SobePage() {
             <div className="space-y-2">
               <Label>Opis dodatno</Label>
               <Textarea value={form.opis_dodatno} onChange={(e) => setField("opis_dodatno", e.target.value)} placeholder="Dodatni opis" rows={2} />
+            </div>
+            <div className="space-y-2">
+              <Label>Opis za ugovor</Label>
+              <Select value={form.opis_ugovor || "_nema"} onValueChange={(v) => setField("opis_ugovor", v === "_nema" ? "" : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_nema">— nije izabran —</SelectItem>
+                  {OPIS_UGOVOR_OPCIJE.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Veliki opis</Label>

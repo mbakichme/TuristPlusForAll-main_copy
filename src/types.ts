@@ -23,6 +23,8 @@ export interface User {
   user_type_id?: number;
   user_type_name?: string;
   user_type_slug?: string;
+  poslovnica_id?: number | null;
+  poslovnica_naziv?: string | null;
   created_at?: string;
 }
 
@@ -44,9 +46,9 @@ export interface DestinacijaPrevoz { id: number; id_destinacije: number; naziv: 
 export interface ZauzecePrevoza { datum: string; smer: "Odlazak" | "Povratak"; putnici: number; placeno: { mesto: string; broj: number }[]; limit_mesta: number | null; dodatna_mesta: number | null; }
 export interface Mesto { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; grupa_datuma?: number; grupa_datuma_naziv?: string; grupe?: number[]; grupe_nazivi?: string[]; status: number; organizator?: number; predstavnik?: number; grafik: number; cis?: string; }
 export interface TipSmestaja { id: number; naziv: string; }
-export interface Smestaj { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; mesto?: number; mesto_naziv?: string; tip_smestaja?: number; tip_smestaja_naziv?: string; grupa_datuma?: number | null; grupa_datuma_naziv?: string | null; status: number; organizator?: number; predstavnik?: number; grafik: number; granica_chd: number; prima_decu: boolean; ne_prima_ispod_godina: number | null; popular: boolean; provizija: number; }
+export interface Smestaj { id: number; naziv: string; drzava?: number; drzava_naziv?: string; destinacija?: number; destinacija_naziv?: string; mesto?: number; mesto_naziv?: string; tip_smestaja?: number; tip_smestaja_naziv?: string; grupa_datuma?: number | null; grupa_datuma_naziv?: string | null; status: number; organizator?: number; predstavnik?: number; grafik: number; granica_chd: number; prima_decu: boolean; ne_prima_ispod_godina: number | null; popular: boolean; provizija: number; napomena?: string | null; }
 
-export interface Soba { id: number; veza_id_smestaj: number; smestaj_naziv?: string | null; mesto_naziv?: string | null; grupa_datuma_naziv?: string | null; broj_sobe: string; opis: string; tip: string; status: number; opis_dodatno: string; veliki_opis: string; koeficijenti?: string[]; }
+export interface Soba { id: number; veza_id_smestaj: number; smestaj_naziv?: string | null; mesto_naziv?: string | null; grupa_datuma_naziv?: string | null; broj_sobe: string; opis: string; tip: string; status: number; opis_dodatno: string; veliki_opis: string; opis_ugovor?: string; koeficijenti?: string[]; }
 
 export interface Polazak { id: number; destinacija: string | null; polazak: string | null; sat: string | null; valuta: string | null; adlrt: number | null; chdrt: number | null; infrt: number | null; adlow: number | null; chdow: number | null; infow: number | null; cena_transfera: number | null; destinacija_id: number | null; mesto_id: number | null; grupa_id: number | null; mesto_naziv: string | null; grupa_naziv: string | null; }
 
@@ -90,8 +92,10 @@ export interface PutnikDetalj {
   email?: string | null;
   telefon?: string | null;
   uzrast?: string | null;
+  dodatno_sediste?: boolean | null;
   prevozow?: number | null;
   prevozrt?: number | null;
+  prevozsp?: number | null;
   viza?: number | null;
   ulazak?: string | null;
   mesto_izlaska?: string | null;
@@ -125,6 +129,18 @@ export interface DodatnaUslugaKatalog {
   iznos_din: number;
 }
 
+export interface DodatniPopust {
+  id: number;
+  naziv: string;
+  /** procenat od bruto smeštaja (EUR i RSD); kad je zadat, eur/rsd su null */
+  procenat: number | null;
+  eur: number | null;
+  rsd: number | null;
+  /** iznosi koje računa server (iz procenta ili unetog iznosa) */
+  eur_iznos: number;
+  rsd_iznos: number;
+}
+
 export interface UgovorDetail {
   kljuc: string;
   danas: string | null;
@@ -135,6 +151,7 @@ export interface UgovorDetail {
   putnici?: string[] | null;
   putnici_detalji?: PutnikDetalj[] | null;
   dodatne?: DodatnaStavka[] | null;
+  dodatni_popusti?: DodatniPopust[] | null;
   smer?: string | null;
   tiprezervacije?: string | null;
   timelimit?: string | null;
@@ -144,6 +161,7 @@ export interface UgovorDetail {
   refno?: string | null;
   prevozow?: number | null;
   prevozrt?: number | null;
+  prevozsp?: number | null;
   mesto_sedenja?: string | null;
   placeno_prevoz?: boolean | null;
   zelja_prevoz?: boolean | null;

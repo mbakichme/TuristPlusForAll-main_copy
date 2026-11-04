@@ -329,10 +329,11 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !settingsOpen ? "max-h-0 opacity-0" : "max-h-80 opacity-100"
+              !collapsed && !settingsOpen ? "max-h-0 opacity-0" : "max-h-96 opacity-100"
             )}
           >
             <NavItem to="/podesavanja/agencija" icon={Building} label="Osnovni podaci" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/podesavanja/poslovnice" icon={Store} label="Poslovnice" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/podesavanja/dokumenti" icon={FileImage} label="Dokumenti" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/podesavanja/boje-grafik" icon={Palette} label="Boje grafik" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/podesavanja/parametri-obracuna" icon={Calculator} label="Parametri obračuna" collapsed={collapsed} onClick={onNavClick} />
@@ -720,10 +721,11 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !settingsOpen ? "max-h-0 opacity-0" : "max-h-80 opacity-100"
+                    !settingsOpen ? "max-h-0 opacity-0" : "max-h-96 opacity-100"
                   )}
                 >
                   <NavItem to="/podesavanja/agencija" icon={Building} label="Osnovni podaci" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/podesavanja/poslovnice" icon={Store} label="Poslovnice" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/podesavanja/dokumenti" icon={FileImage} label="Dokumenti" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/podesavanja/boje-grafik" icon={Palette} label="Boje grafik" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/podesavanja/parametri-obracuna" icon={Calculator} label="Parametri obračuna" collapsed={false} onClick={closeMobile} />

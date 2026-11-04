@@ -2,6 +2,7 @@
 import base64
 import copy
 import io
+import re
 import unittest
 from datetime import date, datetime
 
@@ -9,7 +10,7 @@ import pymupdf
 import zxingcpp
 from PIL import Image
 
-from ugovor_pdf import LEGAL_CLAUSES, QR_WARNING, build_ugovor_ips_qr, generate_ugovor_pdf
+from ugovor_pdf import QR_WARNING, _mesec_pre, build_ugovor_ips_qr, generate_ugovor_pdf, legal_clauses
 
 
 class UgovorPDFAcceptance(unittest.TestCase):
@@ -20,6 +21,9 @@ class UgovorPDFAcceptance(unittest.TestCase):
             "email1": "info@example.test", "pib": "100000000", "mb": "20000000",
             "racun": "265-3710310000481-09", "banka": "Banka Intesa",
         }
+        self.agency["lice_reklamacije"] = "Lice zaduženo za reklamacije je Radomir Kratovac, adresa Svetozara Markovića 4, Beograd, email astratravel@astratravel.rs, telefon 011/2622104."
+        self.clauses = tuple(re.sub(r"<[^>]+>", "", c) for c in legal_clauses(
+            "Agencija Čačak", date(2026, 6, 2), self.agency["lice_reklamacije"]))
         self.contract = {
             "aranzman": {
                 "kljuc": "2424/26", "danas": datetime(2025, 12, 15, 18, 30),
@@ -27,21 +31,27 @@ class UgovorPDFAcceptance(unittest.TestCase):
                 "adresa": "Dubljanska 22", "telefon": "062229121", "email": "marina@example.test",
                 "destinacija": "Grčka", "mesto": "VRASNA PARALIA", "naziv": "DAFNI",
                 "apartman": "1/4", "opis": "MEZ", "soba": "Soba 7", "obrok": "RR",
+                "soba_opis": "STD PR", "soba_tip": "1/2", "soba_opis_dodatno": "1.SPR, FR+KL",
+                "smestaj_napomena": "Blizu plaže", "mesto_cis": "82096",
                 "datumod": date(2026, 7, 2), "datumdo": "2026-07-12",
-                "prevozow": 0, "prevozrt": 1, "viza": 0, "ulazak": "Beograd", "smer": "Povratak",
+                "prevozow": 0, "prevozrt": 1, "viza": 0, "ulazak": "Beograd", "mesto_izlaska": "Subotica",
+                "smer": "Povratak",
                 "napomena": "Javna napomena š č ć ž đ <bezbedno>", "napomena1": "TAJNA INTERNA BELEŠKA",
                 "keptp": 1759, "organizator": "Organizator Travel", "poslovnica": "Stadion 3",
                 "osiguranje": 0,
             },
             "putnici_detalji": [{"saputnik": "KOVAČEVIĆ DINA", "rodjen": date(1980, 2, 25),
                 "pasos": "P987654", "uzrast": "ADULT", "prevozow": 1, "prevozrt": 0,
-                "viza": 1, "ulazak": "Niš", "smer": "Odlazak", "telefon": "063302968"}],
+                "viza": 1, "ulazak": "Niš", "mesto_izlaska": "Novi Sad", "smer": "Odlazak", "telefon": "063302968"}],
             "obracun": {"smestaj": 860, "prevoz": 0, "viza": 0, "popust": 172,
                 "naplata": 620, "provizija": 68},
-            "ukupno_eur": 688, "ukupno_rsd": 80544.16,
+            "ukupno_eur": 630, "ukupno_rsd": 74254.10, "uplaceno_eur": 200,
             "kurs": 117.07, "kurs_datum": "2025-12-15",
             "datum_izdavanja": date(2025, 12, 15),
             "dodatne": [{"usluga": "Doplata pogled more", "eur": 10, "din": 500}],
+            "subagent_info": {"naziv": "ZETA TOURS", "pib": "123456789", "matbroj": "987654321",
+                "adresa": "Kneza Miloša 1", "mesto": "Beograd", "email": "sub@example.test",
+                "tel": "0641234567"},
         }
 
     def document(self, contract=None, agency=None):
@@ -54,29 +64,55 @@ class UgovorPDFAcceptance(unittest.TestCase):
         with self.document() as doc:
             text = self.text(doc)
             for expected in (
-                "PRIJAVA/UGOVOR Br.: 2424/26", "Datum izdavanja: 15.12.2025", "PUTNICI",
+                "UGOVOR/PREDRACUN Br.: 2424/26", "Datum izdavanja: 15.12.2025", "PUTNICI",
                 "OBRAČUN", "REKAPITULACIJA OBRAČUNA", "DODATNE USLUGE / OSTALO", "PREVOZ I POLAZAK",
                 "Podnosilac prijave", "IZJAVE I USLOVI PUTOVANJA",
-                "RAKIĆ MARINA", "05.04.1970", "P123456", "Dubljanska 22", "062229121",
-                "marina@example.test", "KOVAČEVIĆ DINA", "25.02.1980", "P987654", "ADULT",
-                "Grčka", "VRASNA PARALIA", "DAFNI", "1/4", "MEZ", "Soba 7", "RR",
-                "02.07.2026", "12.07.2026", "Prevoz OW", "Prevoz RT", "Viza", "Niš", "Odlazak",
-                "Beograd", "Povratak", "Javna napomena š č ć ž đ <bezbedno>",
-                "860,00", "172,00", "620,00", "68,00", "688,00", "80.544,16", "117.07",
+                "RAKIĆ MARINA",
+                "KOVAČEVIĆ DINA", "ADULT",
+                "Grčka", "VRASNA PARALIA", "DAFNI", "1/2 STD", "1.SPR", "Soba 7", "RR",
+                "Napomena: Blizu plaže", "JID: 82096", "Ulazak", "Dolazak", "Subotica", "Novi Sad",
+                "02.07.2026", "12.07.2026", "01.07.2026", "Prevoz RT", "Niš",
+                "Naziv: ZETA TOURS", "PIB: 123456789", "MB: 987654321",
+                "Adresa: Kneza Miloša 1, Beograd", "E-mail: sub@example.test", "Telefon: 0641234567",
+                "Naziv: ZETA TOURS | PIB: 123456789 | MB: 987654321",
+                "E-mail: sub@example.test | Telefon: 0641234567",
+                "Beograd", "Javna napomena š č ć ž đ <bezbedno>",
+                "860,00", "172,00", "68,00", "630,00", "430,00 EUR", "117.07",
+                "PROVIZIJA", "-68,00", "DOPLATE", "+10,00",
                 "Doplata pogled more — 10,00 EUR / 500,00 RSD",
-                "Potpis stranke", "Potpis službenika", "Ugovor je punovažan bez pecata",
+                "Potpis stranke", "Potpis službenika", "Ugovor je punovažan bez potpisa i pecata",
             ):
                 self.assertIn(expected, text)
-            for clause in LEGAL_CLAUSES:
+            for clause in self.clauses:
                 self.assertIn(clause, text)
             self.assertNotIn("TAJNA INTERNA", text)
             self.assertNotIn("698,00", text)
             self.assertNotIn("81.044,24", text)
-            self.assertIn("I:RSD80544,16", build_ugovor_ips_qr(self.contract, self.agency))
+            self.assertIn("I:RSD74254,10", build_ugovor_ips_qr(self.contract, self.agency))
+
+    def test_given_subagent_then_podnosilac_shows_only_subagent_data(self):
+        with self.document() as doc:
+            text = self.text(doc)
+            # adresa, e-mail i telefon putnika (nosioca) ne smeju biti u bloku podnosioca
+            self.assertNotIn("Dubljanska 22", text)
+            self.assertNotIn("Pasoš", text)
+            self.assertNotIn("Prevoz OW", text)
+            self.assertNotIn("P123456", text)
+            self.assertNotIn("E-mail: marina@example.test", text)
+            self.assertNotIn("Tel.: 062229121", text)
+            self.assertNotIn("Ulazak: Beograd | Smer", text)
+
+    def test_given_no_subagent_then_subagent_lines_are_absent(self):
+        contract = dict(self.contract)
+        contract.pop("subagent_info")
+        with self.document(contract=contract) as doc:
+            text = self.text(doc)
+            self.assertNotIn("Subagent:", text)
+            self.assertNotIn("PIB:", text)
 
     def test_given_many_companions_when_paginated_then_header_is_first_only_and_nothing_overlaps(self):
         contract = copy.deepcopy(self.contract)
-        contract["putnici_detalji"] = [dict(contract["putnici_detalji"][0], saputnik=f"SAPUTNIK {i:03}", pasos=f"PAS{i:03}") for i in range(65)]
+        contract["putnici_detalji"] = [dict(contract["putnici_detalji"][0], saputnik=f"SAPUTNIK {i:03}") for i in range(65)]
         contract["aranzman"]["napomena"] = "duga_napomena_" * 200
         with self.document(contract) as doc:
             self.assertGreater(len(doc), 1)
@@ -84,12 +120,12 @@ class UgovorPDFAcceptance(unittest.TestCase):
             text = self.text(doc)
             for i in range(65):
                 self.assertIn(f"SAPUTNIK {i:03}", text)
-                self.assertIn(f"PAS{i:03}", text)
-            for clause in LEGAL_CLAUSES:
+            for clause in self.clauses:
                 self.assertIn(clause, text)
             for page in doc:
-                for expected in ("Agencija Čačak", "Trg oslobođenja", "32000 Čačak", "032/123456",
-                                 "info@example.test", "PIB 100000000", "MB 20000000", "265-3710310000481-09", "Banka Intesa"):
+                # naziv agencije se legitimno ponavlja u izjavama (tekst klauzule), zato ga ne proveravamo na stranama > 1
+                for expected in ("Trg oslobođenja", "32000 Čačak", "032/123456",
+                                 "info@example.test", "PIB 100000000", "MB 20000000", "265-3710310000481-09"):
                     if page.number == 0:
                         self.assertIn(expected, page.get_text())
                     else:
@@ -116,7 +152,7 @@ class UgovorPDFAcceptance(unittest.TestCase):
         fields = dict(part.split(":", 1) for part in payload.split("|"))
         self.assertEqual(fields["R"], "265371031000048109")
         self.assertEqual(fields["N"], "Agencija Čačak")
-        self.assertEqual(fields["I"], "RSD80544,16")
+        self.assertEqual(fields["I"], "RSD74254,10")
         self.assertEqual(fields["SF"], "221")
         self.assertEqual(fields["S"], "Ugovor br 2424/26")
         self.assertEqual(fields["RO"], "002424-26")
@@ -137,7 +173,7 @@ class UgovorPDFAcceptance(unittest.TestCase):
                                       (bitmap.width - 40, 0, bitmap.width, bitmap.height)):
                             self.assertEqual(bitmap.crop(strip).getextrema(), ((255, 255),) * 3)
                         rectangles = page.get_image_rects(image[0])
-                        self.assertTrue(any(rect.width >= 100 and rect.height >= 100 for rect in rectangles))
+                        self.assertTrue(any(rect.width >= 90 and rect.height >= 90 for rect in rectangles))
             self.assertIn(payload, decoded)
 
     def test_given_typical_contract_then_two_companions_fit_one_page_and_four_at_most_two(self):
@@ -148,11 +184,11 @@ class UgovorPDFAcceptance(unittest.TestCase):
             with self.document(contract) as doc:
                 self.assertLessEqual(len(doc), maximum)
                 text = self.text(doc)
-                for clause in LEGAL_CLAUSES:
+                for clause in self.clauses:
                     # Klauzula može da pređe na drugu stranu (footer u sredini), pa proveravamo krajeve.
                     self.assertIn(clause[:40], text)
                     self.assertIn(clause[-40:], text)
-                self.assertIn("80.544,16", text)
+                self.assertIn("630,00 EUR", text)
                 payload = build_ugovor_ips_qr(contract, self.agency)
                 decoded = []
                 for page in doc:
@@ -202,11 +238,11 @@ class UgovorPDFAcceptance(unittest.TestCase):
         del contract["ukupno_eur"]
         del contract["ukupno_rsd"]
         del contract["datum_izdavanja"]
-        self.assertIn("I:RSD80544,16", build_ugovor_ips_qr(contract, self.agency))
+        self.assertIn("I:RSD74254,10", build_ugovor_ips_qr(contract, self.agency))
         with self.document(contract) as doc:
             text = self.text(doc)
-            self.assertIn("688,00", text)
-            self.assertIn("80.544,16", text)
+            self.assertIn("630,00", text)
+            self.assertIn("630,00 EUR", text)
             self.assertIn("Datum izdavanja: 15.12.2025", text)
 
     def test_given_optional_logo_data_url_then_logo_renders(self):

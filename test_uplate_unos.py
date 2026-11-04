@@ -18,7 +18,8 @@ from routes import create_access_token, create_app
 RATE = 117.0234  # lažni srednji NBS kurs EUR
 
 DEFAULT_USER = SimpleNamespace(
-    id=1, first_name="Marko", last_name="Marković", status="aktivan"
+    id=1, first_name="Marko", last_name="Marković", status="aktivan",
+    poslovnica_naziv="Novi Sad",
 )
 DEFAULT_ARANZMAN = SimpleNamespace(
     kljuc="33333/26",
@@ -100,6 +101,8 @@ class FakeConnection:
 
     def execute(self, query, params=None):
         sql = str(query)
+        if sql.lstrip().upper().startswith(("CREATE", "ALTER", "DO ")):
+            return FakeResult()  # init DDL iz app starta (nije predmet ovog testa)
         self._state["sql_calls"].append((sql, params))
         if "FROM users" in sql:
             u = self._state["user"]
@@ -183,6 +186,9 @@ class UplataUnosTest(unittest.TestCase):
              patch.object(routes, "init_profil", noop), \
              patch.object(routes, "init_banke", noop):
             self.app = create_app("./dist")
+        # brojači iz init DDL-a app starta ne pripadaju testovima zahteva
+        self.state["begin_calls"] = 0
+        self.state["sql_calls"].clear()
         self.token = create_access_token({"sub": "1"})
         self.hdr = {"Authorization": f"Bearer {self.token}"}
         self.client = TestClient(self.app)
@@ -236,7 +242,7 @@ class UplataUnosTest(unittest.TestCase):
         self.assertEqual(ins["mesto"], DEFAULT_ARANZMAN.mesto)
         self.assertEqual(ins["subagent"], DEFAULT_ARANZMAN.subagent)
         self.assertEqual(ins["organizator"], DEFAULT_ARANZMAN.organizator)
-        self.assertEqual(ins["poslovnica"], DEFAULT_ARANZMAN.poslovnica)
+        self.assertEqual(ins["poslovnica"], "Novi Sad")  # poslovnica korisnika (users.poslovnica_id)
         # danas = lokalno vreme Europe/Belgrade (naive, UTC+1 ili UTC+2)
         self.assertIsInstance(ins["danas"], datetime)
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)

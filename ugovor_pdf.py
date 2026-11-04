@@ -7,12 +7,12 @@ import base64
 import io
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.utils import ImageReader
@@ -32,13 +32,48 @@ RULE = colors.HexColor("#777777")
 SANS = "Inter"
 SANS_B = "InterBold"
 _SANS_READY = False
-LEGAL_CLAUSES = (
-    "Organizator će jedino za uplaćeni aranžman u celosti izdati svoj vaučer 7 dana pre korišćenja usluge, koji je jedini važeći dokument za korišćenje usluge i koji se mora od strane putnika uručiti ovlašćenom agentu ili predstavniku agencije na destinaciji i pruži usluge isključivo licima navedenim u vaučeru.",
-    "Svojim potpisom potvrđujem da su mi neposredno uručeni cenovnik/program putovanja i Opšti uslovi putovanja organizatora i da mi je ponuđeno putno i zdravstveno osiguranje.",
-    "Izjavljujem da ću, ukoliko agencija ne bude mogla da realizuje moje čekove i administrativnu zabranu, izvršiti svoju obavezu na drugi način.",
-    "Dozvoljeni prtljag je jedan kofer po osobi maksimalne tezine 23kg (dimenzija visina 76cm, sirina 50cm, dubina 30cm). Doplata iznosi 5€/kg ukoliko kofer prelazi dozvoljenu kilazu i dimenzije i to samo ukolko postoji prostor u autobusu. Ukoliko ne postoji prostor u autobusu bez obzira na doplatu isti nece biti primljen. Suncobrani, lezaljke, rucni frizideri, oprema za pecanje, maslinovo ulje, dodatne torbe nisu dozvoljene.",
-    "Svojim potpisom potvrdjujem da mi je urucena garancija putovanja.",
-)
+def _mesec_pre(value):
+    """Datum mesec dana pre zadatog (ograničen na poslednji dan tog meseca)."""
+    d = _to_date(value)
+    if not d:
+        return None
+    year, month = (d.year, d.month - 1) if d.month > 1 else (d.year - 1, 12)
+    last = (date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)).day
+    return date(year, month, min(d.day, last))
+
+
+def _rok_placanja(raw):
+    """Rok za 100% uplatu: u celosti → datum kreiranja aranžmana (danas) + 2 dana; delimično / nije izabrano → mesec dana pre datumod."""
+    if str(raw.get("nacin_placanja") or "").strip() == "u_celosti":
+        kreiran = _to_date(raw.get("danas"))
+        return kreiran + timedelta(days=2) if kreiran else None
+    return _mesec_pre(raw.get("datumod"))
+
+
+def legal_clauses(naziv_agencije, placanje_do, lice_reklamacije=""):
+    """Izjave i uslovi (Paragraph markup); naziv agencije iz podešavanja, rok plaćanja iz _rok_placanja,
+    rečenica za reklamacije iz podešavanja (Osnovni podaci) — prazna = ne ispisuje se."""
+    ag = f'"{escape(naziv_agencije)}"'
+    placanje = (f"PLAĆANJE 100.00% DO {placanje_do.strftime('%d.%m.%Y.')}" if placanje_do else "PLAĆANJE 100.00%")
+    bold = lambda s: f'<font name="{SANS_B}">{s}</font>'
+    return (
+        f"Putniku, koji sa agencijom {ag} ugovori aranžman po principu odloženog plaćanja (na rate), garantuje se cena u visini realizovanog dela čekova. U slučaju promena i poremećaja na monetarnom tržištu, ili tržištu roba i usluga, stranka prihvata obavezu da snosi iznos uvećanih cena za nerealizovani deo odloženog plaćanja.",
+        "Izjavljujem da ću, ukoliko agencija ne bude mogla da realizuje moje čekove ili administrativnu zabranu izvršiti svoju obavezu prema Organizatoru na drugi način.",
+        "Organizator putniku izdaje vaučer 7 dana pred put isključivo za aranžman uplaćen i izmiren u celosti. Vaučer je jedini važeći dokument za korišćenje usluge koji putnik mora uručiti ovlašćenom agentu ili predstavniku agencije na destinaciji, a Organizator se obavezuje da će ugovorene usluge pružiti isključivo licima navedenim na vaučeru.",
+        f"{bold('U cenu aranžmana nije uključena obavezna boravišna/ekološka taksa, koja se plaća na samoj destinaciji.')} Putnik je dužan da iznos takse plati na licu mesta predstavniku organizatora putovanja ili lokalnom grčkom partneru (inopartneru), u skladu sa važećim tarifama Republike Grčke za tekuću godinu. Potvrđujem potpisom da su mi uručeni Opšti uslovi i program putovanja agencije {ag} sa kojima sam saglasan-saglasna u svoje ime i ime navedenih putnika, da sam upoznat sa detaljnim dodatnim informacijama o svakoj smeštajnoj jedinici, koje se nalaze na internet stranici Agencije, i da jesam-nisam saglasan-saglasna, da me {ag} poštom, putem sms-a ili email-a, obaveštava o novim ponudama i specijalnim akcijama.",
+        "Porez na dodatu vrednost nije obračunat po čl.35 st.7 Zakona o PDV-u. Obavezno prilikom uplate u poziv na broj upisati broj predračuna. Predračun je punovažan bez potpisa i pečata.",
+        bold(placanje),
+        "Putnik je upoznat sa mogućnošću putnog osiguranja i osiguranja od otkaza. Putniku je uručena garancija putovanja.",
+    ) + ((bold(_text_recenice(lice_reklamacije)),) if (lice_reklamacije or "").strip() else ())
+
+
+def _text_recenice(v) -> str:
+    """Rečenica iz podešavanja (Osnovni podaci → Lice za reklamacije), escape za Paragraph."""
+    return escape(str(v or "").strip())
+
+
+LEGAL_CLAUSES = legal_clauses("ASTRA TRAVEL DOO", date(2026, 7, 30))
+
 QR_WARNING = "NBS IPS QR nije dostupan: proverite račun primaoca (18 cifara), naziv agencije i pozitivan iznos u RSD."
 
 
@@ -76,15 +111,32 @@ def _raw(ugovor):
     return ugovor.get("aranzman") or ugovor
 
 
+def dodatne_sume(dodatne):
+    """Zbir dodatnih usluga (EUR, RSD) iz liste 'dodatne' — ide u ukupnu vrednost ugovora."""
+    eur = din = Decimal(0)
+    for stavka in dodatne or []:
+        eur += _num(stavka.get("eur"))
+        din += _num(stavka.get("din"))
+    return eur, din
+
+
+def ukupno_ugovora(raw, calc, dodatne):
+    """Cena aranžmana kao u rezervaciji: naplata − cenadod (zamenjen dodatnim uslugama) + dodatne usluge."""
+    deur, ddin = dodatne_sume(dodatne)
+    return (_num(calc.get("naplata")) - _num(raw.get("cenadod")) + deur), ddin
+
+
 def _amounts(ugovor):
     calc = ugovor.get("obracun") or ugovor
+    raw = _raw(ugovor)
     eur = _decimal(ugovor.get("ukupno_eur"))
+    ddin = dodatne_sume(ugovor.get("dodatne"))[1]
     if eur is None:
-        eur = (_decimal(calc.get("naplata")) or Decimal(0)) + (_decimal(calc.get("provizija")) or Decimal(0))
+        eur = ukupno_ugovora(raw, calc, ugovor.get("dodatne"))[0]
     kurs = _decimal(ugovor.get("kurs"))
     rsd = _decimal(ugovor.get("ukupno_rsd"))
     if ugovor.get("ukupno_rsd") is None and kurs is not None and kurs > 0:
-        rsd = (eur * kurs).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        rsd = (eur * kurs).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) + ddin
     return calc, eur, rsd, kurs
 
 
@@ -92,17 +144,33 @@ def _qr_text(value, limit):
     return re.sub(r"\s+", " ", str(value or "").replace("|", " ")).strip()[:limit]
 
 
-def build_ugovor_ips_qr(ugovor: dict, agencija: dict) -> str | None:
+def _normalizuj_racun(value) -> str | None:
+    candidate = str(value or "").strip()
+    if re.fullmatch(r"[0-9]{3}-[0-9]{1,13}-[0-9]{2}", candidate):
+        bank, number, control = candidate.split("-")
+        candidate = bank + number.zfill(13) + control
+    return candidate if re.fullmatch(r"[0-9]{18}", candidate) else None
+
+
+def ips_racuni(agencija: dict) -> list[tuple[str, str]]:
+    """Važeći računi agencije kao (račun, naziv banke), bez duplikata, po redosledu podešavanja."""
+    rezultat, videni = [], set()
+    kandidati = [("racun", agencija.get("banka"))] + [
+        (f"tekuci_racun{i}", agencija.get(f"banka{i}")) for i in range(1, 5)
+    ]
+    for key, banka in kandidati:
+        account = _normalizuj_racun(agencija.get(key))
+        if account and account not in videni:
+            videni.add(account)
+            rezultat.append((account, str(banka or "").strip()))
+    return rezultat
+
+
+def build_ugovor_ips_qr(ugovor: dict, agencija: dict, account: str | None = None) -> str | None:
     """Return a complete NBS IPS payment payload, never a partial/invalid QR."""
-    account = None
-    for key in ("racun", "tekuci_racun1", "tekuci_racun2", "tekuci_racun3", "tekuci_racun4"):
-        candidate = str(agencija.get(key) or "").strip()
-        if re.fullmatch(r"[0-9]{3}-[0-9]{1,13}-[0-9]{2}", candidate):
-            bank, number, control = candidate.split("-")
-            candidate = bank + number.zfill(13) + control
-        if re.fullmatch(r"[0-9]{18}", candidate):
-            account = candidate
-            break
+    if account is None:
+        racuni = ips_racuni(agencija)
+        account = racuni[0][0] if racuni else None
     if account is None:
         return None
     # The selected account must be supplied by the agency; never invent one.
@@ -170,12 +238,55 @@ def _flag(value):
     return _text(value)
 
 
+def _subagent_redovi(ugovor, raw):
+    """Podaci subagenta (tabela Subagenti) za blok podnosioca; prazna lista ako nema subagenta."""
+    sub = ugovor.get("subagent_info") or {}
+    naziv = str(sub.get("naziv") or raw.get("subagent") or "").strip()
+    if not naziv:
+        return []
+    adresa = ", ".join(str(x).strip() for x in (sub.get("adresa"), sub.get("mesto")) if str(x or "").strip())
+    return _redovi_podnosioca((
+        (("Naziv", naziv), ("PIB", sub.get("pib")), ("MB", sub.get("matbroj"))),
+        (("Adresa", adresa),),
+        (("E-mail", sub.get("email")), ("Telefon", sub.get("tel"))),
+    ))
+
+
+def _redovi_podnosioca(grupe):
+    """Svaka grupa polja ide u jedan red ('Label: vrednost | Label: vrednost'); prazna polja se preskaču."""
+    redovi = []
+    for grupa in grupe:
+        delovi = [str(value).strip() if label is None else f"{label}: {str(value).strip()}"
+                  for label, value in grupa if str(value or "").strip()]
+        if delovi:
+            redovi.append(" | ".join(delovi))
+    return redovi
+
+
+def _polazak_dana(raw):
+    """Polazak dana = datumod − 1 dan; '—' ako datum početka nije poznat."""
+    od = _to_date(raw.get("datumod"))
+    return (od - timedelta(days=1)).strftime("%d.%m.%Y") if od else "—"
+
+
+def _kategorija_sobe(opis):
+    """STD ili APP iz opisa sobe ('STD PR' → STD, 'APP ECO' → APP); inače prazno."""
+    match = re.match(r"\s*(STD|APP)\b", str(opis or ""))
+    return match.group(1) if match else ""
+
+
+def _prvi_deo(opis):
+    """Prvi deo opisa dodatno do zareza ('1.SP, F+S' → '1.SP')."""
+    return str(opis or "").split(",", 1)[0].strip()
+
+
 def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     """Render supplied raw data and historical-rate totals, without network calls."""
     _ensure_fonts()
     _ensure_sans()
     raw = _raw(ugovor)
     calc, eur, rsd, kurs = _amounts(ugovor)
+    uplaceno = _num(ugovor.get("uplaceno_eur"))
     width, height = A4
     margin = 30
     body_width = width - 2 * margin
@@ -185,7 +296,9 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
         "right": ParagraphStyle("right", fontName=SANS, fontSize=8.5, leading=11, textColor=INK, alignment=TA_RIGHT),
         "rightB": ParagraphStyle("rightB", fontName=SANS_B, fontSize=9, leading=11, textColor=INK, alignment=TA_RIGHT),
         "small": ParagraphStyle("small", fontName=SANS, fontSize=7.5, leading=9.5, textColor=MUTED),
-        "legal": ParagraphStyle("legal", fontName=SANS, fontSize=6.8, leading=8.4, textColor=INK, spaceAfter=1.5),
+        "small_right": ParagraphStyle("small_right", fontName=SANS, fontSize=7.5, leading=9.5, textColor=MUTED, alignment=TA_RIGHT),
+        "small_center": ParagraphStyle("small_center", fontName=SANS_B, fontSize=7.5, leading=9.5, textColor=INK, alignment=TA_CENTER),
+        "legal": ParagraphStyle("legal", fontName=SANS, fontSize=6.2, leading=7.5, textColor=INK, spaceAfter=0.8, alignment=TA_JUSTIFY),
         "section": ParagraphStyle("section", fontName=SANS_B, fontSize=9, leading=11, textColor=INK, spaceBefore=6, spaceAfter=2, keepWithNext=True),
         "title": ParagraphStyle("title", fontName=SANS_B, fontSize=13, leading=16, textColor=INK, spaceBefore=4, spaceAfter=6),
     }
@@ -220,7 +333,7 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
         if line:
             header_lines.append(p(line, "small"))
     header_width = body_width - 105 if logo else body_width
-    header_height = max(65, sum(line.wrap(header_width, height)[1] + 3 for line in header_lines))
+    header_height = max(65, sum(line.wrap(header_width, height)[1] for line in header_lines))
 
     def page_header(c, doc):
         c.saveState()
@@ -232,7 +345,7 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
         for line in header_lines:
             _, h = line.wrap(header_width, height)
             line.drawOn(c, margin, y - h)
-            y -= h + 3
+            y -= h
         if logo:
             iw, ih = logo.getSize()
             scale = min(95 / iw, 55 / ih)
@@ -253,8 +366,8 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
         return [Frame(margin, 38, body_width, top - 38, id="body",
                       leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)]
 
-    def grid(rows, widths, header=False, last_line=False):
-        """Tabela bez okvira u stilu obrasca; opciono podvučen red zaglavlja."""
+    def grid(rows, widths, header=False, last_line=False, box=False):
+        """Tabela bez okvira u stilu obrasca; opciono podvučen red zaglavlja ili svetlo sivi okvir."""
         table = Table(rows, colWidths=[body_width * w for w in widths], repeatRows=1 if header else 0)
         style = [
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -265,6 +378,10 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
             style.append(("LINEBELOW", (0, 0), (-1, 0), .6, INK))
         if last_line:
             style.append(("LINEABOVE", (0, -1), (-1, -1), .6, INK))
+        if box:
+            style += [("BOX", (0, 0), (-1, -1), .6, colors.HexColor("#C8C8C8")),
+                      ("TOPPADDING", (0, 0), (-1, 0), 3), ("BOTTOMPADDING", (0, -1), (-1, -1), 3),
+                      ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5)]
         table.setStyle(TableStyle(style))
         return table
 
@@ -279,41 +396,43 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     ])
 
     story = [grid([[p(f"Datum izdavanja: {_text(ugovor.get('datum_izdavanja') or raw.get('danas'))}", "small"),
-                    p(f"KEPTP: {_text(raw.get('keptp'))}", "right")]], [0.7, 0.3]),
-             p(f"PRIJAVA/UGOVOR Br.: {_text(raw.get('kljuc'))}", "title")]
+                    [p(f"KEPTP: {_text(raw.get('keptp'))}", "right")] + (
+                        [p(f"JID: {str(raw.get('mesto_cis')).strip()}", "right")] if str(raw.get("mesto_cis") or "").strip() else [])]], [0.7, 0.3]),
+             p(f"UGOVOR/PREDRACUN Br.: {_text(raw.get('kljuc'))}", "title")]
 
     # --- putovanje -------------------------------------------------------------
     nights = _nights(raw.get("datumod"), raw.get("datumdo"))
     story.append(grid([
         [p("Datum:"), p(f"{_text(raw.get('datumod'))} – {_text(raw.get('datumdo'))}"), p("Trajanje:"), p(f"{nights} noćenja" if nights is not None else "—", "monoB")],
         [p("Destinacija:"), p(_text(raw.get("destinacija"))), p("Mesto:"), p(_text(raw.get("mesto")))],
-        [p("Hotel:"), p(_text(raw.get("naziv")), "monoB"), p("Soba:"), p(f"#{_text(raw.get('soba'))}  {_text(raw.get('apartman'))}  {_text(raw.get('opis'))}")],
-    ], [0.13, 0.37, 0.12, 0.38]))
+        [p("Smeštaj:"), [p(_text(raw.get("naziv")), "monoB")] + (
+            [p(f"Napomena: {str(raw.get('smestaj_napomena')).strip()}", "small")] if str(raw.get("smestaj_napomena") or "").strip() else []),
+         p("Soba:"), p(" | ".join(x for x in (
+             f"broj {_text(raw.get('soba'))}",
+             f"struktura {' '.join(x for x in (str(raw.get('soba_tip') or '').strip(), _kategorija_sobe(raw.get('soba_opis'))) if x)}".rstrip(),
+             f"spratnost: {_prvi_deo(raw.get('soba_opis_dodatno'))}" if _prvi_deo(raw.get("soba_opis_dodatno")) else "",
+             str(raw.get("soba_opis_ugovor") or "").strip()) if x))],
+    ], [0.13, 0.37, 0.12, 0.38], box=True))
 
     # --- putnici (nosilac + saputnici) -------------------------------------------
+    story.append(Spacer(1, 8))
     story.append(p("PUTNICI", "section"))
-    rows = [[p("Prezime i ime", "monoB"), p("Rođen", "monoB"), p("Uzrast", "monoB"),
-             p("Pasoš", "monoB"), p("Prevoz OW", "monoB"), p("Prevoz RT", "monoB"), p("Viza", "monoB")],
-            [p(_text(raw.get("putnik")), "monoB"), p(_text(raw.get("rodjen"))), p(_text(raw.get("uzrast"))),
-             p(_text(raw.get("pasos"))), p(_flag(raw.get("prevozow"))), p(_flag(raw.get("prevozrt"))),
-             p(_flag(raw.get("viza")))]]
+    rows = [[p("Prezime i ime", "monoB"), p("Uzrast", "monoB"),
+             p("Prevoz RT", "monoB"), p("Ulazak", "monoB"), p("Dolazak", "monoB"), p("Izlazak", "monoB")],
+            [p(_text(raw.get("putnik")), "monoB"), p(_text(raw.get("uzrast"))),
+             p(_flag(raw.get("prevozrt"))),
+             p(_text(raw.get("ulazak"))), p(_text(raw.get("mesto"))), p(_text(raw.get("mesto_izlaska")))]]
     companions = ugovor.get("putnici_detalji") or []
     for person in companions:
-        rows.append([p(_text(person.get("saputnik") or person.get("putnik")), "monoB"), p(_text(person.get("rodjen"))),
-                     p(_text(person.get("uzrast"))), p(_text(person.get("pasos"))),
-                     p(_flag(person.get("prevozow"))), p(_flag(person.get("prevozrt"))), p(_flag(person.get("viza")))])
-    story.append(grid(rows, [0.30, 0.13, 0.10, 0.18, 0.10, 0.10, 0.09], header=True))
+        rows.append([p(_text(person.get("saputnik") or person.get("putnik")), "monoB"), p(_text(person.get("uzrast"))),
+                     p(_flag(person.get("prevozrt"))),
+                     p(_text(person.get("ulazak"))), p(_text(raw.get("mesto"))), p(_text(person.get("mesto_izlaska")))])
+    story.append(grid(rows, [0.28, 0.09, 0.11, 0.16, 0.18, 0.18], header=True, box=True))
     if not companions:
         story.append(p("Nema prijavljenih saputnika.", "small"))
-    for person in companions:
-        extra = " | ".join(f"{label}: {_text(person.get(key))}" for label, key in (
-            ("Adresa", "adresa"), ("Telefon", "telefon"), ("E-mail", "email")) if person.get(key))
-        if extra:
-            story.append(p(f"{_text(person.get('saputnik') or person.get('putnik'))} — {extra}", "small"))
-        if person.get("ulazak") or person.get("smer"):
-            story.append(p(f"Ulazak: {_text(person.get('ulazak'))} | Smer: {_text(person.get('smer'))}", "small"))
 
     # --- stavke obračuna (Htl/Prv | Opis | Kol | Cena/EUR | Iznos/EUR) -----------
+    story.append(Spacer(1, 8))
     story.append(p("OBRAČUN", "section"))
     kol_a, cen_a = _num(raw.get("kolaranz")), _num(raw.get("cenaaranz"))
     kol_c, cen_c = _num(raw.get("kolchd")), _num(raw.get("cenachd"))
@@ -321,6 +440,7 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     kol_rt, cen_rt = _num(raw.get("kolrt")), _num(raw.get("cenart"))
     kol_vi, cen_vi = _num(raw.get("kolviza")), _num(raw.get("cenaviza"))
     popust = _num(calc.get("popust"))
+    provizija = _num(calc.get("provizija"))
     dodatno = _num(raw.get("cenadod"))
     osiguranje = _num(raw.get("osiguranje1"))
     stavke = [[p("Htl/Prv", "monoB"), p("Opis", "monoB"), p("Kol", "rightB"),
@@ -333,9 +453,9 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     smestaj, prevoz, viza = _num(calc.get("smestaj")), _num(calc.get("prevoz")), _num(calc.get("viza"))
     if smestaj or kol_a:
         if kol_c or cen_c:
-            stavka("HOTEL", "Smeštaj (odrasli i deca)", None, None, smestaj)
+            stavka("SMEŠTAJ", "Smeštaj (odrasli i deca)", None, None, smestaj)
         else:
-            stavka("HOTEL", "Smeštaj", kol_a or None, cen_a or None, smestaj)
+            stavka("SMEŠTAJ", "Smeštaj", kol_a or None, cen_a or None, smestaj)
     if prevoz:
         ow, rt = bool(kol_ow or cen_ow), bool(kol_rt or cen_rt)
         if ow and not rt:
@@ -348,11 +468,16 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
         stavka("VIZA", "Viza", kol_vi or None, cen_vi or None, viza)
     if popust:
         stavka("POPUST", "Umanjenje", None, None, -popust)
+    if provizija:
+        stavka("PROVIZIJA", "Provizija agencije", None, None, -provizija)
+    doplate_eur, _ = dodatne_sume(ugovor.get("dodatne"))
+    if doplate_eur:
+        stavke.append([p("DOPLATE"), p(""), p(""), p(""), p(f"+{fmt_num(doplate_eur)}", "right")])
     if dodatno:
         stavka("DODATNO", "Dodatne usluge / ostalo", None, None, dodatno)
     if osiguranje:
         stavka("OSIG.", "Zdravstveno osiguranje", None, None, osiguranje)
-    story.append(grid(stavke, [0.13, 0.41, 0.09, 0.16, 0.21], header=True))
+    story.append(grid(stavke, [0.13, 0.41, 0.09, 0.16, 0.21], header=True, box=True))
 
     # --- rekapitulacija ----------------------------------------------------------
     story.append(Spacer(1, 8))
@@ -360,26 +485,24 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
         [p("REKAPITULACIJA OBRAČUNA:", "monoB"), p("CENA ARANŽMANA", "monoB"),
          p(f"{fmt_num(eur)} EUR", "rightB")],
         ["", p("ZA UPLATU", "monoB"),
-         p(f"{fmt_num(rsd)} RSD" if rsd is not None else "Nije dostupan", "rightB")],
+         p(f"{fmt_num(eur - uplaceno)} EUR", "rightB")],
     ], [0.42, 0.30, 0.28]))
-    story.append(p(f"U tome: naplata organizatoru {fmt_num(_num(calc.get('naplata')))} EUR | "
-                   f"provizija agencije {fmt_num(_num(calc.get('provizija')))} EUR", "small"))
     story.append(p(f"Srednji kurs NBS (1 EUR / RSD): {f'{kurs:.2f}' if kurs else 'Nije dostupan'} | "
                    f"Datum kursa: {_text(ugovor.get('kurs_datum'))}. "
                    "Plaćanje u dinarskoj protivvrednosti po srednjem kursu NBS na dan uplate.", "small"))
 
     extras = ugovor.get("dodatne") or []
     if extras:
-        story.append(p("DODATNE USLUGE / OSTALO (informativno, ne dodaje se ponovo ukupnoj vrednosti)", "section"))
+        story.append(p("DODATNE USLUGE / OSTALO (uračunato u ukupnu vrednost)", "section"))
         for index, item in enumerate(extras, 1):
-            story.append(p(f"{index}. {_text(item.get('usluga'))} — {fmt_num(item.get('eur'))} EUR / {fmt_num(item.get('din'))} RSD"))
+            naziv = _text(item.get("usluga")).replace("PLAĆENO MESTO - ", "PLAĆENO MESTO U AUTOBUSU - ", 1)
+            story.append(p(f"{index}. {naziv} — {fmt_num(item.get('eur'))} EUR / {fmt_num(item.get('din'))} RSD"))
 
     # --- prevoz i polazak ----------------------------------------------------------
     story.append(p("PREVOZ I POLAZAK", "section"))
     story.append(grid([
         [p("Vrsta prevoza:"), p(raw.get("vrsta_prevoza") or ("SOPSTVENI PREVOZ" if not any(_flag(raw.get(k)) == "DA" for k in ("prevozow", "prevozrt")) else "Aranžman sa prevozom")),
-         p("Ulazak / mesto polaska:"), p(_text(raw.get("ulazak")))],
-        [p("Smer:"), p(_text(raw.get("smer"))), p("Polazak dana:"), p(_text(raw.get("polazak") or raw.get("datumod")))],
+         p("Polazak dana:"), p(_polazak_dana(raw))],
         [p("Usluga osiguranja:"), p(_text(raw.get("osiguranje"))), p("Usluga / obrok:"), p(_text(raw.get("obrok") or raw.get("usluga")))],
         [p("Početak usluge:"), p(_text(raw.get("datumod"))), p("Završetak usluge:"), p(_text(raw.get("datumdo")))],
     ], [0.22, 0.28, 0.26, 0.24]))
@@ -388,52 +511,72 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
 
     # --- podnosilac ------------------------------------------------------------------
     # --- QR za plaćanje (u istom redu sa podnosiocem) -----------------------------------
-    payload = build_ugovor_ips_qr(ugovor, agencija)
+    payloads = [(build_ugovor_ips_qr(ugovor, agencija, racun), banka)
+                for racun, banka in ips_racuni(agencija)[:2]]
+    payloads = [(payload, banka) for payload, banka in payloads if payload]
     qr_cell = [p(QR_WARNING, "small")]
-    if payload:
-        code = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
-                             box_size=10, border=4)
-        code.add_data(payload.encode("utf-8"))
-        code.make(fit=True)
-        buffer = io.BytesIO()
-        code.make_image(fill_color="black", back_color="white").save(buffer, format="PNG")
-        buffer.seek(0)
-        qr = ImageReader(buffer)
-
+    if payloads:
         class QRImage(Flowable):
-            def __init__(self):
+            """QR centriran u svojoj koloni (širina iz wrap-a)."""
+            def __init__(self, image, size=90):
                 super().__init__()
-                self.width = self.height = 104
+                self.image = image
+                self.size = size
+                self.avail = 0
+
+            def wrap(self, avail_w, avail_h):
+                self.avail = avail_w
+                return avail_w, self.size
 
             def draw(self):
-                self.canv.drawImage(qr, 0, 0, self.width, self.height)
+                self.canv.drawImage(self.image, (self.avail - self.size) / 2, 0, self.size, self.size)
 
-        image = QRImage()
-        image.hAlign = "LEFT"
-        qr_cell = [image, p("Skenirajte QR kod za plaćanje ugovora.", "small")]
+        kolone, caption = [], []
+        for payload, banka in payloads:
+            code = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
+                                 box_size=10, border=4)
+            code.add_data(payload.encode("utf-8"))
+            code.make(fit=True)
+            buffer = io.BytesIO()
+            code.make_image(fill_color="black", back_color="white").save(buffer, format="PNG")
+            buffer.seek(0)
+            kolone.append(QRImage(ImageReader(buffer)))
+            caption.append(p(banka or "Banka nije navedena", "small_center"))
+        qr_block = Table([kolone, caption],
+                         colWidths=[100 if len(kolone) == 2 else 200] * len(kolone),
+                         style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                           ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                           ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+        qr_cell = [qr_block]
 
-    story.append(Spacer(1, 6))
+    ulogovan = _text(ugovor.get("ulogovan")).strip() if ugovor.get("ulogovan") else ""
+    sluzbenik = f" ({ulogovan})" if ulogovan else ""
+    story.append(Spacer(1, 3))
     story.append(KeepTogether([grid([[
         [p("Podnosilac prijave:", "monoB"),
-         p("\n".join(x for x in (
-             _text(raw.get("putnik")),
-             _text(raw.get("adresa")) if raw.get("adresa") else "",
-             f"Tel.: {_text(raw.get('telefon'))}" if raw.get("telefon") else "",
-             f"E-mail: {_text(raw.get('email'))}" if raw.get("email") else "",
-         ) if x), "monoB"),
-         Spacer(1, 8),
+         p("\n".join(x for x in (_subagent_redovi(ugovor, raw) or _redovi_podnosioca((
+             ((None, _text(raw.get("putnik"))),),
+             (("Adresa", _text(raw.get("adresa")) if raw.get("adresa") else ""),),
+             (("Tel.", _text(raw.get("telefon")) if raw.get("telefon") else ""),
+              ("E-mail", _text(raw.get("email")) if raw.get("email") else "")),
+         )))
+         if x), "monoB"),
+         Spacer(1, 4),
          p("Potpis stranke: ________________________"),
-         Spacer(1, 6),
-         p("M. P.          Potpis službenika: ______________"),
+         Spacer(1, 5),
+         p(f"Potpis službenika{sluzbenik}: ______________________"),
+         p("M. P.", "right"),
         ],
         qr_cell,
     ]], [0.60, 0.40])]))
 
     # --- izjave ----------------------------------------------------------------------
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 3))
     story.append(p("IZJAVE I USLOVI PUTOVANJA", "section"))
-    for clause in LEGAL_CLAUSES:
-        story.append(p(clause, "legal"))
-    story.append(p(f"Mesto i datum: {agencija.get('mesto') or '—'}, {_text(ugovor.get('datum_izdavanja') or raw.get('danas'))}      Ugovor je punovažan bez pecata.", "small"))
+    for clause in legal_clauses(agencija.get("naziv") or agencija.get("poslovno_ime") or "",
+                                _rok_placanja(raw),
+                                agencija.get("lice_reklamacije") or ""):
+        story.append(Paragraph(clause, styles["legal"]))
+    story.append(p(f"Mesto i datum: {agencija.get('mesto') or '—'}, {_text(ugovor.get('datum_izdavanja') or raw.get('danas'))}      Ugovor je punovažan bez potpisa i pecata.", "small"))
     doc.build(story)
     return doc_out.getvalue()

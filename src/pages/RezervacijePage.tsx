@@ -31,14 +31,16 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { apiFetch, getToken } from "../lib/api";
-import type { CekStavka, Destinacija, DestinacijaPrevoz, DodatnaStavka, KarticaPodaci, Mesto, Smestaj, Soba, UgovorDetail, UgovorRow, UgovoriResponse, UplataRow, ZauzecePrevoza } from "../types";
+import type { CekStavka, Destinacija, DestinacijaPrevoz, DodatnaStavka, DodatniPopust, KarticaPodaci, Mesto, Smestaj, Soba, UgovorDetail, UgovorRow, UgovoriResponse, UplataRow, ZauzecePrevoza } from "../types";
 import { cn } from "@/lib/utils";
 import { CekPopup } from "@/components/CekPopup";
 import { AdministrativnaZabranaPopup } from "@/components/AdministrativnaZabranaPopup";
 import { DodatnaStavkaForma } from "@/components/DodatnaStavkaForma";
+import { DodatniPopustForma } from "@/components/DodatniPopustForma";
 import { KarticaPopup } from "@/components/KarticaPopup";
 import { PageLoader } from "@/components/PageLoader";
 import { PrebacivanjeUplatePopup } from "@/components/PrebacivanjeUplatePopup";
+import { useAuth } from "../context/AuthContext";
 
 // ── konstante ──────────────────────────────────────────────────────────────
 const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minute", "First minute"];
@@ -52,6 +54,11 @@ const STATUS_IKONA_PUNO = "text-emerald-600 hover:text-emerald-700";
 const STATUS_IKONA_PRAZNO = "text-red-600 hover:text-red-700";
 function karticaImaPodatke(u: UplataRow): boolean {
   return [u.broj_potvrde, u.tip_kartice, u.broj_kartice, u.broj_odobrenja].some((v) => (v ?? "").trim() !== "");
+}
+/** Link ka fiskalnom pregledu rezervacije za ugovor (poslovnica i korisnik iz aplikacije). */
+function fiskaliLink(ugovor: string, korisnik: string): string {
+  const params = new URLSearchParams({ brojUgovora: ugovor, poslovnica: "ASTRA TRAVEL", korisnik });
+  return `https://fiskalizacija-astra.e-dokumenti.in.rs/pregled/pregledRezervacije.php?${params.toString()}`;
 }
 /** Crveni toast (gore desno) da podaci kartice nisu uneti; ostaje dok se ne zatvori ili ne sačuvaju podaci. */
 const karticaToastId = (kljuc: number) => `kartica-${kljuc}`;
@@ -211,6 +218,8 @@ const datumRodjenjaIso = (v: string) => {
 };
 /** sentinel vrednost: sačuvani naziv van referentne liste (stari ugovori) */
 const CUVAR = "__cuvano__";
+// Izbor u tabu Prevoz: sopstveni prevoz (SP) za sve putnike — nije destinacija prevoza
+const SOPSTVENI = "__sopstveni__";
 
 // ── tipovi forme ───────────────────────────────────────────────────────────
 interface Nosilac {
@@ -240,6 +249,7 @@ interface Saputnik {
   email: string;
   telefon: string;
   kopiranKontakt: boolean;
+  dodatnoSediste: boolean;
   uid: string;
   ime: string;
   datumRodjenja: string;
@@ -374,7 +384,7 @@ const prazanNosilac: Nosilac = {
 };
 const prazanSaputnik = (uid: string): Saputnik => ({
   uid, ime: "", datumRodjenja: "", pasos: "", uzrast: "",
-  adresa: "", grad: "", email: "", telefon: "", kopiranKontakt: false,
+  adresa: "", grad: "", email: "", telefon: "", kopiranKontakt: false, dodatnoSediste: false,
   ow: false, rt: false, sp: false, osiguranje: false, smer: "",
   datumOw: "", destinacijaOw: "", datumPolaska: "", datumPovratka: "",
   destinacijaPolaska: "", destinacijaPovratka: "",
@@ -725,6 +735,12 @@ export default function RezervacijePage() {
   const brisanjeZakljucana = useRef(false);
   /** broj sesije liste dodatnih stavki — raste pri svakom uspešnom učitavanju ugovora (čuvar protiv zastarelog brisanja) */
   const dodatneSesija = useRef(0);
+  // dodatni popusti na smeštaj (vezani za aranžman); izmena = nov (Dodaj) ili postojeći red
+  const [dodatniPopusti, setDodatniPopusti] = useState<DodatniPopust[]>([]);
+  const [dpIzmena, setDpIzmena] = useState<DodatniPopust | "nov" | null>(null);
+  const [dpUzivoPct, setDpUzivoPct] = useState<number | null>(null);
+  const [dpBrisanje, setDpBrisanje] = useState<DodatniPopust | null>(null);
+  const [dpBrisanjeUToku, setDpBrisanjeUToku] = useState(false);
   const [ugovorPdfUcitava, setUgovorPdfUcitava] = useState(false);
   const [cisUcitava, setCisUcitava] = useState(false);
   const montirano = useRef(true);
@@ -735,6 +751,7 @@ export default function RezervacijePage() {
   const [prevozRedovi, setPrevozRedovi] = useState<Record<string, PrevozRed>>({});
   const [prevozDetaljiOtvoreni, setPrevozDetaljiOtvoreni] = useState<Record<string, boolean>>({});
   const [destinacijaZaSve, setDestinacijaZaSve] = useState("");
+  const [sopstveniZaSve, setSopstveniZaSve] = useState(false);
   const [polasci, setPolasci] = useState<PolazakUlazak[]>([]);
   const [polasciGreska, setPolasciGreska] = useState(false);
   const [polasciOsvezi, setPolasciOsvezi] = useState(0);
@@ -750,6 +767,8 @@ export default function RezervacijePage() {
   const [cekUcitavaKljuc, setCekUcitavaKljuc] = useState<number | null>(null);
   const [tipoviKartica, setTipoviKartica] = useState<string[]>([]);
   const [uplateRedovi, setUplateRedovi] = useState<UplataRow[] | null>(null);
+  const { user } = useAuth();
+  const korisnikIme = `${user?.first_name ?? ""} ${user?.last_name ?? ""}`.trim();
   const [prebacivanjeUplata, setPrebacivanjeUplata] = useState<UplataRow | null>(null);
   const [uplateUcitavaju, setUplateUcitavaju] = useState(false);
   const [uplataSeCuva, setUplataSeCuva] = useState(false);
@@ -814,9 +833,17 @@ export default function RezervacijePage() {
   // Izbor destinacije (tab Prevoz) je vezan za mesto: prati destinaciju prevoza čija je destinacija ista kao destinacija mesta
   // (boravak.mesto). Kod učitanog ugovora veza se pauzira dok se mesto ne promeni — sačuvana destinacija
   // ugovora se ne pregaza automatski vezom mesta.
+  // Prevoz za sve putnike: SP (sopstveni prevoz) ili RT (podrazumevano pri izboru destinacije prevoza)
+  const postaviPrevozZaSve = (rezim: "sp" | "rt") => {
+    const flags = rezim === "sp" ? { ow: false, rt: false, sp: true } : { ow: false, rt: true, sp: false };
+    setNosilac((prev) => ({ ...prev, ...flags }));
+    setSaputnici((prev) => prev.map((s) => ({ ...s, ...flags })));
+    setPrevozDetaljiOtvoreni({});
+  };
   useEffect(() => {
     if (mestoUgovoraRef.current !== null && boravak.mesto === mestoUgovoraRef.current) return;
     mestoUgovoraRef.current = null;
+    setSopstveniZaSve(false);
     if (!boravak.mesto || boravak.mesto === CUVAR) { setDestinacijaZaSve(""); return; }
     const m = mesta.find((x) => String(x.id) === boravak.mesto);
     const dp = m?.destinacija ? destinacijePrevoz.find((x) => x.id_destinacije === m.destinacija) : undefined;
@@ -950,16 +977,21 @@ export default function RezervacijePage() {
       setTimeLimitSat(tl ? tl[4] : "12");
       setPrevozDetaljiOtvoreni({});
       const nosilacOw = !!d.prevozow;
-      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", uzrast: d.uzrast ?? "", adresa: d.adresa ?? "", grad: d.grad ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: dpIdIzUgovora(destinacijePrevoz, d.destinacija_ow_id, d.destinacija_ow), datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: dpIdIzUgovora(destinacijePrevoz, d.destinacija_polaska_id, d.destinacija_polaska), destinacijaPovratka: dpIdIzUgovora(destinacijePrevoz, d.destinacija_povratka_id, d.destinacija_povratka) });
+      const nosilacSp = !nosilacOw && !d.prevozrt && !!d.prevozsp;
+      setSopstveniZaSve(nosilacSp);
+      setNosilac({ ...prazanNosilac, ime: d.putnik ?? "", datumRodjenja: d.rodjen ?? "", pasos: d.pasos ?? "", uzrast: d.uzrast ?? "", adresa: d.adresa ?? "", grad: d.grad ?? "", telefon: d.telefon ?? "", email: d.refno ?? "", ow: nosilacOw, rt: !nosilacOw && !!d.prevozrt, sp: nosilacSp, smer: nosilacOw ? d.smer ?? "" : "", datumOw: d.datum_ow ?? "", destinacijaOw: dpIdIzUgovora(destinacijePrevoz, d.destinacija_ow_id, d.destinacija_ow), datumPolaska: d.datum_polaska ?? "", datumPovratka: d.datum_povratka ?? "", destinacijaPolaska: dpIdIzUgovora(destinacijePrevoz, d.destinacija_polaska_id, d.destinacija_polaska), destinacijaPovratka: dpIdIzUgovora(destinacijePrevoz, d.destinacija_povratka_id, d.destinacija_povratka) });
       const dopuna = (d.putnici_detalji ?? []).filter((p) => !!p.saputnik?.trim());
       const dodati = dopuna.map((p) => {
         const uid = `s${++uidRef.current}`;
         const ow = !!p.prevozow;
-        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", uzrast: p.uzrast ?? "", adresa: p.adresa ?? "", grad: p.grad ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: dpIdIzUgovora(destinacijePrevoz, p.destinacija_ow_id, p.destinacija_ow), datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: dpIdIzUgovora(destinacijePrevoz, p.destinacija_polaska_id, p.destinacija_polaska), destinacijaPovratka: dpIdIzUgovora(destinacijePrevoz, p.destinacija_povratka_id, p.destinacija_povratka) };
+        return { ...prazanSaputnik(uid), ime: p.saputnik, datumRodjenja: p.rodjen ?? "", pasos: p.pasos ?? "", uzrast: p.uzrast ?? "", dodatnoSediste: !!p.dodatno_sediste, adresa: p.adresa ?? "", grad: p.grad ?? "", email: p.email ?? "", telefon: p.telefon ?? "", ow, rt: !ow && !!p.prevozrt, sp: !ow && !p.prevozrt && !!p.prevozsp, smer: ow ? p.smer ?? "" : "", datumOw: p.datum_ow ?? "", destinacijaOw: dpIdIzUgovora(destinacijePrevoz, p.destinacija_ow_id, p.destinacija_ow), datumPolaska: p.datum_polaska ?? "", datumPovratka: p.datum_povratka ?? "", destinacijaPolaska: dpIdIzUgovora(destinacijePrevoz, p.destinacija_polaska_id, p.destinacija_polaska), destinacijaPovratka: dpIdIzUgovora(destinacijePrevoz, p.destinacija_povratka_id, p.destinacija_povratka) };
       });
       setSaputnici(dodati);
       setDodatneStavke(d.dodatne ?? []);
       setDodatnaIzmena(null);
+      setDodatniPopusti(d.dodatni_popusti ?? []);
+      setDpIzmena(null);
+      setDpBrisanje(null);
       dodatneSesija.current += 1; // nova sesija liste dodatnih stavki
       const novoMesto = mestoId ? String(mestoId) : (d.mesto ?? "").trim() ? CUVAR : "";
       mestoUgovoraRef.current = novoMesto || null; // destinacija se ne veže ponovo dok se mesto ne promeni
@@ -1252,6 +1284,7 @@ export default function RezervacijePage() {
     eur: suma.eur + (stavka.eur ?? 0),
     din: suma.din + (stavka.din ?? 0),
   }), { eur: 0, din: 0 });
+  // dodatni popusti: oduzimaju se od smeštaja posle osnovnog popusta (u istom koraku) — vidi niže
 
   useEffect(() => {
     // ako je izabrani uplatilac obrisan, vrati se na nosioca
@@ -1296,10 +1329,14 @@ export default function RezervacijePage() {
         next.popustPrevozRSD = izProcenata(next.popustPrevozPct, next.cenaPrevozRSD, next.kolPrevozRSD);
       }
       if (procenat(next.provizijaSmestajPct) != null) {
-        // provizija smeštaja se računa na neto smeštaj (bruto − popust), ne na bruto
+        // provizija smeštaja se računa na neto smeštaj posle oba popusta (osnovni + dodatni)
         const p = procenat(next.provizijaSmestajPct) ?? 0;
-        const netoEUR = num(next.cenaSmestaj) * qty(next.kolSmestaj) - num(next.popustSmestaj);
-        const netoRSD = num(next.cenaSmestajRSD) * qty(next.kolSmestajRSD) - num(next.popustSmestajRSD);
+        const bazaEUR = num(next.cenaSmestaj) * qty(next.kolSmestaj) - num(next.popustSmestaj);
+        const bazaRSD = num(next.cenaSmestajRSD) * qty(next.kolSmestajRSD) - num(next.popustSmestajRSD);
+        const dodatniEUR = dpEfektivni.reduce((s, d) => s + (d.procenat != null ? (bazaEUR * d.procenat) / 100 : (d.eur_iznos ?? 0)), 0);
+        const dodatniRSD = 0; // dinarski dodatni popust se za sada ne računa
+        const netoEUR = bazaEUR - dodatniEUR;
+        const netoRSD = bazaRSD - dodatniRSD;
         next.provizijaSmestaj = brojUString(round2((p / 100) * Math.max(0, netoEUR)));
         next.provizijaSmestajRSD = brojUString(round2((p / 100) * Math.max(0, netoRSD)));
       }
@@ -1314,7 +1351,11 @@ export default function RezervacijePage() {
       return next;
     });
 
-  // Parametri obračuna (visina popusta / visina provizije) — jednom pri učitavanju
+  // provizija smeštaja (procenat) se preračunava posle svake promene dodatnog popusta (i uživo u formi)
+  useEffect(() => {
+    if (procenat(cene.provizijaSmestajPct) != null) updCene({ provizijaSmestajPct: cene.provizijaSmestajPct });
+  }, [dodatniPopusti, dpUzivoPct]);
+
   useEffect(() => {
     apiFetch<{ visina_popusta: number; visina_provizije: number } & Partial<Record<string, number>>>("/parametri-obracuna")
       .then(setParametriObr)
@@ -1746,6 +1787,28 @@ export default function RezervacijePage() {
     }
   }
 
+  // Dodatni popust: brisanje posle potvrde (ista sesijska zaštita kao dodatne stavke)
+  async function obrisiDodatniPopust(popust: DodatniPopust) {
+    if (!izabraniUgovor || dpBrisanjeUToku) return;
+    const ugovor = izabraniUgovor;
+    const sesija = dodatneSesija.current;
+    setDpBrisanjeUToku(true);
+    try {
+      await apiFetch<{ message: string }>(`/ugovori/${encodeURIComponent(ugovor)}/dodatni-popusti/${popust.id}`, {
+        method: "DELETE",
+      });
+      toast.success("Dodatni popust je obrisan", { description: `Ugovor: ${ugovor}` });
+      if (montirano.current && ugovor === aktivniUgovor.current && sesija === dodatneSesija.current) {
+        setDodatniPopusti((prev) => prev.filter((p) => p.id !== popust.id));
+        setDpBrisanje(null);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Brisanje dodatnog popusta nije uspelo");
+    } finally {
+      if (montirano.current) setDpBrisanjeUToku(false);
+    }
+  }
+
   // Ugovor (PDF) — uvek se generiše iz SAČUVANOG ugovora, ne iz nesnimljenih izmena forme
   async function otvoriCis() {
     if (!izabraniUgovor || cisUcitava) return;
@@ -1804,8 +1867,11 @@ export default function RezervacijePage() {
     if (izabraniUgovor && !izmena) { setIzmena(true); return; }
     if (!nosilac.ime.trim()) { toast.error("Unesite ime nosioca aranžmana"); return; }
     if (!UZRASTI.includes(nosilac.uzrast as (typeof UZRASTI)[number])) { toast.error("Izaberite uzrast nosioca (ADL / CHD / INF)"); return; }
+    if (!nosilac.ow && !nosilac.rt && !nosilac.sp) { toast.error("Štiklirajte prevoz nosioca (RT, OW ili SP)"); return; }
     const saputnikBezUzrasta = saputnici.findIndex((s) => s.ime.trim() && !UZRASTI.includes(s.uzrast as (typeof UZRASTI)[number]));
     if (saputnikBezUzrasta !== -1) { toast.error(`Izaberite uzrast saputnika ${saputnikBezUzrasta + 1} (ADL / CHD / INF)`); return; }
+    const saputnikBezPrevoza = saputnici.findIndex((s) => s.ime.trim() && !s.ow && !s.rt && !s.sp);
+    if (saputnikBezPrevoza !== -1) { toast.error(`Štiklirajte prevoz saputnika ${saputnikBezPrevoza + 1} (RT, OW ili SP)`); return; }
     if (!boravak.datumOd || !boravak.datumDo) { toast.error("Unesite datum od i datum do boravka"); return; }
     if (boravak.datumDo <= boravak.datumOd) { toast.error("Datum do mora biti posle Datuma od"); return; }
 
@@ -1850,7 +1916,7 @@ export default function RezervacijePage() {
       },
       saputnici: saputnici.filter((s) => s.ime.trim()).map((s) => ({
         ime: s.ime.trim(), datumRodjenja: datumRodjenjaIso(s.datumRodjenja),
-        pasos: s.pasos.trim(), uzrast: s.uzrast, ow: s.ow, rt: s.rt, sp: s.sp, smer: s.smer,
+        pasos: s.pasos.trim(), uzrast: s.uzrast, dodatnoSediste: s.dodatnoSediste, ow: s.ow, rt: s.rt, sp: s.sp, smer: s.smer,
         adresa: s.adresa.trim(), grad: s.grad.trim(), telefon: s.telefon.trim(), email: s.email.trim(),
         ulazak: prevozRedovi[s.uid]?.mestoUlaska ?? "",
         mestoIzlaska: prevozRedovi[s.uid]?.mestoIzlaska ?? "",
@@ -1864,7 +1930,7 @@ export default function RezervacijePage() {
         struktura: boravak.struktura.trim(),
         napomena: boravak.napomena, napomenaInterna: boravak.napomenaInterna,
       },
-      destinacijaId: dpIzabrana?.id_destinacije ?? null, destinacijaNaziv, destinacijaPrevozId: idIliNull(destinacijaZaSve),
+      destinacijaId: dpIzabrana?.id_destinacije ?? null, destinacijaNaziv, destinacijaPrevozId: sopstveniZaSve ? null : idIliNull(destinacijaZaSve),
       ulazak: prevozRedovi["nosilac"]?.mestoUlaska ?? "",
       izlazak: prevozRedovi["nosilac"]?.mestoIzlaska ?? "",
       napomenaPrevoz: boravak.napomenaPrevoz,
@@ -1934,6 +2000,24 @@ export default function RezervacijePage() {
     cene.cenaSmestajRSD.trim() || cene.kolSmestajRSD.trim()
       ? num(cene.cenaSmestajRSD) * qty(cene.kolSmestajRSD)
       : null;
+  // smeštaj posle osnovnog popusta, bez dodatnog — osnova za procenat dodatnog popusta i za polje Ukupno
+  const netoSmestajBezDodatnihEUR =
+    brutoSmestajEUR != null || cene.popustSmestaj.trim() || cene.popustSmestajPct.trim()
+      ? Math.max(0, (brutoSmestajEUR ?? 0) - num(cene.popustSmestaj))
+      : null;
+  // dodatni popusti: procenat se računa uživo od smeštaja posle osnovnog popusta
+  const dpEUR = (p: DodatniPopust) => (p.procenat != null ? ((netoSmestajBezDodatnihEUR ?? 0) * p.procenat) / 100 : (p.eur_iznos ?? 0));
+  // procenat se računa na EUR; isti iznos važi i u din (npr. 29,60 € → 29,60 din)
+  const dpRSD = (_p: DodatniPopust) => 0; // dinarski deo se za sada ne računa
+  // dok je forma otvorena i procenat unet, taj popust (izmena ili novi) se odmah uračunava u zbir
+  const dpEfektivni: DodatniPopust[] = (() => {
+    if (dpUzivoPct == null) return dodatniPopusti;
+    if (dpIzmena === "nov") return [...dodatniPopusti, { id: -1, naziv: "", procenat: dpUzivoPct, eur: null, rsd: null, eur_iznos: 0, rsd_iznos: 0 }];
+    if (dpIzmena == null) return dodatniPopusti;
+    return dodatniPopusti.map((p) => p.id === dpIzmena.id ? { ...p, procenat: dpUzivoPct, eur: null, rsd: null } : p);
+  })();
+  const dodatniPopustEUR = dpEfektivni.reduce((s, p) => s + dpEUR(p), 0);
+  const dodatniPopustRSD = dpEfektivni.reduce((s, p) => s + dpRSD(p), 0);
   const brutoPrevozEUR =
     cene.cenaPrevoz.trim() || cene.kolPrevoz.trim()
       ? num(cene.cenaPrevoz) * qty(cene.kolPrevoz)
@@ -1946,12 +2030,13 @@ export default function RezervacijePage() {
   // neto po redu = bruto − popust (ista valuta); prikazuje se kad bilo šta u redu postoji
   const netoSmestajEUR =
     brutoSmestajEUR != null || cene.popustSmestaj.trim() || cene.popustSmestajPct.trim()
-      ? Math.max(0, (brutoSmestajEUR ?? 0) - num(cene.popustSmestaj))
+      ? Math.max(0, (brutoSmestajEUR ?? 0) - num(cene.popustSmestaj) - dodatniPopustEUR)
       : null;
   const netoSmestajRSD =
     brutoSmestajRSD != null || cene.popustSmestajRSD.trim() || cene.popustSmestajPct.trim()
-      ? Math.max(0, (brutoSmestajRSD ?? 0) - num(cene.popustSmestajRSD))
+      ? Math.max(0, (brutoSmestajRSD ?? 0) - num(cene.popustSmestajRSD) - dodatniPopustRSD)
       : null;
+  // smeštaj posle osnovnog popusta, bez dodatnog (za polje Ukupno u panelu dodatnog popusta)
   const netoPrevozEUR =
     brutoPrevozEUR != null || cene.popustPrevoz.trim() || cene.popustPrevozPct.trim()
       ? Math.max(0, (brutoPrevozEUR ?? 0) - num(cene.popustPrevoz))
@@ -1971,8 +2056,9 @@ export default function RezervacijePage() {
   // Ukupna cena pre popusta i provizije (bruto + osiguranje + dodatne stavke) i zbir popusta
   const brutoEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) + sveDodatneSume.eur + num(cene.osiguranjeEUR);
   const brutoRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) + sveDodatneSume.din + num(cene.osiguranjeRSD);
-  const popustEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) - (netoSmestajEUR ?? 0) - (netoPrevozEUR ?? 0);
-  const popustRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) - (netoSmestajRSD ?? 0) - (netoPrevozRSD ?? 0);
+  // POPUST ukupno = samo osnovni popusti (smeštaj + prevoz); dodatni popust se prikazuje u svom redu
+  const popustEURUkupno = (brutoSmestajEUR ?? 0) + (brutoPrevozEUR ?? 0) - ((netoSmestajEUR ?? 0) + dodatniPopustEUR) - (netoPrevozEUR ?? 0);
+  const popustRSDUkupno = (brutoSmestajRSD ?? 0) + (brutoPrevozRSD ?? 0) - ((netoSmestajRSD ?? 0) + dodatniPopustRSD) - (netoPrevozRSD ?? 0);
 
   // Svaka valuta se sabira nezavisno; osiguranje je deo ukupne cene.
   const ukupnoAranzmanEUR =
@@ -2056,7 +2142,13 @@ export default function RezervacijePage() {
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <CalendarPlus className="w-6 h-6" />Rezervacije
           </h1>
-          <p className="text-muted-foreground text-sm">Unos / izmena rezervacije — aranžman, prevoz i uplate</p>
+          {izabraniUgovor ? (
+            <p className="mt-1 inline-flex items-center rounded-md border border-blue-300 bg-blue-50 px-3 py-1 text-base font-semibold text-blue-800">
+              Broj ugovora: <span className="ml-1 font-mono">{izabraniUgovor}</span>
+            </p>
+          ) : (
+            <p className="text-muted-foreground text-sm">Unos / izmena rezervacije — aranžman, prevoz i uplate</p>
+          )}
         </div>
         <div className="flex flex-col gap-2 sm:items-end">
           <div className="flex items-center gap-4 sm:justify-end">
@@ -2425,6 +2517,12 @@ export default function RezervacijePage() {
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm font-semibold text-blue-600">Saputnik {i + 1}</span>
                       <div className="flex items-center gap-3">
+                        <Chk label="Dodatno sedište" labelClassName="text-xs" checked={s.dodatnoSediste} disabled={zakljucano}
+                          onChange={(checked) => setSaputnici((prev) => prev.map((p) => {
+                            if (p.uid !== s.uid) return p;
+                            if (checked) return { ...p, dodatnoSediste: true, ime: "DODATNO SEDIŠTE", uzrast: "ADL" };
+                            return { ...p, dodatnoSediste: false, ime: p.ime.trim() === "DODATNO SEDIŠTE" ? "" : p.ime };
+                          }))} />
                         <Chk label="Kopiraj kontakt nosioca" labelClassName="text-xs" checked={s.kopiranKontakt} disabled={zakljucano}
                           onChange={(checked) => setSaputnici((prev) => prev.map((p) => p.uid === s.uid
                             ? { ...p, kopiranKontakt: checked, ...(checked ? { adresa: nosilac.adresa, grad: nosilac.grad, email: nosilac.email, telefon: nosilac.telefon } : {}) } : p))} />
@@ -2855,7 +2953,7 @@ export default function RezervacijePage() {
                 pct={cene.popustSmestajPct}
                 iznosEUR={cene.popustSmestaj}
                 iznosRSD={cene.popustSmestajRSD}
-                netoEUR={netoSmestajEUR}
+                netoEUR={netoSmestajBezDodatnihEUR}
                 netoRSD={netoSmestajRSD}
                 onPct={(v) => updCene({ popustSmestajPct: v })}
                 onIznosEUR={(v) => updCene({ popustSmestaj: v, popustSmestajPct: "" })}
@@ -2874,6 +2972,116 @@ export default function RezervacijePage() {
                 onIznosRSD={(v) => updCene({ popustPrevozRSD: v, popustPrevozPct: "" })}
                 disabled={zakljucano}
               />
+            </CardContent>
+          </Card>
+
+          {/* Dodatni popusti — ispod osnovnog popusta, obračun samo na smeštaj (posle osnovnog) */}
+          <Card className={TON.rose.kartica}>
+            <CardHeader className={cn(KOMPAKT_HEADER, TON.rose.zaglavlje, "flex-row flex-wrap items-center justify-between gap-3 space-y-0")}>
+              <div className="space-y-0.5">
+                <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-rose-800">
+                  <SekcijaIkona ton="rose"><Info /></SekcijaIkona>Dodatni popust
+                </CardTitle>
+                <CardDescription className="text-xs">{izabraniUgovor ? `Ugovor ${izabraniUgovor} — ` : ""}oduzima se od smeštaja posle osnovnog popusta</CardDescription>
+              </div>
+              <Button type="button" size="sm" variant="outline" disabled={!izabraniUgovor || zakljucano || izborUcitava || dpIzmena !== null || dpBrisanje !== null} onClick={() => setDpIzmena("nov")}><Plus className="size-4" />Dodaj</Button>
+            </CardHeader>
+            <CardContent className={KOMPAKT_CONTENT}>
+              <div className="grid items-start gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <div className="min-w-0">
+                  <div className="overflow-hidden rounded-lg border">
+                    {izabraniUgovor && dpIzmena !== null && (
+                      <DodatniPopustForma
+                        key={`${izabraniUgovor}-${dpIzmena === "nov" ? "nov" : dpIzmena.id}`}
+                        ugovor={izabraniUgovor}
+                        original={dpIzmena === "nov" ? null : dpIzmena}
+                        brutoEUR={netoSmestajBezDodatnihEUR ?? 0}
+                        onCancel={() => setDpIzmena(null)}
+                        onUzivo={setDpUzivoPct}
+                        onSaved={(popust) => {
+                          if (aktivniUgovor.current !== izabraniUgovor) return;
+                          setDodatniPopusti((prev) => prev.some((p) => p.id === popust.id)
+                            ? prev.map((p) => p.id === popust.id ? popust : p) : [...prev, popust]);
+                          setDpIzmena(null);
+                        }}
+                      />
+                    )}
+                    {!izabraniUgovor && dodatniPopusti.length === 0 ? (
+                      <p className="px-4 py-4 text-sm text-muted-foreground">Izaberite ugovor za pregled dodatnih popusta.</p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Naziv</TableHead>
+                            <TableHead className="text-right">Iznos (EUR)</TableHead>
+                            <TableHead className="text-right">Akcija</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {dodatniPopusti.length === 0 ? (
+                            <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">Nema dodatnih popusta za ovaj ugovor.</TableCell></TableRow>
+                          ) : dodatniPopusti.map((popust) => (
+                            <TableRow key={popust.id}>
+                              <TableCell>{popust.naziv || "—"}</TableCell>
+                              <TableCell className="text-right tabular-nums whitespace-nowrap">{popust.procenat != null ? `− ${nf2.format(popust.procenat)} % (${nf2.format(dpEUR(popust))} €)` : popust.eur == null ? "—" : `− ${nf2.format(dpEUR(popust))} €`}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button type="button" size="sm" variant="ghost" disabled={zakljucano || izborUcitava || dpIzmena !== null || dpBrisanje !== null} onClick={() => setDpIzmena(popust)}><FilePenLine className="size-4" />Izmeni</Button>
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="size-7 text-muted-foreground hover:text-destructive"
+                                    disabled={zakljucano || izborUcitava || dpIzmena !== null || dpBrisanje !== null}
+                                    title="Obriši dodatni popust"
+                                    aria-label={`Obriši dodatni popust ${popust.naziv?.trim() || popust.id}`}
+                                    onClick={() => setDpBrisanje(popust)}
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+                </div>
+                <PanelaSazetka kompaktno>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                    <Fld label="Ukupno (EUR)">
+                      <UkupnoInput vrednost={netoSmestajEUR} />
+                    </Fld>
+                  </div>
+                </PanelaSazetka>
+              </div>
+              <AlertDialog
+
+                open={dpBrisanje !== null}
+                onOpenChange={(open) => { if (!open) setDpBrisanje(null); }}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Obrisati dodatni popust?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Popust „{dpBrisanje?.naziv?.trim() || "—"}” biće trajno obrisan iz ugovora <span className="font-mono font-medium text-foreground">{izabraniUgovor}</span>.
+                      Ova radnja se ne može poništiti.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Otkaži</AlertDialogCancel>
+                    <AlertDialogAction
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      disabled={dpBrisanjeUToku}
+                      onClick={(e) => { e.preventDefault(); if (dpBrisanje) void obrisiDodatniPopust(dpBrisanje); }}
+                    >
+                      {dpBrisanjeUToku && <Loader2 className="size-4 animate-spin" />}
+                      {dpBrisanjeUToku ? "Brisanje…" : "Obriši"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </CardContent>
           </Card>
 
@@ -2959,6 +3167,9 @@ export default function RezervacijePage() {
                       <span className="text-muted-foreground">Popust</span>
                       <span className="text-right">− {nf2.format(popustEURUkupno)} €</span>
                       <span className="text-right">− {nf2.format(popustRSDUkupno)} din</span>
+                      <span className="text-muted-foreground">Dodatni popust</span>
+                      <span className="text-right">− {nf2.format(dodatniPopustEUR)} €</span>
+                      <span />
                       <span className="text-muted-foreground">Provizija</span>
                       <span className="text-right">− {nf2.format(provizijaEURUkupno)} €</span>
                       <span className="text-right">− {nf2.format(provizijaRSDUkupno)} din</span>
@@ -3025,13 +3236,24 @@ export default function RezervacijePage() {
             <CardContent className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2 items-start">
                 <Fld label="Izbor destinacije">
-                  <Select value={destinacijaZaSve} onValueChange={(v) => { if (v !== CUVAR) setDestinacijaSacuvana(null); setDestinacijaZaSve(v); }} disabled={zakljucano}>
+                  <Select
+                    value={sopstveniZaSve ? SOPSTVENI : destinacijaZaSve}
+                    onValueChange={(v) => {
+                      if (v === SOPSTVENI) { setSopstveniZaSve(true); postaviPrevozZaSve("sp"); return; }
+                      if (v !== CUVAR) setDestinacijaSacuvana(null);
+                      setSopstveniZaSve(false);
+                      setDestinacijaZaSve(v);
+                      postaviPrevozZaSve("rt");
+                    }}
+                    disabled={zakljucano}
+                  >
                     <SelectTrigger className="w-full"><SelectValue placeholder="Izaberite destinaciju prevoza" /></SelectTrigger>
                     <SelectContent>
                       {destinacijaSacuvana && <SelectItem value={CUVAR}>{destinacijaSacuvana} (sačuvano)</SelectItem>}
                       {destinacijePrevoz.map((d) => (
                         <SelectItem key={d.id} value={String(d.id)}>{d.naziv}</SelectItem>
                       ))}
+                      <SelectItem value={SOPSTVENI}>SOPSTVENI PREVOZ</SelectItem>
                     </SelectContent>
                   </Select>
                 </Fld>
@@ -3112,9 +3334,9 @@ export default function RezervacijePage() {
                             {p.osnovni && <Badge variant="secondary">Nosilac</Badge>}
                           </div>
                         </div>
-                        <Chk label="RT" labelClassName="text-xs" checked={osoba.rt} onChange={(v) => updOsoba({ rt: v, ow: v ? false : osoba.ow, sp: v ? false : osoba.sp, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? osoba.datumPolaska : "", datumPovratka: v ? osoba.datumPovratka : "", destinacijaPolaska: v ? osoba.destinacijaPolaska : "", destinacijaPovratka: v ? osoba.destinacijaPovratka : "" })} disabled={zakljucano} />
-                        <Chk label="OW" labelClassName="text-xs" checked={osoba.ow} onChange={(v) => updOsoba({ ow: v, rt: v ? false : osoba.rt, sp: v ? false : osoba.sp, smer: v ? osoba.smer : "", datumOw: v ? osoba.datumOw : "", destinacijaOw: v ? osoba.destinacijaOw : "", datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
-                        <Chk label="SP" labelClassName="text-xs" checked={osoba.sp} onChange={(v) => updOsoba({ sp: v, ow: v ? false : osoba.ow, rt: v ? false : osoba.rt, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
+                        <Chk label="RT" labelClassName="text-xs" checked={osoba.rt} onChange={(v) => v && updOsoba({ rt: v, ow: v ? false : osoba.ow, sp: v ? false : osoba.sp, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? osoba.datumPolaska : "", datumPovratka: v ? osoba.datumPovratka : "", destinacijaPolaska: v ? osoba.destinacijaPolaska : "", destinacijaPovratka: v ? osoba.destinacijaPovratka : "" })} disabled={zakljucano} />
+                        <Chk label="OW" labelClassName="text-xs" checked={osoba.ow} onChange={(v) => v && updOsoba({ ow: v, rt: v ? false : osoba.rt, sp: v ? false : osoba.sp, smer: v ? osoba.smer : "", datumOw: v ? osoba.datumOw : "", destinacijaOw: v ? osoba.destinacijaOw : "", datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
+                        <Chk label="SP" labelClassName="text-xs" checked={osoba.sp} onChange={(v) => v && updOsoba({ sp: v, ow: v ? false : osoba.ow, rt: v ? false : osoba.rt, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
                         <div className="space-y-1">
                           <PretraznaSelect
                             value={red.mestoUlaska}
@@ -3303,6 +3525,7 @@ export default function RezervacijePage() {
                             <TableHead className="w-14 text-center">Čekovi</TableHead>
                             <TableHead className="w-14 text-center">PDF</TableHead>
                             <TableHead className="w-14 text-center">Prebacivanje</TableHead>
+                            <TableHead className="w-14 text-center">Fiskali</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -3389,6 +3612,19 @@ export default function RezervacijePage() {
                                   </Button>
                                 )}
                               </TableCell>
+                              <TableCell className="text-center">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  title="Fiskali — otvori fiskalni pregled rezervacije"
+                                  aria-label={`Fiskali ${izabraniUgovor ?? ""}`}
+                                  disabled={!izabraniUgovor}
+                                  onClick={() => window.open(fiskaliLink(izabraniUgovor ?? "", korisnikIme), "_blank", "noopener")}
+                                >
+                                  <ExternalLink className="size-4" />
+                                </Button>
+                              </TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -3397,7 +3633,7 @@ export default function RezervacijePage() {
                             <TableCell colSpan={2}>Ukupno uplaćeno:</TableCell>
                             <TableCell className="whitespace-nowrap text-right font-semibold">{nf2.format(uplateSumaRSD)} din</TableCell>
                             <TableCell className="whitespace-nowrap text-right font-semibold">{nf2.format(uplateSumaEUR)}€</TableCell>
-                            <TableCell colSpan={7} />
+                            <TableCell colSpan={8} />
                           </TableRow>
                         </TableFooter>
                       </Table>

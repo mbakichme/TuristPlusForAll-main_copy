@@ -3,6 +3,7 @@ import { apiFetch } from "../lib/api";
 import { postaviNazivAgencije } from "../hooks/useAgencijaPrviNaziv";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -42,6 +43,7 @@ interface AgencijaData {
   banka3?: string;
   tekuci_racun4?: string;
   banka4?: string;
+  lice_reklamacije?: string;
 }
 
 const empty: AgencijaData = {
@@ -53,6 +55,7 @@ const empty: AgencijaData = {
   pib: "", mb: "", jbkjs: "", jmbg: "",
   tekuci_racun1: "", banka1: "", tekuci_racun2: "", banka2: "",
   tekuci_racun3: "", banka3: "", tekuci_racun4: "", banka4: "",
+  lice_reklamacije: "",
 };
 
 function Field({ label, name, value, onChange, type = "text" }: {
@@ -164,6 +167,18 @@ export default function AgencijaPage() {
             <Field label="Email 2" name="email2" value={form.email2 || ""} onChange={setField} type="email" />
             <Field label="Telefon 1" name="telefon1" value={form.telefon1 || ""} onChange={setField} />
             <Field label="Telefon 2" name="telefon2" value={form.telefon2 || ""} onChange={setField} />
+          </Section>
+
+          <Section title="Reklamacije">
+            <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
+              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Lice za reklamacije (rečenica u ugovoru)</Label>
+              <Textarea
+                value={form.lice_reklamacije || ""}
+                onChange={(e) => setField("lice_reklamacije", e.target.value)}
+                placeholder="npr. Lice zaduženo za reklamacije je Ime Prezime, adresa …, email …, telefon …"
+                className="min-h-[72px]"
+              />
+            </div>
           </Section>
 
           <Section title="Adresa">

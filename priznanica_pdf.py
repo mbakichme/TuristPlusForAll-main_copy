@@ -97,6 +97,17 @@ def _broj_priznanice(kljuc, danas) -> str:
     return f"{broj}/{godina}"
 
 
+def _kontrolni_broj(kljuc, datumod) -> str:
+    """Kontrolni broj: uplata.kljuc; za aranžman sa datumod u 2027 → uplata.kljuc/27."""
+    broj = str(kljuc or "").strip()
+    godina = getattr(datumod, "year", None)
+    if godina is None and isinstance(datumod, str) and len(datumod) >= 4 and datumod[:4].isdigit():
+        godina = int(datumod[:4])
+    if godina == 2027:
+        return f"{broj}/27"
+    return broj
+
+
 def _logo_flowable(logo_data_url: str | None, max_w: float, max_h: float):
     """Logo kao Image flowable (čuva proporcije) ili prazan prostor."""
     if logo_data_url and "," in logo_data_url:
@@ -215,9 +226,19 @@ def build_priznanica_pdf(uplata: dict, aranzman: dict | None,
 
         danas = uplata.get("danas")
         datum_fmt = danas.strftime("%d.%m.%Y") if danas else ""
+        ar = aranzman or {}
+        broj_aranzmana = str(ar.get("kljuc") or "").strip()
+        kontrolni = _kontrolni_broj(uplata.get("kljuc"), ar.get("datumod"))
+        if broj_aranzmana:
+            broj_priznanice = broj_aranzmana
+            kontrolni_red = [Paragraph(f"Kontrolni broj: {esc(kontrolni)}", right_label)]
+        else:
+            broj_priznanice = _broj_priznanice(uplata.get("kljuc"), danas)
+            kontrolni_red = []
         title = clean_table([[
             Paragraph("PRIZNANICA", title_style),
-            [Paragraph(esc(_broj_priznanice(uplata.get("kljuc"), danas)), number_style),
+            [Paragraph(esc(broj_priznanice), number_style),
+             *kontrolni_red,
              Paragraph(f"Datum: {esc(datum_fmt)}", right_label)],
         ]], [content_w * 0.6, content_w * 0.4])
 
@@ -232,8 +253,7 @@ def build_priznanica_pdf(uplata: dict, aranzman: dict | None,
         ]
         summary = clean_table([[payer, amount]], [content_w * 0.60, content_w * 0.40])
 
-        ar = aranzman or {}
-        broj_ugovora = str(ar.get("kljuc") or "").strip()
+        broj_ugovora = broj_aranzmana
         if not broj_ugovora and uplata.get("id") is not None:
             godina = f"{danas.year % 100:02d}" if danas else "26"
             broj_ugovora = f"{uplata['id']}/{godina}"

@@ -3,6 +3,7 @@ import type { Smestaj, Drzava, Destinacija, TipSmestaja, Mesto, PeriodGrupa } fr
 import { apiFetch } from "../lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -38,9 +39,10 @@ interface SmestajForm {
   ne_prima_ispod_godina: string;
   popular: string;
   provizija: string;
+  napomena: string;
 }
 
-const emptyForm: SmestajForm = { naziv: "", drzava: "", destinacija: "", mesto: "", tip_smestaja: "", grupa_datuma: "", status: "1", organizator: "", predstavnik: "", grafik: "0", granica_chd: "6.99", prima_decu: "1", ne_prima_ispod_godina: "", popular: "0", provizija: "10" };
+const emptyForm: SmestajForm = { naziv: "", drzava: "", destinacija: "", mesto: "", tip_smestaja: "", grupa_datuma: "", status: "1", organizator: "", predstavnik: "", grafik: "0", granica_chd: "6.99", prima_decu: "1", ne_prima_ispod_godina: "", popular: "0", provizija: "10", napomena: "" };
 
 export default function SmestajPage() {
   const [items, setItems] = useState<Smestaj[]>([]);
@@ -112,6 +114,7 @@ export default function SmestajPage() {
       ne_prima_ispod_godina: item.ne_prima_ispod_godina != null ? String(item.ne_prima_ispod_godina) : "",
       popular: item.popular ? "1" : "0",
       provizija: String(item.provizija ?? 10),
+      napomena: item.napomena ?? "",
     });
     setSheetOpen(true);
   }
@@ -153,6 +156,7 @@ export default function SmestajPage() {
         ne_prima_ispod_godina: ispod,
         popular: form.popular === "1",
         provizija,
+        napomena: form.napomena.trim() || null,
       };
       if (editing) {
         await apiFetch(`/smestaj/${editing.id}`, {
@@ -408,6 +412,10 @@ export default function SmestajPage() {
             <div className="space-y-2">
               <Label>Provizija (%)</Label>
               <Input inputMode="numeric" value={form.provizija} onChange={(e) => setField("provizija", e.target.value)} placeholder="10" />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="smestaj-napomena">Napomena</Label>
+              <Textarea id="smestaj-napomena" rows={3} value={form.napomena} onChange={(e) => setField("napomena", e.target.value)} placeholder="Napomena o smeštaju" />
             </div>
           </div>
           <SheetFooter>

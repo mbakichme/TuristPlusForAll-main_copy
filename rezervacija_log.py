@@ -20,7 +20,7 @@ OBLAST_UPLATA = "uplata"
 OBLAST_SAPUTNICI = "saputnici"
 
 # kolone aranzman-a po oblasti (sve ostalo ide u "rezervacija")
-PREVOZ_POLJA = {"prevozow", "prevozrt", "smer", "cenaow", "kolow", "cenart",
+PREVOZ_POLJA = {"prevozow", "prevozrt", "prevozsp", "smer", "cenaow", "kolow", "cenart",
                 "kolrt", "cenadow", "cenadrt",
                 "mesto_sedenja", "mesto_izlaska", "placeno_prevoz", "zelja_prevoz", "datum_ow",
                 "destinacija_ow", "datum_polaska", "destinacija_polaska",
@@ -30,13 +30,13 @@ OBRACUN_POLJA = {"cenaaranz", "kolaranz", "cenaaranzd", "osiguranje", "osiguranj
 # kolone koje se ne loguju (tehnička polja, menjaju se pri svakom snimanju)
 IGNORISANA_POLJA = {"kljuc", "danas", "obradio",
                     "destinacija_ow_id", "destinacija_polaska_id", "destinacija_povratka_id"}
-BOOL_POLJA = {"prevozow", "prevozrt", "placeno_prevoz", "zelja_prevoz"}
+BOOL_POLJA = {"prevozow", "prevozrt", "prevozsp", "placeno_prevoz", "zelja_prevoz"}
 
 LABELE = {
     "putnik": "Nosilac", "rodjen": "Datum rođenja nosioca", "pasos": "Pasoš",
     "uzrast": "Uzrast",
     "adresa": "Adresa", "telefon": "Telefon", "refno": "Email",
-    "prevozow": "Prevoz u jednom smeru", "prevozrt": "Povratni prevoz",
+    "prevozow": "Prevoz u jednom smeru", "prevozrt": "Povratni prevoz", "prevozsp": "Sopstveni prevoz",
     "smer": "Smer", "tiprezervacije": "Tip rezervacije", "subagent": "Subagent",
     "timelimit": "Time limit", "mesto": "Mesto", "naziv": "Smeštaj",
     "smestaj_id": "Smeštaj (ID)", "soba": "Soba", "destinacija": "Destinacija",
@@ -61,7 +61,7 @@ LABELE = {
 
 SAPUTNIK_POLJA = {
     "rodjen": "datum rođenja", "pasos": "pasoš", "uzrast": "uzrast", "prevozow": "prevoz ow",
-    "prevozrt": "prevoz rt", "smer": "smer", "adresa": "adresa",
+    "prevozrt": "prevoz rt", "prevozsp": "sopstveni prevoz", "smer": "smer", "adresa": "adresa",
     "email": "email", "telefon": "telefon", "ulazak": "ulazak",
     "mesto_sedenja": "mesto za sedenje", "placeno_prevoz": "plaćeno",
     "zelja_prevoz": "želja", "datum_ow": "datum OW", "destinacija_ow": "destinacija OW",
