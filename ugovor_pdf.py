@@ -484,8 +484,8 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     story.append(grid([
         [p("REKAPITULACIJA OBRAČUNA:", "monoB"), p("CENA ARANŽMANA", "monoB"),
          p(f"{fmt_num(eur)} EUR", "rightB")],
-        ["", p("ZA UPLATU", "monoB"),
-         p(f"{fmt_num(eur - uplaceno)} EUR", "rightB")],
+        ["", p(f"UPLAĆENO {fmt_num(uplaceno)} EUR", "monoB"),
+         p(f"ZA UPLATU {fmt_num(eur - uplaceno)} EUR", "rightB")],
     ], [0.42, 0.30, 0.28]))
     story.append(p(f"Srednji kurs NBS (1 EUR / RSD): {f'{kurs:.2f}' if kurs else 'Nije dostupan'} | "
                    f"Datum kursa: {_text(ugovor.get('kurs_datum'))}. "

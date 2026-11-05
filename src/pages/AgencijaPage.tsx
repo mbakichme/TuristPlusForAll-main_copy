@@ -31,6 +31,8 @@ interface AgencijaData {
   ulica_naziv?: string;
   api_kljuc_efakture?: string;
   api_kljuc_cis?: string;
+  fiskal_zahtev_link?: string;
+  fiskal_odgovor_link?: string;
   pib?: string;
   mb?: string;
   jbkjs?: string;
@@ -52,6 +54,7 @@ const empty: AgencijaData = {
   mesto: "", drzava: "", opstina_rgz: "", opstina_naziv: "",
   mesto_rgz: "", mesto_naziv: "", ulica_rgz: "", ulica_naziv: "",
   api_kljuc_efakture: "", api_kljuc_cis: "",
+  fiskal_zahtev_link: "", fiskal_odgovor_link: "",
   pib: "", mb: "", jbkjs: "", jmbg: "",
   tekuci_racun1: "", banka1: "", tekuci_racun2: "", banka2: "",
   tekuci_racun3: "", banka3: "", tekuci_racun4: "", banka4: "",
@@ -201,6 +204,11 @@ export default function AgencijaPage() {
           <Section title="API ključevi">
             <Field label="API ključ eFakture" name="api_kljuc_efakture" value={form.api_kljuc_efakture || ""} onChange={setField} />
             <Field label="API ključ CIS" name="api_kljuc_cis" value={form.api_kljuc_cis || ""} onChange={setField} />
+          </Section>
+
+          <Section title="Fiskalizacija">
+            <Field label="Zahtev (napraviRacun)" name="fiskal_zahtev_link" value={form.fiskal_zahtev_link || ""} onChange={setField} />
+            <Field label="Odgovor (dajInvoice)" name="fiskal_odgovor_link" value={form.fiskal_odgovor_link || ""} onChange={setField} />
           </Section>
 
           <div className="space-y-4 pt-2">

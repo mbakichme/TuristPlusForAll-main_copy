@@ -327,6 +327,8 @@ def init_db(engine):
                 ulica_naziv VARCHAR(300),
                 api_kljuc_efakture VARCHAR(500),
                 api_kljuc_cis VARCHAR(500),
+                fiskal_zahtev_link VARCHAR(500),
+                fiskal_odgovor_link VARCHAR(500),
                 pib VARCHAR(20),
                 mb VARCHAR(20),
                 jbkjs VARCHAR(20),
@@ -579,6 +581,13 @@ def init_db(engine):
         # Povraćaj (prebacivanje uplate sa ugovora na ugovor): trag prebacivanja
         conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS prebaceno_sa VARCHAR(20)"))
         conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS datum_prebacivanja TIMESTAMP"))
+        # Fiskalizacija uplate: jednom uspešno poslato, ne šalje se ponovo
+        conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS fiskal_poslato BOOLEAN NOT NULL DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS fiskal_odgovor TEXT"))
+        conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS fiskal_invoice TEXT"))
+        conn.execute(text("ALTER TABLE uplate ADD COLUMN IF NOT EXISTS fiskal_link TEXT"))
+        conn.execute(text("ALTER TABLE agencija ADD COLUMN IF NOT EXISTS fiskal_zahtev_link VARCHAR(500)"))
+        conn.execute(text("ALTER TABLE agencija ADD COLUMN IF NOT EXISTS fiskal_odgovor_link VARCHAR(500)"))
         # Evidencija prebacivanja uplata (Povraćaj): jedan red po prebacivanju
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS prebacivanje (
@@ -4612,6 +4621,108 @@ def create_app(static_dir: str) -> FastAPI:
 
         return {"kljuc": int(new_kljuc), "message": "Uplata je uspešno uneta"}
 
+    @api.post("/uplate/{kljuc}/fiskal")
+    def uplata_fiskal(kljuc: int, current_user: dict = Depends(get_current_user)):
+        """Fiskalizacija već sačuvane uplate. Uspešno poslata uplata se ne šalje ponovo."""
+        import httpx
+        import time
+        from fiskal import (FISKAL_INVOICE_PAUSA_SEC, build_fiskal_params, dohvati_invoice, invoice_odbijen, je_uspeh,
+                            parsiraj_invoice, posalji_fiskal)
+
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+
+        with engine.connect() as conn:
+            u = conn.execute(text("SELECT * FROM uplate WHERE kljuc = :k"), {"k": kljuc}).mappings().first()
+            if not u:
+                raise HTTPException(status_code=404, detail="Uplata nije pronađena")
+            if u["fiskal_poslato"]:
+                raise HTTPException(status_code=409, detail="Uplata je već fiskalizovana")
+            urow = conn.execute(text(
+                "SELECT u.username, u.first_name, u.last_name, p.naziv AS poslovnica_naziv FROM users u "
+                "LEFT JOIN poslovnice p ON p.id = u.poslovnica_id WHERE u.id = :id"
+            ), {"id": user_id}).mappings().first()
+            if not urow:
+                raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+            ag = conn.execute(text(
+                "SELECT pib, fiskal_zahtev_link, fiskal_odgovor_link FROM agencija ORDER BY id LIMIT 1"
+            )).mappings().first()
+            broj_ugovora_bez_godine = str((u["faktura"] or "").strip() or u["id"])
+            ar = conn.execute(text(
+                "SELECT kljuc, mesto, datumod FROM aranzman "
+                "WHERE split_part(kljuc, '/', 1) = :b ORDER BY id DESC LIMIT 1"
+            ), {"b": broj_ugovora_bez_godine}).mappings().first()
+
+        if not ar:
+            raise HTTPException(status_code=404, detail="Ugovor za uplatu nije pronađen")
+        if not ag or not (ag["pib"] or "").strip():
+            raise HTTPException(status_code=422, detail="PIB agencije nije podešen (Osnovni podaci)")
+        zahtev_url = (ag["fiskal_zahtev_link"] or "").strip()
+        odgovor_url = (ag["fiskal_odgovor_link"] or "").strip()
+        if not zahtev_url or not odgovor_url:
+            raise HTTPException(status_code=422, detail="Linkovi za fiskalizaciju nisu podešeni (Osnovni podaci)")
+
+        danas = u["danas"] or _belgrade_now()
+        artikal = f"{ar['kljuc']} / {ar['mesto']} / {ar['datumod'].strftime('%d.%m.%Y') if ar['datumod'] else ''}"
+        ime_prezime = f"{(urow['first_name'] or '').strip()} {(urow['last_name'] or '').strip()}".strip()
+        korisnik = ime_prezime or (urow["username"] or "").strip()
+        poslovnica = (urow["poslovnica_naziv"] or u["poslovnica"] or "").strip()
+        try:
+            params = build_fiskal_params(
+                uplata_kljuc=kljuc,
+                broj_priznanice=f"{kljuc}/{((ar['datumod'].year if ar['datumod'] else danas.year) % 100):02d}",
+                aranzman_kljuc=ar["kljuc"],
+                artikal=artikal,
+                nacin=u["nacin"] or "",
+                din=float(u["din"] or 0),
+                datum_iso=danas.date().isoformat(),
+                pib=ag["pib"].strip(),
+                poslovnica=poslovnica,
+                korisnik=korisnik,
+                cashier=ime_prezime,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+        try:
+            http_status, tekst = posalji_fiskal(zahtev_url, params)
+        except httpx.TimeoutException:
+            http_status, tekst = 0, "Fiskalni servis nije odgovorio u roku od 8 sekundi"
+        except httpx.HTTPError as exc:
+            http_status, tekst = 0, f"Greška veze sa fiskalnim servisom: {exc}"
+
+        uspeh = je_uspeh(http_status, tekst)
+        invoice = link_racuna = None
+        invoice_status, invoice_tekst = None, None
+        if uspeh:
+            time.sleep(FISKAL_INVOICE_PAUSA_SEC)
+            try:
+                invoice_status, invoice_tekst = dohvati_invoice(odgovor_url, params["req_id"])
+                invoice, link_racuna = parsiraj_invoice(invoice_tekst)
+                if invoice_odbijen(invoice_tekst):
+                    uspeh = False
+            except httpx.HTTPError:
+                invoice_status, invoice_tekst = 0, None
+
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE uplate SET fiskal_odgovor = :o, fiskal_poslato = :p, "
+                "fiskal_invoice = COALESCE(:inv, fiskal_invoice), fiskal_link = COALESCE(:lnk, fiskal_link) "
+                "WHERE kljuc = :k"
+            ), {"o": tekst, "p": uspeh, "inv": invoice, "lnk": link_racuna, "k": kljuc})
+
+        return {
+            "uspeh": uspeh,
+            "http_status": http_status or None,
+            "odgovor": tekst,
+            "invoice": invoice,
+            "link_racuna": link_racuna,
+            "invoice_http_status": invoice_status or None,
+            "invoice_odgovor": invoice_tekst,
+        }
+
     @api.get("/uplate/{kljuc}/priznanica")
     def uplata_priznanica(kljuc: int, _: dict = Depends(get_current_user)):
         """PDF priznanica o uplati — dva primerka na A4, isprekidana linija + makaze."""
@@ -6444,6 +6555,7 @@ def create_app(static_dir: str) -> FastAPI:
             "ulica", "broj", "post_broj", "mesto", "drzava",
             "opstina_rgz", "opstina_naziv", "mesto_rgz", "mesto_naziv",
             "ulica_rgz", "ulica_naziv", "api_kljuc_efakture", "api_kljuc_cis",
+            "fiskal_zahtev_link", "fiskal_odgovor_link",
             "pib", "mb", "jbkjs", "jmbg",
             "tekuci_racun1", "banka1", "tekuci_racun2", "banka2",
             "tekuci_racun3", "banka3", "tekuci_racun4", "banka4",

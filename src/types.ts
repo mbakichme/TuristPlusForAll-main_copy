@@ -333,6 +333,10 @@ export interface UplataRow {
   broj_kartice: string | null;
   broj_odobrenja: string | null;
   broj_cekova?: number;
+  fiskal_poslato?: boolean;
+  fiskal_odgovor?: string | null;
+  fiskal_invoice?: string | null;
+  fiskal_link?: string | null;
 }
 
 /** Podaci kartice uz uplatu (način plaćanja = Kartica). */

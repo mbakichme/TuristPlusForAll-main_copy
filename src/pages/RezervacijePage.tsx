@@ -40,7 +40,6 @@ import { DodatniPopustForma } from "@/components/DodatniPopustForma";
 import { KarticaPopup } from "@/components/KarticaPopup";
 import { PageLoader } from "@/components/PageLoader";
 import { PrebacivanjeUplatePopup } from "@/components/PrebacivanjeUplatePopup";
-import { useAuth } from "../context/AuthContext";
 
 // ── konstante ──────────────────────────────────────────────────────────────
 const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minute", "First minute"];
@@ -55,11 +54,25 @@ const STATUS_IKONA_PRAZNO = "text-red-600 hover:text-red-700";
 function karticaImaPodatke(u: UplataRow): boolean {
   return [u.broj_potvrde, u.tip_kartice, u.broj_kartice, u.broj_odobrenja].some((v) => (v ?? "").trim() !== "");
 }
-/** Link ka fiskalnom pregledu rezervacije za ugovor (poslovnica i korisnik iz aplikacije). */
-function fiskaliLink(ugovor: string, korisnik: string): string {
-  const params = new URLSearchParams({ brojUgovora: ugovor, poslovnica: "ASTRA TRAVEL", korisnik });
-  return `https://fiskalizacija-astra.e-dokumenti.in.rs/pregled/pregledRezervacije.php?${params.toString()}`;
+/** Odgovor backend-a na POST /uplate/{kljuc}/fiskal */
+interface FiskalOdgovor {
+  uspeh: boolean;
+  http_status: number | null;
+  odgovor: string;
+  invoice: string | null;
+  link_racuna: string | null;
+  invoice_http_status: number | null;
+  invoice_odgovor: string | null;
 }
+
+/** Stanje popup-a za fiskalizaciju uplate */
+interface FiskalPopup {
+  kljuc: number;
+  faza: "cekanje" | "rezultat" | "greska";
+  rezultat?: FiskalOdgovor;
+  poruka?: string;
+}
+
 /** Crveni toast (gore desno) da podaci kartice nisu uneti; ostaje dok se ne zatvori ili ne sačuvaju podaci. */
 const karticaToastId = (kljuc: number) => `kartica-${kljuc}`;
 function prikaziKarticaNeunetu(kljuc: number, ugovor: string) {
@@ -767,8 +780,6 @@ export default function RezervacijePage() {
   const [cekUcitavaKljuc, setCekUcitavaKljuc] = useState<number | null>(null);
   const [tipoviKartica, setTipoviKartica] = useState<string[]>([]);
   const [uplateRedovi, setUplateRedovi] = useState<UplataRow[] | null>(null);
-  const { user } = useAuth();
-  const korisnikIme = `${user?.first_name ?? ""} ${user?.last_name ?? ""}`.trim();
   const [prebacivanjeUplata, setPrebacivanjeUplata] = useState<UplataRow | null>(null);
   const [uplateUcitavaju, setUplateUcitavaju] = useState(false);
   const [uplataSeCuva, setUplataSeCuva] = useState(false);
@@ -780,6 +791,8 @@ export default function RezervacijePage() {
   const [zabranaPdfBroj, setZabranaPdfBroj] = useState<string | null>(null);
   const [saglasnostPdfUcitava, setSaglasnostPdfUcitava] = useState(false);
   const [priznanicaKljuc, setPriznanicaKljuc] = useState<number | null>(null);
+  // Fiskalizacija uplate: popup sa statusom zahteva i sirovim odgovorom servisa
+  const [fiskalPopup, setFiskalPopup] = useState<FiskalPopup | null>(null);
   const [istorija, setIstorija] = useState<IstorijaRed[] | null>(null);
   const [istorijaUcitava, setIstorijaUcitava] = useState(false);
   const [istorijaOtvorena, setIstorijaOtvorena] = useState(false);
@@ -1733,6 +1746,23 @@ export default function RezervacijePage() {
     }
   }
 
+  // fiskalizacija sačuvane uplate — šalje se odmah pri otvaranju popup-a
+  async function pokreniFiskal(kljuc: number) {
+    setFiskalPopup({ kljuc, faza: "cekanje" });
+    try {
+      const rezultat = await apiFetch<FiskalOdgovor>(`/uplate/${kljuc}/fiskal`, { method: "POST" });
+      if (!(rezultat.odgovor ?? "").trim()) {
+        setFiskalPopup((p) => (p && p.kljuc === kljuc ? { kljuc, faza: "cekanje", poruka: "Čekam fiskalizaciju uplate" } : p));
+        await new Promise((r) => setTimeout(r, 6000));
+      }
+      setFiskalPopup((p) => (p && p.kljuc === kljuc ? { kljuc, faza: "rezultat", rezultat } : p));
+      setUplateOsvezi((n) => n + 1);
+    } catch (err) {
+      const poruka = err instanceof Error ? err.message : "Greška pri fiskalizaciji";
+      setFiskalPopup((p) => (p && p.kljuc === kljuc ? { kljuc, faza: "greska", poruka } : p));
+    }
+  }
+
   // priznanica za pojedinačnu uplatu (dva primerka na A4)
   async function preuzmiPriznanicu(kljuc: number) {
     if (priznanicaKljuc != null) return;
@@ -2231,6 +2261,61 @@ export default function RezervacijePage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={fiskalPopup !== null} onOpenChange={(open) => { if (!open && fiskalPopup?.faza !== "cekanje") setFiskalPopup(null); }}>
+        <DialogContent className="max-w-lg bg-card" onEscapeKeyDown={(e) => { if (fiskalPopup?.faza === "cekanje") e.preventDefault(); }}>
+          <DialogHeader>
+            <DialogTitle>Fiskalizacija — uplata {fiskalPopup?.kljuc}</DialogTitle>
+            <DialogDescription>Zahtev se šalje fiskalnom servisu i ponovo se ne šalje posle uspešnog odgovora.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="flex items-center gap-2">
+              <Check className="size-4 text-emerald-600" />
+              <span>Zahtev poslat</span>
+            </div>
+            {fiskalPopup?.faza === "cekanje" && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                <span>{fiskalPopup.poruka ?? "Čekam odgovor fiskalnog servisa…"}</span>
+              </div>
+            )}
+            {fiskalPopup?.faza === "greska" && (
+              <p className="text-red-600">{fiskalPopup.poruka}</p>
+            )}
+            {fiskalPopup?.faza === "rezultat" && fiskalPopup.rezultat && (
+              <>
+                <p className={fiskalPopup.rezultat.uspeh ? "font-semibold text-emerald-600" : "font-semibold text-red-600"}>
+                  {fiskalPopup.rezultat.uspeh ? "Uspešno fiskalizovano" : "Fiskalizacija nije uspela"}
+                  <span className="ml-2 font-normal text-muted-foreground">HTTP {fiskalPopup.rezultat.http_status ?? "—"}</span>
+                </p>
+                <div className="rounded-md border border-border/60 bg-muted/30 p-3">
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+                    <dt className="text-muted-foreground">Broj računa</dt>
+                    <dd className="font-mono break-all">{fiskalPopup.rezultat.invoice ?? "—"}</dd>
+                    <dt className="text-muted-foreground">Račun</dt>
+                    <dd>
+                      {fiskalPopup.rezultat.link_racuna ? (
+                        <a href={fiskalPopup.rezultat.link_racuna} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 underline">
+                          Otvori račun <ExternalLink className="size-3.5" />
+                        </a>
+                      ) : "—"}
+                    </dd>
+                  </dl>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              disabled={fiskalPopup?.faza === "cekanje"}
+              onClick={() => setFiskalPopup(null)}
+            >
+              Zatvori
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={keptpUpit !== null} onOpenChange={(open) => { if (!open) setKeptpUpit(null); }}>
         <DialogContent className="max-w-md bg-card">
@@ -2737,9 +2822,17 @@ export default function RezervacijePage() {
           {/* Smeštaj · Prevoz · Osiguranje — tri reda u jednoj kartici */}
           <Card className={TON.sky.kartica}>
             <CardHeader className={cn(KOMPAKT_HEADER, TON.sky.zaglavlje)}>
-              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-sky-800">
-                <SekcijaIkona ton="sky"><BedDouble /></SekcijaIkona>Smeštaj · Prevoz · Osiguranje
-              </CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-sky-800">
+                  <SekcijaIkona ton="sky"><BedDouble /></SekcijaIkona>Smeštaj · Prevoz · Osiguranje
+                </CardTitle>
+                <div className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-xs">
+                  <span className="text-muted-foreground">Broj sobe | Struktura: </span>
+                  <span className="font-semibold tabular-nums text-sky-800">
+                    {(boravak.soba === CUVAR ? sobaSacuvana : sobe.find((b) => String(b.id) === boravak.soba)?.broj_sobe) ?? "—"} | {boravak.struktura.trim() || "—"}
+                  </span>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className={cn(KOMPAKT_CONTENT, "space-y-2")}>
               <div className="grid gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -2761,6 +2854,7 @@ export default function RezervacijePage() {
                   <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     <Fld label="Ukupno (EUR)">
                       <UkupnoInput vrednost={brutoSmestajEUR} />
+
                     </Fld>
                     <Fld label="Ukupno (RSD)">
                       <UkupnoInput vrednost={brutoSmestajRSD} />
@@ -3116,10 +3210,18 @@ export default function RezervacijePage() {
           {/* Provizija */}
           <Card className={TON.amber.kartica}>
             <CardHeader className={cn(KOMPAKT_HEADER, TON.amber.zaglavlje)}>
-              <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-amber-800">
-                <SekcijaIkona ton="amber"><Wallet /></SekcijaIkona>Provizija
-                <span className="ml-1 text-xs font-normal normal-case tracking-normal text-muted-foreground">procenat ili iznos; ispod ukupan obračun aranžmana</span>
-              </CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-amber-800">
+                  <SekcijaIkona ton="amber"><Wallet /></SekcijaIkona>Provizija
+                  <span className="ml-1 text-xs font-normal normal-case tracking-normal text-muted-foreground">procenat ili iznos; ispod ukupan obračun aranžmana</span>
+                </CardTitle>
+                {subagent.trim() && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs">
+                    <span className="text-muted-foreground">Subagent: </span>
+                    <span className="font-semibold text-amber-800">{subagent}</span>
+                  </div>
+                )}
+              </div>
             </CardHeader>
             <CardContent className={cn(KOMPAKT_CONTENT, "space-y-2")}>
               <ProcenatRed
@@ -3533,7 +3635,7 @@ export default function RezervacijePage() {
                             <TableHead className="w-14 text-center">Čekovi</TableHead>
                             <TableHead className="w-14 text-center">PDF</TableHead>
                             <TableHead className="w-14 text-center">Prebacivanje</TableHead>
-                            <TableHead className="w-14 text-center">Fiskali</TableHead>
+                            <TableHead className="w-20 text-center">Fiskal</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -3621,17 +3723,33 @@ export default function RezervacijePage() {
                                 )}
                               </TableCell>
                               <TableCell className="text-center">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-7"
-                                  title="Fiskali — otvori fiskalni pregled rezervacije"
-                                  aria-label={`Fiskali ${izabraniUgovor ?? ""}`}
-                                  disabled={!izabraniUgovor}
-                                  onClick={() => window.open(fiskaliLink(izabraniUgovor ?? "", korisnikIme), "_blank", "noopener")}
-                                >
-                                  <ExternalLink className="size-4" />
-                                </Button>
+                                <div className="flex items-center justify-center gap-1">
+                                {u.kljuc != null && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className={cn("size-7", u.fiskal_poslato ? STATUS_IKONA_PUNO : STATUS_IKONA_PRAZNO)}
+                                    title={u.fiskal_poslato ? "Uplata je fiskalizovana" : "Fiskalizuj uplatu"}
+                                    aria-label={`Fiskal — uplata ${u.kljuc}`}
+                                    disabled={!!u.fiskal_poslato}
+                                    onClick={() => void pokreniFiskal(u.kljuc as number)}
+                                  >
+                                    <Receipt className="size-4" />
+                                  </Button>
+                                )}
+                                {u.fiskal_link && (
+                                  <a
+                                    href={u.fiskal_link}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title={u.fiskal_invoice ? `Broj računa: ${u.fiskal_invoice}` : "Otvori račun"}
+                                    aria-label={`Otvori račun — uplata ${u.kljuc}`}
+                                    className="inline-flex size-7 items-center justify-center rounded-md text-blue-700 hover:bg-blue-50"
+                                  >
+                                    <ExternalLink className="size-4" />
+                                  </a>
+                                )}
+                                </div>
                               </TableCell>
                             </TableRow>
                           ))}
