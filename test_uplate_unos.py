@@ -39,7 +39,7 @@ KARTICA_OK = {
 
 # VALID_BODY.din = 15000 → 3 čeka po 5000
 CEKOVI_OK = [
-    {"redni": r, "datum": d, "iznos": 5000.0, "banka": "Komercijalna banka",
+    {"redni": r, "datum": d, "iznos": 5000.0, "banka": "Komercijalna banka", "bankaKlijentaId": 1,
      "brojRacunaBanke": "160-0000000012-34", "brojRacunaKlijenta": "123-456", "serijskiBroj": ""}
     for r, d in ((1, "2026-11-27"), (2, "2026-12-27"), (3, "2027-01-27"))
 ]
@@ -127,6 +127,8 @@ class FakeConnection:
         if "INSERT INTO rezervacija_log" in sql:
             self._state.setdefault("log", []).append(dict(params or {}))
             return FakeResult()
+        if "FROM banke" in sql:
+            return FakeResult(rows=[{"id": 1}])
         if "INSERT INTO cekovi" in sql:
             self._state.setdefault("cekovi", []).append(dict(params or {}))
             return FakeResult()

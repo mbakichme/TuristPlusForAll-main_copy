@@ -105,6 +105,73 @@ function BankaPicker({ naziv, label, onIzbor }: { naziv: string; label: string; 
   );
 }
 
+/** Polje banke u formi (puna širina): pretraga od 3 karaktera, upisuje izabranu banku u roditelja. */
+function BankaFormPolje({ label, naziv, onIzbor }: { label: string; naziv: string; onIzbor: (b: BankaRow) => void }) {
+  const [otvoreno, setOtvoreno] = useState(false);
+  const [q, setQ] = useState("");
+  const [rez, setRez] = useState<BankaRow[]>([]);
+  const [ucitava, setUcitava] = useState(false);
+
+  useEffect(() => {
+    const t = q.trim();
+    if (!otvoreno || t.length < 3) {
+      setRez([]);
+      setUcitava(false);
+      return;
+    }
+    let aktivan = true;
+    const h = setTimeout(async () => {
+      setUcitava(true);
+      try {
+        const r = await apiFetch<{ rows: BankaRow[] }>(`/banke?q=${encodeURIComponent(t)}`);
+        if (aktivan) setRez(r.rows);
+      } catch {
+        if (aktivan) setRez([]);
+      } finally {
+        if (aktivan) setUcitava(false);
+      }
+    }, 250);
+    return () => { aktivan = false; clearTimeout(h); };
+  }, [q, otvoreno]);
+
+  return (
+    <Popover open={otvoreno} onOpenChange={(o) => { setOtvoreno(o); if (!o) setQ(""); }}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 w-full justify-between font-normal text-xs" aria-label={label}>
+          <span className="truncate">{naziv || "Izaberite banku"}</span>
+          <ChevronDown className="size-3.5 opacity-50 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-card" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput placeholder="Pretraga (min. 3 karaktera)…" value={q} onValueChange={setQ} />
+          <CommandList>
+            {q.trim().length < 3 ? (
+              <div className="py-4 text-center text-xs text-muted-foreground">Unesite najmanje 3 karaktera</div>
+            ) : ucitava ? (
+              <div className="py-4 text-center text-xs text-muted-foreground">Pretraga…</div>
+            ) : (
+              <CommandEmpty>Nema banke za zadatu pretragu.</CommandEmpty>
+            )}
+            <CommandGroup>
+              {rez.map((b) => (
+                <CommandItem
+                  key={b.id}
+                  value={String(b.id)}
+                  onSelect={() => { onIzbor(b); setOtvoreno(false); setQ(""); }}
+                >
+                  <span className="font-medium">{b.naziv}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{b.sifra} · {b.mesto}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /** Datum čeka u redu tabele: kalendar u popover-u (srpski, ponedeljak prvi). */
 export function DatumPicker({ iso, label, onIzbor }: { iso: string; label: string; onIzbor: (iso: string) => void }) {
   const [otvoreno, setOtvoreno] = useState(false);
@@ -135,13 +202,10 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
   const [datum1, setDatum1] = useState<Date | undefined>(undefined);
   const [brojRata, setBrojRata] = useState("");
   const [iznosCeka, setIznosCeka] = useState("");
-  const [banka, setBanka] = useState<BankaRow | null>(null);
+  const [bankaAg, setBankaAg] = useState<BankaRow | null>(null);
+  const [bankaKl, setBankaKl] = useState<BankaRow | null>(null);
   const [racunKlijenta, setRacunKlijenta] = useState("");
   const [kalendarOtvoren, setKalendarOtvoren] = useState(false);
-  const [bankaOtvorena, setBankaOtvorena] = useState(false);
-  const [bankaQ, setBankaQ] = useState("");
-  const [bankaRez, setBankaRez] = useState<BankaRow[]>([]);
-  const [bankaUcitava, setBankaUcitava] = useState(false);
   const [tabela, setTabela] = useState<Red[] | null>(null);
   const [greska, setGreska] = useState<string | null>(null);
 
@@ -149,8 +213,6 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
     if (!open) return;
     setGreska(null);
     setKalendarOtvoren(false);
-    setBankaOtvorena(false);
-    setBankaQ("");
     if (pocetni.length > 0) {
       setTabela(pocetni.map((s) => ({ s, txt: s.iznos.toFixed(2) })));
     } else {
@@ -158,33 +220,12 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
       setDatum1(undefined);
       setBrojRata("");
       setIznosCeka("");
-      setBanka(null);
+      setBankaAg(null);
+      setBankaKl(null);
       setRacunKlijenta("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  // pretraga banaka — tek od 3 karaktera
-  useEffect(() => {
-    const q = bankaQ.trim();
-    if (!bankaOtvorena || q.length < 3) {
-      setBankaRez([]);
-      setBankaUcitava(false);
-      return;
-    }
-    const t = setTimeout(async () => {
-      setBankaUcitava(true);
-      try {
-        const r = await apiFetch<{ rows: BankaRow[] }>(`/banke?q=${encodeURIComponent(q)}`);
-        setBankaRez(r.rows);
-      } catch {
-        setBankaRez([]);
-      } finally {
-        setBankaUcitava(false);
-      }
-    }, 250);
-    return () => clearTimeout(t);
-  }, [bankaQ, bankaOtvorena]);
 
   const iznosValidan = Number.isFinite(iznos) && iznos > 0;
   const iznosCenti = Math.round(iznos * 100);
@@ -203,13 +244,14 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
     imaTabelu &&
     parsirano.every((v) => Number.isFinite(v) && v > 0) &&
     (tabela ?? []).every((r) =>
-      r.s.banka.trim() !== "" && r.s.brojRacunaBanke.trim() !== "" && /^\d{4}-\d{2}-\d{2}$/.test(r.s.datum)) &&
+      r.s.banka.trim() !== "" && r.s.bankaKlijentaId != null && r.s.brojRacunaBanke.trim() !== "" && /^\d{4}-\d{2}-\d{2}$/.test(r.s.datum)) &&
     zbirCentiTabele === iznosCenti;
 
   function potvrdiFormu() {
     setGreska(null);
     if (!datum1) return setGreska("Izaberite datum prve rate.");
-    if (!banka) return setGreska("Izaberite banku.");
+    if (!bankaAg) return setGreska("Izaberite banku (Agencija).");
+    if (!bankaKl) return setGreska("Izaberite banku klijenta.");
     if (!iznosValidan) return setGreska("Iznos uplate mora biti veći od nule.");
     if (cekaUnet && !cekaValidna) return setGreska("Iznos čeka mora biti broj veći od nule.");
 
@@ -233,8 +275,10 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
         redni: i + 1,
         datum: datumi[i],
         iznos: v,
-        banka: banka.naziv,
-        brojRacunaBanke: banka.racun,
+        banka: bankaAg.naziv,
+        bankaKlijentaId: bankaKl.id,
+        bankaKlijentaNaziv: bankaKl.naziv,
+        brojRacunaBanke: bankaAg.racun,
         brojRacunaKlijenta: racunKlijenta.trim(),
         serijskiBroj: "",
       },
@@ -277,6 +321,8 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
         datum,
         iznos: iznosNovog,
         banka: poslednji.banka,
+        bankaKlijentaId: poslednji.bankaKlijentaId,
+        bankaKlijentaNaziv: poslednji.bankaKlijentaNaziv,
         brojRacunaBanke: poslednji.brojRacunaBanke,
         brojRacunaKlijenta: poslednji.brojRacunaKlijenta,
         serijskiBroj: "",
@@ -360,41 +406,21 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
               </div>
 
               <div className="space-y-0.5">
-                <label className="text-[11px] font-medium text-muted-foreground">Banka</label>
-                <Popover open={bankaOtvorena} onOpenChange={setBankaOtvorena}>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-8 w-full justify-between font-normal text-xs" aria-label="Banka">
-                      <span className="truncate">{banka ? `${banka.naziv} (${banka.sifra})` : "Izaberite banku"}</span>
-                      <ChevronDown className="size-3.5 opacity-50 shrink-0" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-card" align="start">
-                    <Command shouldFilter={false}>
-                      <CommandInput placeholder="Pretraga (min. 3 karaktera)…" value={bankaQ} onValueChange={setBankaQ} />
-                      <CommandList>
-                        {bankaQ.trim().length < 3 ? (
-                          <div className="py-4 text-center text-xs text-muted-foreground">Unesite najmanje 3 karaktera</div>
-                        ) : bankaUcitava ? (
-                          <div className="py-4 text-center text-xs text-muted-foreground">Pretraga…</div>
-                        ) : (
-                          <CommandEmpty>Nema banke za zadatu pretragu.</CommandEmpty>
-                        )}
-                        <CommandGroup>
-                          {bankaRez.map((b) => (
-                            <CommandItem
-                              key={b.id}
-                              value={String(b.id)}
-                              onSelect={() => { setBanka(b); setBankaOtvorena(false); }}
-                            >
-                              <span className="font-medium">{b.naziv}</span>
-                              <span className="ml-2 text-xs text-muted-foreground">{b.sifra} · {b.mesto}</span>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
+                <label className="text-[11px] font-medium text-muted-foreground">Banka (Agencija)</label>
+                <BankaFormPolje
+                  label="Banka"
+                  naziv={bankaAg ? `${bankaAg.naziv} (${bankaAg.sifra})` : ""}
+                  onIzbor={setBankaAg}
+                />
+              </div>
+
+              <div className="space-y-0.5">
+                <label className="text-[11px] font-medium text-muted-foreground">Banka klijenta</label>
+                <BankaFormPolje
+                  label="Banka klijenta"
+                  naziv={bankaKl ? `${bankaKl.naziv} (${bankaKl.sifra})` : ""}
+                  onIzbor={setBankaKl}
+                />
               </div>
 
               <div className="space-y-0.5">
@@ -425,7 +451,7 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
                 <TableHeader>
                   <TableRow>
                     <TableHead className="h-8 px-2">Banka</TableHead>
-                    <TableHead className="h-8 px-2">Račun banke</TableHead>
+                    <TableHead className="h-8 px-2">Banka klijenta</TableHead>
                     <TableHead className="h-8 px-2">Račun klijenta</TableHead>
                     <TableHead className="h-8 px-2">Serijski broj</TableHead>
                     <TableHead className="h-8 px-2">Datum</TableHead>
@@ -447,13 +473,10 @@ export function CekPopup({ open, onOpenChange, iznos, pocetni, cuva, onSacuvaj }
                           />
                         </TableCell>
                         <TableCell className="px-2 py-1">
-                          <Input
-                            className="h-7 w-32 font-mono text-xs"
-                            maxLength={50}
-                            value={r.s.brojRacunaBanke}
-                            placeholder="—"
-                            aria-label={`Račun banke čeka ${r.s.redni}`}
-                            onChange={(e) => postaviRed(i, { brojRacunaBanke: e.target.value })}
+                          <BankaPicker
+                            naziv={r.s.bankaKlijentaNaziv ?? ""}
+                            label={`Banka klijenta čeka ${r.s.redni}`}
+                            onIzbor={(b) => postaviRed(i, { bankaKlijentaId: b.id, bankaKlijentaNaziv: b.naziv })}
                           />
                         </TableCell>
                         <TableCell className="px-2 py-1">

@@ -353,6 +353,10 @@ export interface CekStavka {
   datum: string; // YYYY-MM-DD
   iznos: number;
   banka: string;
+  /** id iz tabele banke (banka klijenta); obavezan pri snimanju */
+  bankaKlijentaId: number | null;
+  /** naziv banke klijenta (samo za prikaz, GET) */
+  bankaKlijentaNaziv?: string | null;
   brojRacunaBanke: string;
   brojRacunaKlijenta: string;
   serijskiBroj: string;

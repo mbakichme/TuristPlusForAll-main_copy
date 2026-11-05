@@ -623,6 +623,18 @@ def init_db(engine):
             " broj_racuna_klijenta VARCHAR(50) DEFAULT '',"
             " serijski_broj VARCHAR(50) DEFAULT '')"
         ))
+        # Banka klijenta = id iz tabele banke (kolona banka = naziv banke Agencije, kao do sada)
+        conn.execute(text("""
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'cekovi' AND column_name = 'banka_klijenta_id')
+                   AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'cekovi' AND column_name = 'banka_klijenta') THEN
+                    ALTER TABLE cekovi RENAME COLUMN banka_klijenta_id TO banka_klijenta;
+                END IF;
+            END $$
+        """))
+        conn.execute(text("ALTER TABLE cekovi ADD COLUMN IF NOT EXISTS banka_klijenta INTEGER"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS cekovi_uplata_idx ON cekovi (uplata_kljuc)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS cekovi_faktura_idx ON cekovi (faktura)"))
         # Veza ugovora na konkretni smeštaj (instanca = mesto + grupa termina).
@@ -1255,6 +1267,7 @@ class CekStavka(BaseModel):
     datum: str  # YYYY-MM-DD
     iznos: float
     banka: str = ""
+    bankaKlijentaId: Optional[int] = None  # banke.id — banka klijenta
     brojRacunaBanke: str = ""
     brojRacunaKlijenta: str = ""
     serijskiBroj: Optional[str] = ""
@@ -1290,12 +1303,15 @@ def _cekovi_cisto(lista: "list[CekStavka] | None", din: float) -> list[dict]:
         racun_k = (c.brojRacunaKlijenta or "").strip()
         serijski = (c.serijskiBroj or "").strip()
         if not banka or len(banka) > 200:
-            raise HTTPException(status_code=400, detail="Banka čeka je obavezna (najviše 200 znakova)")
+            raise HTTPException(status_code=400, detail="Banka je obavezna (najviše 200 znakova)")
+        if not c.bankaKlijentaId or c.bankaKlijentaId <= 0:
+            raise HTTPException(status_code=400, detail="Banka klijenta je obavezna (izaberite iz tabele banke)")
         if not racun_b or len(racun_b) > 50 or len(racun_k) > 50 or len(serijski) > 50:
             raise HTTPException(status_code=400, detail="Broj računa i serijski broj mogu imati najviše 50 znakova")
         cisto.append({
             "datum": _date.fromisoformat(c.datum), "iznos": cents,
-            "banka": banka, "broj_racuna_banke": racun_b,
+            "banka": banka, "banka_klijenta": c.bankaKlijentaId,
+            "broj_racuna_banke": racun_b,
             "broj_racuna_klijenta": racun_k, "serijski_broj": serijski,
         })
     zbir = sum(c["iznos"] for c in cisto)
@@ -4327,13 +4343,16 @@ def create_app(static_dir: str) -> FastAPI:
             if not conn.execute(text("SELECT 1 FROM uplate WHERE kljuc = :k"), {"k": kljuc}).fetchone():
                 raise HTTPException(status_code=404, detail="Uplata nije pronađena")
             rows = conn.execute(text("""
-                SELECT redni, to_char(datum, 'YYYY-MM-DD') AS datum, iznos, banka,
-                       broj_racuna_banke, broj_racuna_klijenta, serijski_broj
-                FROM cekovi WHERE uplata_kljuc = :k ORDER BY redni
+                SELECT c.redni, to_char(c.datum, 'YYYY-MM-DD') AS datum, c.iznos, c.banka, c.banka_klijenta,
+                       bk.naziv AS banka_klijenta_naziv,
+                       c.broj_racuna_banke, c.broj_racuna_klijenta, c.serijski_broj
+                FROM cekovi c LEFT JOIN banke bk ON bk.id = c.banka_klijenta
+                WHERE c.uplata_kljuc = :k ORDER BY c.redni
             """), {"k": kljuc}).fetchall()
         return [
             {
                 "redni": r.redni, "datum": r.datum, "iznos": float(r.iznos), "banka": r.banka,
+                "bankaKlijentaId": r.banka_klijenta, "bankaKlijentaNaziv": r.banka_klijenta_naziv,
                 "brojRacunaBanke": r.broj_racuna_banke, "brojRacunaKlijenta": r.broj_racuna_klijenta,
                 "serijskiBroj": r.serijski_broj or "",
             }
@@ -4355,15 +4374,18 @@ def create_app(static_dir: str) -> FastAPI:
             if (stari.nacin or "").strip() != "Ček":
                 raise HTTPException(status_code=400, detail="Uplata nije evidentirana čekovima")
             novi = _cekovi_cisto(body.cekovi, float(stari.din))
+            for bid in {c["banka_klijenta"] for c in novi}:
+                if not conn.execute(text("SELECT 1 FROM banke WHERE id = :i"), {"i": bid}).fetchone():
+                    raise HTTPException(status_code=400, detail=f"Banka klijenta {bid} ne postoji u tabeli banke")
             stari_c = {r.redni: r for r in conn.execute(text(
                 "SELECT redni, datum, iznos, serijski_broj FROM cekovi WHERE uplata_kljuc = :k"
             ), {"k": kljuc}).fetchall()}
             conn.execute(text("DELETE FROM cekovi WHERE uplata_kljuc = :k"), {"k": kljuc})
             for c in novi:
                 conn.execute(text("""
-                    INSERT INTO cekovi (uplata_kljuc, faktura, redni, datum, iznos, banka,
+                    INSERT INTO cekovi (uplata_kljuc, faktura, redni, datum, iznos, banka, banka_klijenta,
                                         broj_racuna_banke, broj_racuna_klijenta, serijski_broj)
-                    VALUES (:uplata_kljuc, :faktura, :redni, :datum, :iznos, :banka,
+                    VALUES (:uplata_kljuc, :faktura, :redni, :datum, :iznos, :banka, :banka_klijenta,
                             :broj_racuna_banke, :broj_racuna_klijenta, :serijski_broj)
                 """), {**c, "uplata_kljuc": kljuc, "faktura": stari.faktura or ""})
 
