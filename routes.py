@@ -3005,7 +3005,10 @@ def create_app(static_dir: str) -> FastAPI:
                     "cena_snizena": prva_vazeca["cena_snizena"] if prva_vazeca else None,
                     "varijante": varijante,
                     "struktura": struktura, "koeficijent": float(koef),
-                    "tip_cene": tip_cene, "obracun": varijante[0]["obracun"], "napomene": napomene}
+                    "tip_cene": tip_cene, "obracun": varijante[0]["obracun"], "napomene": napomene,
+                    # umanjenje važi samo za po_osobi (kao u obračunu); po_sobi sopstveni nema umanjenja
+                    "umanjenje_sopstveni": float(_q2(umanj_sp)) if umanj_sp > 0 and tip_cene != "po_sobi" else None,
+                    "umanjenje_smene": len(cen["lanac"])}
 
         out = []
         for g in smestaji:
@@ -4007,6 +4010,22 @@ def create_app(static_dir: str) -> FastAPI:
                 FROM dodatni_popusti dp JOIN aranzman a ON a.id = dp.aranzman_id
                 WHERE a.kljuc = :k ORDER BY dp.id
             """), {"k": k}).mappings().all()]
+
+    def dodatni_za_ugovori(kljucevi) -> dict:
+        """Dodatni popusti za više ugovora jednim upitom → {kljuc: [popust, ...]} (isti oblik kao dodatni_za_ugovor)."""
+        keys = sorted({str(k or "").strip().strip("/") for k in kljucevi} - {""})
+        if not keys:
+            return {}
+        out: dict = {}
+        with engine.connect() as conn:
+            for r in conn.execute(text("""
+                SELECT a.kljuc, dp.id, dp.naziv, dp.eur, dp.rsd, dp.procenat
+                FROM dodatni_popusti dp JOIN aranzman a ON a.id = dp.aranzman_id
+                WHERE a.kljuc = ANY(:keys) ORDER BY dp.id
+            """), {"keys": keys}).mappings().all():
+                out.setdefault(r["kljuc"], []).append(
+                    {k: r[k] for k in ("id", "naziv", "eur", "rsd", "procenat")})
+        return out
 
     def calc_ugovor_values(row: dict, dodatni=None) -> dict:
         """Port PHP obračuna iz uplate.php — ulaz: kolone aranzman reda + dodatni popusti na smeštaj."""
@@ -5717,6 +5736,7 @@ def create_app(static_dir: str) -> FastAPI:
             "prevozow": d.get("prevozow"),
             "prevozrt": d.get("prevozrt"),
             "prevozsp": d.get("prevozsp"),
+            "mesto_sedenja": d.get("mesto_sedenja"),
             "placeno_prevoz": bool(d.get("placeno_prevoz")),
             "zelja_prevoz": bool(d.get("zelja_prevoz")),
             "datum_ow": d["datum_ow"].isoformat() if d.get("datum_ow") else None,
@@ -5834,6 +5854,7 @@ def create_app(static_dir: str) -> FastAPI:
             """), {**bind, "limit": page_size, "offset": (page - 1) * page_size}).fetchall()
 
         kurs = get_eur_middle()
+        dodatni_map = dodatni_za_ugovori([r.kljuc for r in rows]) if kurs else {}
 
         def row_putnici(r) -> list:
             ps = [str(r.putnik or "").strip()]
@@ -5841,7 +5862,11 @@ def create_app(static_dir: str) -> FastAPI:
             return [p for p in ps if p]
 
         def row_ukupna(r) -> float | None:
-            calc = calc_ugovor_values(dict(r._mapping), dodatni_za_ugovor(r.kljuc))
+            if not kurs:
+                return None
+            kljuc = str(r.kljuc or "").strip().strip("/")
+            calc = calc_ugovor_values(dict(r._mapping), dodatni_map.get(kljuc, []))
+            return round((calc["naplata"] + calc["provizija"]) * kurs, 2)
 
         return {
             "rows": [{

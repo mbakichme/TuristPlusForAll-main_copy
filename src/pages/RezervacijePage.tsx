@@ -673,6 +673,8 @@ export default function RezervacijePage() {
   const [searchParams] = useSearchParams();
   const ugovorIzLinka = searchParams.get("u");
   const linkUcitavanja = useRef<string | null>(null);
+  // korisnik je ručno izabrao subagenta u ovom ugovoru (ne učitavanje iz baze) → automatska provizija važi i za postojeći ugovor
+  const korisnikBiraoSubagenta = useRef(false);
   const [referenceSpremne, setReferenceSpremne] = useState(false);
   const [tipRezervacije, setTipRezervacije] = useState(TIP_REZERVACIJE[0]);
   const [subagent, setSubagent] = useState("");
@@ -1430,11 +1432,44 @@ export default function RezervacijePage() {
   // Izvor za obračun popusta (podaci sobe iz /slobodne-sobe) + zahtev za promenu plaćanja (čeka potvrdu)
   const [izvorPopusta, setIzvorPopusta] = useState<IzvorPopusta | null>(null);
   const [placanjeZahtev, setPlacanjeZahtev] = useState<string | null>(null);
+  // Umanjenje za sopstveni prevoz (EUR po osobi, iz cenovnika za sobu/termin) + popup za ručnu promenu na SP
+  const [umanjenjeSopstveni, setUmanjenjeSopstveni] = useState(0);
+  const [umanjenjeSmene, setUmanjenjeSmene] = useState(0);
+  const [umanjenjePopup, setUmanjenjePopup] = useState<{ broj: number; iznos: number; smene: number } | null>(null);
+  const [umanjenjeCuva, setUmanjenjeCuva] = useState(false);
+  // Ručna promena na SOPSTVENI prevoz (osobe koje su bile RT/OW) → popup; samo za postojeći ugovor i kad soba ima umanjenje
+  // Iznos = broj osoba × umanjenje po smeni × broj smena (isto kao u pretrazi)
+  const zatraziUmanjenjeSopstveni = (broj: number) => {
+    if (!izabraniUgovor || broj <= 0 || umanjenjeSopstveni <= 0) return;
+    setUmanjenjePopup({ broj, iznos: umanjenjeSopstveni, smene: umanjenjeSmene });
+  };
+  // Potvrda: dodaje stavku UMANJENJE SOPSTVENI (EUR, negativna) na ugovor
+  async function potvrdiUmanjenjeSopstveni() {
+    if (!umanjenjePopup || !izabraniUgovor) return;
+    const ugovor = izabraniUgovor;
+    const eur = -round2(umanjenjePopup.broj * umanjenjePopup.iznos * umanjenjePopup.smene);
+    setUmanjenjeCuva(true);
+    try {
+      const stavka = await apiFetch<NonNullable<UgovorDetail["dodatne"]>[number]>(`/ugovori/${ugovor}/dodatne`, {
+        method: "POST",
+        body: JSON.stringify({ usluga: "UMANJENJE SOPSTVENI", eur, din: null }),
+      });
+      if (aktivniUgovor.current === ugovor) setDodatneStavke((prev) => [...prev, stavka]);
+      setUmanjenjePopup(null);
+      toast.success("Dodata stavka UMANJENJE SOPSTVENI", { description: `${eur.toFixed(2)} EUR` });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Dodavanje umanjenja nije uspelo");
+    } finally {
+      setUmanjenjeCuva(false);
+    }
+  }
 
   // Maksimalni važeći popust sobe za izabrani način plaćanja → Popust smeštaja %
   // (samo kad je izabrana soba i boravak; izvor se čuva da bi promena plaćanja mogla ponovo da obračuna)
   useEffect(() => {
     setIzvorPopusta(null);
+    setUmanjenjeSopstveni(0);
+    setUmanjenjeSmene(0);
     if (adlStrukture == null) return;
     if (!boravak.smestaj || !boravak.soba || !boravak.datumOd || !boravak.datumDo || boravak.datumDo <= boravak.datumOd) return;
     const ddmm = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
@@ -1447,12 +1482,14 @@ export default function RezervacijePage() {
       ...(izabraniUgovor ? { iskluci_kljuc: izabraniUgovor } : {}),
     });
     let aktivan = true;
-    apiFetch<{ smestaj_id: number; sobe: { id: number; cena_osnovna: number | null; tip_cene?: string | null; varijante?: { vazi: boolean; cena_snizena: number | null; tip_placanja?: string | null }[] }[] }[]>(
+    apiFetch<{ smestaj_id: number; sobe: { id: number; cena_osnovna: number | null; tip_cene?: string | null; umanjenje_sopstveni?: number | null; umanjenje_smene?: number | null; varijante?: { vazi: boolean; cena_snizena: number | null; tip_placanja?: string | null }[] }[] }[]>(
       `/slobodne-sobe?${params}`
     )
       .then((grupe) => {
         if (!aktivan) return;
         const soba = grupe.find((g) => String(g.smestaj_id) === boravak.smestaj)?.sobe.find((s) => String(s.id) === boravak.soba);
+        setUmanjenjeSopstveni(soba?.umanjenje_sopstveni ?? 0);
+        setUmanjenjeSmene(soba?.umanjenje_smene ?? 0);
         if (!soba || soba.cena_osnovna == null || soba.cena_osnovna <= 0) return;
         const osnovna = soba.cena_osnovna;
         const izvor: IzvorPopusta = { osnovna, varijante: soba.varijante ?? [] };
@@ -1488,11 +1525,15 @@ export default function RezervacijePage() {
   };
 
 
-  // Automatska provizija (samo nova rezervacija): popularan smeštaj → smestaj.provizija;
-  // inače popust na smeštaj > visina_popusta → visina_provizije; inače provizija subagenta.
+  // Automatska provizija: popularan smeštaj → smestaj.provizija; inače popust > visina_popusta → visina_provizije; inače provizija subagenta.
+  // Za postojeći ugovor važi samo kad je korisnik ručno izabrao subagenta (sačuvana provizija se ne menja pri učitavanju).
   const smestajIzabran = smestaji.find((s) => String(s.id) === boravak.smestaj);
   useEffect(() => {
-    if (izabraniUgovor || !subagent.trim() || !parametriObr) return;
+    korisnikBiraoSubagenta.current = false;
+  }, [izabraniUgovor]);
+  useEffect(() => {
+    if (!subagent.trim() || !parametriObr) return;
+    if (izabraniUgovor && !korisnikBiraoSubagenta.current) return;
     // stvarni procenat popusta na smeštaj: iz procenta, ili iz iznosa (EUR) / bruto smeštaja
     const bruto = num(cene.cenaSmestaj) * qty(cene.kolSmestaj);
     const popustPct = procenat(cene.popustSmestajPct) ?? (bruto > 0 ? (num(cene.popustSmestaj) / bruto) * 100 : 0);
@@ -2475,12 +2516,12 @@ export default function RezervacijePage() {
                           <CommandEmpty>Nema subagenta.</CommandEmpty>
                           <CommandGroup>
                             {subagent && (
-                              <CommandItem value="__ukloni__" onSelect={() => { setSubagent(""); setSubagentOtvoren(false); }}>
+                              <CommandItem value="__ukloni__" onSelect={() => { korisnikBiraoSubagenta.current = true; setSubagent(""); setSubagentOtvoren(false); }}>
                                 <span className="text-muted-foreground">Bez subagenta</span>
                               </CommandItem>
                             )}
                             {subagentOpcije.map((n) => (
-                              <CommandItem key={n} value={n} onSelect={() => { setSubagent(n); setSubagentOtvoren(false); }}>
+                              <CommandItem key={n} value={n} onSelect={() => { korisnikBiraoSubagenta.current = true; setSubagent(n); setSubagentOtvoren(false); }}>
                                 <span className={cn("truncate", n === subagent && "font-semibold")}>{n}</span>
                               </CommandItem>
                             ))}
@@ -3028,6 +3069,38 @@ export default function RezervacijePage() {
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
+              <AlertDialog
+                open={umanjenjePopup !== null}
+                onOpenChange={(open) => { if (!open && !umanjenjeCuva) setUmanjenjePopup(null); }}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Umanjenje za sopstveni prevoz</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {umanjenjePopup && (
+                        <>
+                          Umanjujem iznos aranžmana za{" "}
+                          <span className="font-medium text-foreground">{umanjenjePopup.broj} {umanjenjePopup.broj === 1 ? "osobu" : "osoba"}</span>
+                          {" "}× <span className="font-medium text-foreground">{nf2.format(umanjenjePopup.iznos)} €</span> (iznos iz cenovnika)
+                          {" "}× <span className="font-medium text-foreground">{umanjenjePopup.smene} {umanjenjePopup.smene === 1 ? "smenu" : "smena"}</span>
+                          {" "}= <span className="font-mono font-medium text-foreground">−{nf2.format(round2(umanjenjePopup.broj * umanjenjePopup.iznos * umanjenjePopup.smene))} €</span>.
+                          Biće dodata stavka <span className="font-medium text-foreground">UMANJENJE SOPSTVENI</span> u obračun.
+                        </>
+                      )}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={umanjenjeCuva}>Otkaži</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={umanjenjeCuva}
+                      onClick={(e) => { e.preventDefault(); void potvrdiUmanjenjeSopstveni(); }}
+                    >
+                      {umanjenjeCuva && <Loader2 className="size-4 animate-spin" />}
+                      Potvrđujem
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </CardContent>
           </Card>
 
@@ -3349,7 +3422,10 @@ export default function RezervacijePage() {
                   <Select
                     value={sopstveniZaSve ? SOPSTVENI : destinacijaZaSve}
                     onValueChange={(v) => {
-                      if (v === SOPSTVENI) { setSopstveniZaSve(true); postaviPrevozZaSve("sp"); return; }
+                      if (v === SOPSTVENI) {
+                        const brojPrelaza = [nosilac, ...saputnici].filter((o) => o.rt || o.ow).length;
+                        setSopstveniZaSve(true); postaviPrevozZaSve("sp"); zatraziUmanjenjeSopstveni(brojPrelaza); return;
+                      }
                       if (v !== CUVAR) setDestinacijaSacuvana(null);
                       setSopstveniZaSve(false);
                       setDestinacijaZaSve(v);
@@ -3446,7 +3522,7 @@ export default function RezervacijePage() {
                         </div>
                         <Chk label="RT" labelClassName="text-xs" checked={osoba.rt} onChange={(v) => v && updOsoba({ rt: v, ow: v ? false : osoba.ow, sp: v ? false : osoba.sp, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? osoba.datumPolaska : "", datumPovratka: v ? osoba.datumPovratka : "", destinacijaPolaska: v ? osoba.destinacijaPolaska : "", destinacijaPovratka: v ? osoba.destinacijaPovratka : "" })} disabled={zakljucano} />
                         <Chk label="OW" labelClassName="text-xs" checked={osoba.ow} onChange={(v) => v && updOsoba({ ow: v, rt: v ? false : osoba.rt, sp: v ? false : osoba.sp, smer: v ? osoba.smer : "", datumOw: v ? osoba.datumOw : "", destinacijaOw: v ? osoba.destinacijaOw : "", datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
-                        <Chk label="SP" labelClassName="text-xs" checked={osoba.sp} onChange={(v) => v && updOsoba({ sp: v, ow: v ? false : osoba.ow, rt: v ? false : osoba.rt, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka })} disabled={zakljucano} />
+                        <Chk label="SP" labelClassName="text-xs" checked={osoba.sp} onChange={(v) => { if (v && !osoba.sp && (osoba.rt || osoba.ow)) zatraziUmanjenjeSopstveni(1); if (v) updOsoba({ sp: v, ow: v ? false : osoba.ow, rt: v ? false : osoba.rt, smer: v ? "" : osoba.smer, datumOw: v ? "" : osoba.datumOw, destinacijaOw: v ? "" : osoba.destinacijaOw, datumPolaska: v ? "" : osoba.datumPolaska, datumPovratka: v ? "" : osoba.datumPovratka }); }} disabled={zakljucano} />
                         <div className="space-y-1">
                           <PretraznaSelect
                             value={red.mestoUlaska}
