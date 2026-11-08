@@ -5,7 +5,7 @@
     "status": "completed"
   },
   {
-    "content": "[API] /preuzimanje_podataka import endpoint (uplatejson.php)",
+    "content": "[API] /preuzimanje_podataka import endpoint (uplatejson.php) — UKLONJENO (uvoz ugovora nije dozvoljen)",
     "id": "2",
     "status": "completed"
   },
@@ -15,7 +15,7 @@
     "status": "completed"
   },
   {
-    "content": "[UI] UgovoriPage + PreuzimanjePage + placeholderi",
+    "content": "[UI] UgovoriPage + placeholderi (PreuzimanjePage UKLONJEN)",
     "id": "4",
     "status": "completed"
   },

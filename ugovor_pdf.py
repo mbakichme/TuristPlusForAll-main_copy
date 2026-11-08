@@ -50,18 +50,22 @@ def _rok_placanja(raw):
     return _mesec_pre(raw.get("datumod"))
 
 
-def legal_clauses(naziv_agencije, placanje_do, lice_reklamacije=""):
+def legal_clauses(naziv_agencije, placanje_do, lice_reklamacije="", delimicno=False):
     """Izjave i uslovi (Paragraph markup); naziv agencije iz podešavanja, rok plaćanja iz _rok_placanja,
-    rečenica za reklamacije iz podešavanja (Osnovni podaci) — prazna = ne ispisuje se."""
+    rečenica za reklamacije iz podešavanja (Osnovni podaci) — prazna = ne ispisuje se.
+    delimicno=True → 40% odmah + ostatak do roka; inače 100% do roka (u celosti / nije izabrano)."""
     ag = f'"{escape(naziv_agencije)}"'
-    placanje = (f"PLAĆANJE 100.00% DO {placanje_do.strftime('%d.%m.%Y.')}" if placanje_do else "PLAĆANJE 100.00%")
+    if delimicno:
+        placanje = (f"PLAĆANJE 40.00% ODMAH, OSTATAK DO {placanje_do.strftime('%d.%m.%Y.')}" if placanje_do else "PLAĆANJE 40.00% ODMAH")
+    else:
+        placanje = (f"PLAĆANJE 100.00% DO {placanje_do.strftime('%d.%m.%Y.')}" if placanje_do else "PLAĆANJE 100.00%")
     bold = lambda s: f'<font name="{SANS_B}">{s}</font>'
     return (
         f"Putniku, koji sa agencijom {ag} ugovori aranžman po principu odloženog plaćanja (na rate), garantuje se cena u visini realizovanog dela čekova. U slučaju promena i poremećaja na monetarnom tržištu, ili tržištu roba i usluga, stranka prihvata obavezu da snosi iznos uvećanih cena za nerealizovani deo odloženog plaćanja.",
         "Izjavljujem da ću, ukoliko agencija ne bude mogla da realizuje moje čekove ili administrativnu zabranu izvršiti svoju obavezu prema Organizatoru na drugi način.",
         "Organizator putniku izdaje vaučer 7 dana pred put isključivo za aranžman uplaćen i izmiren u celosti. Vaučer je jedini važeći dokument za korišćenje usluge koji putnik mora uručiti ovlašćenom agentu ili predstavniku agencije na destinaciji, a Organizator se obavezuje da će ugovorene usluge pružiti isključivo licima navedenim na vaučeru.",
         f"{bold('U cenu aranžmana nije uključena obavezna boravišna/ekološka taksa, koja se plaća na samoj destinaciji.')} Putnik je dužan da iznos takse plati na licu mesta predstavniku organizatora putovanja ili lokalnom grčkom partneru (inopartneru), u skladu sa važećim tarifama Republike Grčke za tekuću godinu. Potvrđujem potpisom da su mi uručeni Opšti uslovi i program putovanja agencije {ag} sa kojima sam saglasan-saglasna u svoje ime i ime navedenih putnika, da sam upoznat sa detaljnim dodatnim informacijama o svakoj smeštajnoj jedinici, koje se nalaze na internet stranici Agencije, i da jesam-nisam saglasan-saglasna, da me {ag} poštom, putem sms-a ili email-a, obaveštava o novim ponudama i specijalnim akcijama.",
-        "Porez na dodatu vrednost nije obračunat po čl.35 st.7 Zakona o PDV-u. Obavezno prilikom uplate u poziv na broj upisati broj predračuna. Predračun je punovažan bez potpisa i pečata.",
+        "Porez na dodatu vrednost nije obračunat po čl.35 st.7 Zakona o PDV-u. Obavezno prilikom uplate u poziv na broj upisati broj predračuna. Ugovor/Predračun je punovažan bez potpisa i pečata.",
         bold(placanje),
         "Putnik je upoznat sa mogućnošću putnog osiguranja i osiguranja od otkaza. Putniku je uručena garancija putovanja.",
     ) + ((bold(_text_recenice(lice_reklamacije)),) if (lice_reklamacije or "").strip() else ())
@@ -269,9 +273,37 @@ def _polazak_dana(raw):
     return (od - timedelta(days=1)).strftime("%d.%m.%Y") if od else "—"
 
 
+def _nacin_placanja(raw):
+    """aranzman.nacin_placanja: delimicno | u_celosti → tekst za ugovor; prazno → '—'."""
+    return {"delimicno": "delimično", "u_celosti": "u celosti"}.get(str(raw.get("nacin_placanja") or "").strip(), "—")
+
+
+def _tip_prevoza(raw):
+    """Autobuski ako je bar jedan prevoz DA (isto pravilo kao „Vrsta prevoza“), inače Sopstveni."""
+    return "Sopstveni" if not any(_flag(raw.get(k)) == "DA" for k in ("prevozow", "prevozrt")) else "Autobuski"
+
+
+def _vrsta_prevoza(raw):
+    """Tekst vrste prevoza (isti izvor kao red „Vrsta prevoza“ u PDF-u)."""
+    return raw.get("vrsta_prevoza") or ("SOPSTVENI PREVOZ" if not any(_flag(raw.get(k)) == "DA" for k in ("prevozow", "prevozrt")) else "Aranžman sa prevozom")
+
+
+def _period_tekst(raw):
+    """Period: DD.MM – DD.MM.YYYY; kod aranžmana sa prevozom dodaje se (polazak DD.MM.YYYY) — dan ranije od datumod.
+    Sopstveni prevoz: bez dela o polasku."""
+    od, do = _to_date(raw.get("datumod")), _to_date(raw.get("datumdo"))
+    if not od or not do:
+        return f"{_text(raw.get('datumod'))} – {_text(raw.get('datumdo'))}"
+    tekst = f"{od.strftime('%d.%m')} – {do.strftime('%d.%m.%Y')}"
+    if "sopstven" not in str(_vrsta_prevoza(raw)).lower():
+        tekst += f" (polazak {_polazak_dana(raw)})"
+    return tekst
+
+
 def _kategorija_sobe(opis):
-    """STD ili APP iz opisa sobe ('STD PR' → STD, 'APP ECO' → APP); inače prazno."""
-    match = re.match(r"\s*(STD|APP)\b", str(opis or ""))
+    """Kategorija iz opisa sobe — prvi token ako je velikim slovima (STD, APT, APP, DPL, STD+GAL …); inače prazno.
+    Brojevni tokeni ('1/2', '3+1') se ne uzimaju."""
+    match = re.match(r"\s*([A-ZČĆŠŽĐ][A-ZČĆŠŽĐ+]*)(?=\s|$|,)", str(opis or ""))
     return match.group(1) if match else ""
 
 
@@ -338,7 +370,6 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     def page_header(c, doc):
         c.saveState()
         if doc.page > 1:
-            page_footer(c, doc)
             c.restoreState()
             return
         y = height - 25
@@ -353,14 +384,7 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
                         iw * scale, ih * scale, mask="auto")
         c.setStrokeColor(colors.HexColor("#CBD4DF"))
         c.line(margin, height - 35 - header_height, width - margin, height - 35 - header_height)
-        page_footer(c, doc)
         c.restoreState()
-
-    def page_footer(c, doc):
-        c.setFont(SANS, 7.5)
-        c.setFillColor(MUTED)
-        c.drawString(margin, 20, f"Ugovor/prijava {_text(raw.get('kljuc'))}")
-        c.drawRightString(width - margin, 20, f"Strana {doc.page}")
 
     def frames(top):
         return [Frame(margin, 38, body_width, top - 38, id="body",
@@ -403,7 +427,7 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     # --- putovanje -------------------------------------------------------------
     nights = _nights(raw.get("datumod"), raw.get("datumdo"))
     story.append(grid([
-        [p("Datum:"), p(f"{_text(raw.get('datumod'))} – {_text(raw.get('datumdo'))}"), p("Trajanje:"), p(f"{nights} noćenja" if nights is not None else "—", "monoB")],
+        [p("Period:"), p(_period_tekst(raw)), p("Trajanje:"), p(f"{nights} noćenja" if nights is not None else "—", "monoB")],
         [p("Destinacija:"), p(_text(raw.get("destinacija"))), p("Mesto:"), p(_text(raw.get("mesto")))],
         [p("Smeštaj:"), [p(_text(raw.get("naziv")), "monoB")] + (
             [p(f"Napomena: {str(raw.get('smestaj_napomena')).strip()}", "small")] if str(raw.get("smestaj_napomena") or "").strip() else []),
@@ -412,6 +436,7 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
              f"struktura {' '.join(x for x in (str(raw.get('soba_tip') or '').strip(), _kategorija_sobe(raw.get('soba_opis'))) if x)}".rstrip(),
              f"spratnost: {_prvi_deo(raw.get('soba_opis_dodatno'))}" if _prvi_deo(raw.get("soba_opis_dodatno")) else "",
              str(raw.get("soba_opis_ugovor") or "").strip()) if x))],
+        [p("Tip prevoza:"), p(_tip_prevoza(raw)), p("Tip plaćanja:"), p(_nacin_placanja(raw))],
     ], [0.13, 0.37, 0.12, 0.38], box=True))
 
     # --- putnici (nosilac + saputnici) -------------------------------------------
@@ -498,15 +523,9 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
             naziv = _text(item.get("usluga")).replace("PLAĆENO MESTO - ", "PLAĆENO MESTO U AUTOBUSU - ", 1)
             story.append(p(f"{index}. {naziv} — {fmt_num(item.get('eur'))} EUR / {fmt_num(item.get('din'))} RSD"))
 
-    # --- prevoz i polazak ----------------------------------------------------------
-    story.append(p("PREVOZ I POLAZAK", "section"))
-    story.append(grid([
-        [p("Vrsta prevoza:"), p(raw.get("vrsta_prevoza") or ("SOPSTVENI PREVOZ" if not any(_flag(raw.get(k)) == "DA" for k in ("prevozow", "prevozrt")) else "Aranžman sa prevozom")),
-         p("Polazak dana:"), p(_polazak_dana(raw))],
-        [p("Usluga osiguranja:"), p(_text(raw.get("osiguranje"))), p("Usluga / obrok:"), p(_text(raw.get("obrok") or raw.get("usluga")))],
-        [p("Početak usluge:"), p(_text(raw.get("datumod"))), p("Završetak usluge:"), p(_text(raw.get("datumdo")))],
-    ], [0.22, 0.28, 0.26, 0.24]))
-    story.append(p(f"Napomena: {_text(raw.get('napomena'))}"))
+    # --- napomena ----------------------------------------------------------------
+    story.append(Spacer(1, 8))
+    story.append(p(f"Napomena: {_text(raw.get('napomena1'))}"))
     story.append(p("Molimo Vas da vreme polaska proverite dan pre putovanja.", "small"))
 
     # --- podnosilac ------------------------------------------------------------------
@@ -551,19 +570,19 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
 
     ulogovan = _text(ugovor.get("ulogovan")).strip() if ugovor.get("ulogovan") else ""
     sluzbenik = f" ({ulogovan})" if ulogovan else ""
-    story.append(Spacer(1, 3))
+    story.append(Spacer(1, 8))
     story.append(KeepTogether([grid([[
         [p("Podnosilac prijave:", "monoB"),
          p("\n".join(x for x in (_subagent_redovi(ugovor, raw) or _redovi_podnosioca((
              ((None, _text(raw.get("putnik"))),),
-             (("Adresa", _text(raw.get("adresa")) if raw.get("adresa") else ""),),
+             (("Adresa", ", ".join(_text(raw.get(k)).strip() for k in ("adresa", "grad") if _text(raw.get(k)).strip())),),
              (("Tel.", _text(raw.get("telefon")) if raw.get("telefon") else ""),
               ("E-mail", _text(raw.get("email")) if raw.get("email") else "")),
          )))
          if x), "monoB"),
-         Spacer(1, 4),
+         Spacer(1, 24),
          p("Potpis stranke: ________________________"),
-         Spacer(1, 5),
+         Spacer(1, 14),
          p(f"Potpis službenika{sluzbenik}: ______________________"),
          p("M. P.", "right"),
         ],
@@ -575,8 +594,8 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
     story.append(p("IZJAVE I USLOVI PUTOVANJA", "section"))
     for clause in legal_clauses(agencija.get("naziv") or agencija.get("poslovno_ime") or "",
                                 _rok_placanja(raw),
-                                agencija.get("lice_reklamacije") or ""):
+                                agencija.get("lice_reklamacije") or "",
+                                delimicno=str(raw.get("nacin_placanja") or "").strip() == "delimicno"):
         story.append(Paragraph(clause, styles["legal"]))
-    story.append(p(f"Mesto i datum: {agencija.get('mesto') or '—'}, {_text(ugovor.get('datum_izdavanja') or raw.get('danas'))}      Ugovor je punovažan bez potpisa i pecata.", "small"))
     doc.build(story)
     return doc_out.getvalue()

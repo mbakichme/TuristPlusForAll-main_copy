@@ -286,11 +286,12 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
                 <div
                   className={cn(
                     "overflow-hidden transition-all duration-200",
-                    !dnevniOpen ? "max-h-0 opacity-0" : "max-h-24 opacity-100"
+                    !dnevniOpen ? "max-h-0 opacity-0" : "max-h-40 opacity-100"
                   )}
                 >
                   <div className="pl-6">
                     <NavItem to="/pregledi/dnevni-izvestaji/prodaja-aranzmana" icon={ShoppingBag} label="Prodaja aranžmana" collapsed={collapsed} onClick={onNavClick} />
+                    <NavItem to="/pregledi/dnevni-izvestaji/uplate" icon={Receipt} label="Pregled uplata" collapsed={collapsed} onClick={onNavClick} />
                   </div>
                 </div>
               </>
@@ -686,11 +687,12 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <div
                     className={cn(
                       "overflow-hidden transition-all duration-200",
-                      !dnevniOpen ? "max-h-0 opacity-0" : "max-h-24 opacity-100"
+                      !dnevniOpen ? "max-h-0 opacity-0" : "max-h-40 opacity-100"
                     )}
                   >
                     <div className="pl-6">
                       <NavItem to="/pregledi/dnevni-izvestaji/prodaja-aranzmana" icon={ShoppingBag} label="Prodaja aranžmana" collapsed={false} onClick={closeMobile} />
+                      <NavItem to="/pregledi/dnevni-izvestaji/uplate" icon={Receipt} label="Pregled uplata" collapsed={false} onClick={closeMobile} />
                     </div>
                   </div>
                 </div>

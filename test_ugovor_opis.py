@@ -57,7 +57,7 @@ class OpisZaUgovorTests(unittest.TestCase):
     def test_given_datumod_and_agency_then_payment_line_and_agency_name_are_rendered(self):
         text = self._text_for(None)
         # datumod 02.07.2026 → plaćanje do 02.06.2026.; naziv agencije iz podešavanja (agency dict)
-        self.assertIn("PLAĆANJE 100.00% DO 02.06.2026.", text)
+        self.assertIn("PLAĆANJE 40.00% ODMAH, OSTATAK DO 02.06.2026.", text)
         self.assertIn('"Agencija Čačak"', text)
 
 

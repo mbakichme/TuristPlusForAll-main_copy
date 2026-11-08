@@ -40,7 +40,7 @@ LABELE = {
     "smer": "Smer", "tiprezervacije": "Tip rezervacije", "subagent": "Subagent",
     "timelimit": "Time limit", "mesto": "Mesto", "naziv": "Smeštaj",
     "smestaj_id": "Smeštaj (ID)", "soba": "Soba", "destinacija": "Destinacija",
-    "apartman": "Struktura", "datumod": "Datum od", "datumdo": "Datum do",
+    "apartman": "Struktura", "opis": "Opis sobe", "gde": "Struktura virtuelne sobe", "datumod": "Datum od", "datumdo": "Datum do",
     "datumoddo": "Period", "napomena": "Napomena", "napomena1": "Napomena interna",
     "ulazak": "Ulazak", "nacin_placanja": "Način plaćanja", "mesto_izlaska": "Mesto izlaska", "cenaaranz": "Smeštaj cena (EUR)",
     "kolaranz": "Smeštaj količina (EUR)", "cenaaranzd": "Smeštaj cena (RSD)",

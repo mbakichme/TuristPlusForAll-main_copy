@@ -190,7 +190,7 @@ export default function DashboardPage() {
         )}
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <button
           type="button"
           onClick={() => navigate("/prodaja/pretraga")}
@@ -229,6 +229,19 @@ export default function DashboardPage() {
             <span className="text-lg font-semibold text-orange-800">Rezervacije</span>
           </span>
           <p className="text-xs text-orange-700/80 mt-2">Nova rezervacija ili izmena postojeće</p>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/knjigovodstvo/ugovori")}
+          className="text-left rounded-xl border border-violet-200 bg-violet-50 p-5 hover:bg-violet-100 transition-colors"
+        >
+          <span className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-white">
+              <FileText className="w-5 h-5" />
+            </span>
+            <span className="text-lg font-semibold text-violet-800">Ugovori</span>
+          </span>
+          <p className="text-xs text-violet-700/80 mt-2">Rezervacije, predrezervacije i storno</p>
         </button>
       </div>
 

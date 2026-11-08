@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import type { UgovorRow, UgovoriResponse } from "../types";
 import { apiFetch } from "../lib/api";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageLoader } from "@/components/PageLoader";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -34,12 +35,26 @@ const emptyFilters = (): Record<string, string> => Object.fromEntries(FILTER_COL
 
 const BATCH_SIZE = 100;
 
+// Tabovi: grupa po aranzman.tiprezervacije (REZERVACIJE = sve osim PREDREZERVACIJA i STORNO)
+type TipTab = "rezervacije" | "predrezervacija" | "storno";
+const TABOVI: { key: TipTab; label: string; boja: string }[] = [
+  { key: "rezervacije", label: "REZERVACIJE", boja: "data-[state=active]:bg-blue-600" },
+  { key: "predrezervacija", label: "PREDREZERVACIJA", boja: "data-[state=active]:bg-amber-500" },
+  { key: "storno", label: "STORNO", boja: "data-[state=active]:bg-red-600" },
+];
+const jeTipTab = (v: string | null): v is TipTab =>
+  v === "rezervacije" || v === "predrezervacija" || v === "storno";
+
 const fmtRSD = (v: number | null | undefined) =>
   v == null ? "—" : new Intl.NumberFormat("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) + " RSD";
 
 
 export default function UgovoriPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tip: TipTab = jeTipTab(tabParam) ? tabParam : "rezervacije";
+  const [poTipu, setPoTipu] = useState<Record<TipTab, number> | null>(null);
   const [rows, setRows] = useState<UgovorRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -53,6 +68,7 @@ export default function UgovoriPage() {
   const [more, setMore] = useState(false);
   const requestId = useRef(0);
   const hasMoreRef = useRef(true);
+  const replaceInFlight = useRef(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Debounce unosa pretrage
@@ -68,16 +84,20 @@ export default function UgovoriPage() {
   }, [filterInput]);
 
   const loadBatch = useCallback(async (
-    p: number, replace: boolean, s: string, sk: string, d: string, f: Record<string, string>
+    p: number, replace: boolean, s: string, sk: string, d: string, f: Record<string, string>, t: TipTab
   ) => {
+    // Dok traje učitavanje prve strane (npr. posle promene taba) ne dovlači sledeće —
+    // inače bi novi requestId poništio odgovor prve strane.
+    if (!replace && replaceInFlight.current) return;
     const rid = ++requestId.current;
-    if (replace) setLoading(true); else setMore(true);
+    if (replace) { replaceInFlight.current = true; setLoading(true); } else setMore(true);
     try {
       const params = new URLSearchParams({
         page: String(p),
         page_size: String(BATCH_SIZE),
         sort: sk,
         dir: d,
+        tip: t,
       });
       if (s) params.set("search", s);
       for (const [k, v] of Object.entries(f)) {
@@ -88,12 +108,14 @@ export default function UgovoriPage() {
       if (rid !== requestId.current) return; // zastareo odgovor — preskoči
       setRows((prev) => (replace ? data.rows : [...prev, ...data.rows]));
       setTotal(data.total);
+      if (data.po_tipu) setPoTipu(data.po_tipu);
       setPage(data.page);
       hasMoreRef.current = data.rows.length >= BATCH_SIZE;
     } catch {
       toast.error("Greška pri učitavanju ugovora");
     } finally {
       if (rid === requestId.current) {
+        replaceInFlight.current = false;
         setLoading(false);
         setMore(false);
       }
@@ -102,8 +124,19 @@ export default function UgovoriPage() {
 
   // Prvo učitavanje i reload na promenu pretrage/sortiranja/filtera
   useEffect(() => {
-    loadBatch(1, true, search, sort, dir, filters);
-  }, [search, sort, dir, filters, loadBatch]);
+    loadBatch(1, true, search, sort, dir, filters, tip);
+  }, [search, sort, dir, filters, tip, loadBatch]);
+
+  function promeniTab(v: string) {
+    if (!jeTipTab(v) || v === tip) return;
+    setRows([]);
+    hasMoreRef.current = true;
+    setSearchParams((prev) => {
+      const n = new URLSearchParams(prev);
+      n.set("tab", v);
+      return n;
+    }, { replace: true });
+  }
 
   function toggleSort(key: string) {
     if (sort === key) {
@@ -115,7 +148,7 @@ export default function UgovoriPage() {
   }
 
   function refresh() {
-    loadBatch(1, true, search, sort, dir, filters);
+    loadBatch(1, true, search, sort, dir, filters, tip);
   }
 
   // Infinite scroll — učitaj sledeću seriju kad se sentinel pojavi u viewportu
@@ -125,14 +158,14 @@ export default function UgovoriPage() {
     const io = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && !loading && !more && hasMoreRef.current) {
-          loadBatch(page + 1, false, search, sort, dir, filters);
+          loadBatch(page + 1, false, search, sort, dir, filters, tip);
         }
       },
       { rootMargin: "600px" }
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [page, loading, more, search, sort, dir, filters, loadBatch]);
+  }, [page, loading, more, search, sort, dir, filters, tip, loadBatch]);
 
   const shown = rows.length;
 
@@ -148,10 +181,27 @@ export default function UgovoriPage() {
         </Button>
       </div>
 
+      <Tabs value={tip} onValueChange={promeniTab}>
+        <TabsList className="h-11 gap-1 p-1">
+          {TABOVI.map((t) => (
+            <TabsTrigger
+              key={t.key}
+              value={t.key}
+              className={cn("h-9 px-5 text-sm font-semibold gap-2 data-[state=active]:text-white", t.boja)}
+            >
+              {t.label}
+              <span className="rounded-full bg-black/10 px-2 py-0.5 text-xs font-medium tabular-nums">
+                {poTipu ? poTipu[t.key].toLocaleString("sr-RS") : "…"}
+              </span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
       <Card>
         <CardHeader className="p-3 pb-2 space-y-1">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <FileText className="w-4 h-4" />Ugovori
+            <FileText className="w-4 h-4" />{TABOVI.find((t) => t.key === tip)?.label}
           </CardTitle>
           <CardDescription className="text-xs">
             Ukupno: <span className="font-semibold text-foreground">{total.toLocaleString("sr-RS")}</span> zapisa
@@ -227,7 +277,7 @@ export default function UgovoriPage() {
                 ) : rows.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={COLUMNS.length} className="text-center text-muted-foreground py-10">
-                      {search ? "Nema rezultata za pretragu" : "Nema ugovora. Koristite stranicu preuzimanje_podataka da uvezete ugovore."}
+                      {search ? "Nema rezultata za pretragu" : "Nema ugovora."}
                     </TableCell>
                   </TableRow>
                 ) : (

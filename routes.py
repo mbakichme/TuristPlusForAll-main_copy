@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Optional, List
 from urllib.parse import quote
 
-from fastapi import FastAPI, APIRouter, Request, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, APIRouter, Request, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -37,6 +37,7 @@ from banke_api import init_banke, register_banke
 from notifikacije_api import init_notifikacije, register_notifikacije
 from profil_api import init_profil, register_profil
 from dashboard_api import register_dashboard
+from obracun_po_aranzmanu import init_obracun_po_aranzmanu, obracun_iz_rezervacije, varijante_cene
 from rezervacija_log import (
     OBLAST_OBRACUN, OBLAST_SAPUTNICI, OBLAST_UPLATA, OBLAST_REZERVACIJA,
     diff_saputnike, init_rezervacija_log, log_user, norm_vrednost,
@@ -1511,6 +1512,15 @@ class RezTransferStavka(BaseModel):
     eur: float
 
 
+class RezObracunIzbor(BaseModel):
+    # varijanta sobe izabrana u „PROVERI OBRAČUN“ — upisuje se samo u obracun_po_aranzmanu
+    # (soba_cenovnik, struktura za koeficijent); iznos ide kroz polje Cena smeštaja
+    broj_sobe: str
+    struktura: str = ""
+    # prevoz izabrane opcije (True = sa prevozom/autobuski); None = prema ow/rt iz forme
+    prevoz: Optional[bool] = None
+
+
 class RezervacijaIn(BaseModel):
     tiprezervacije: str = ""
     subagent: Optional[str] = None  # naziv iz tabele subagenti (aranzman.subagent)
@@ -1529,6 +1539,8 @@ class RezervacijaIn(BaseModel):
     nacinPlacanja: str = ""
     # TRANSFER stavke dodatnih usluga (po mestu ulaska). None = ne diraj; lista = zameni sve TRANSFER redove.
     transferi: Optional[list[RezTransferStavka]] = None
+    # varijanta izabrana u PROVERI OBRAČUN (None = obračun po formi)
+    obracunIzbor: Optional[RezObracunIzbor] = None
 
 # ─── Boje grafik ───────────────────────────────────────────────────────────
 DOZVOLJENE_BOJE = ("zelena", "plava", "crvena", "zuta", "ljubicasta", "narandzasta", "crna", "roze")
@@ -1798,6 +1810,40 @@ def get_current_user(request: Request):
         raise HTTPException(status_code=401, detail="Nevalidan token")
 
 
+def _obracun_argumenti(body, vals: dict) -> dict:
+    """Argumenti za obracun_iz_rezervacije iz forme i vrednosti koje idu u aranzman."""
+    uzrasti = [body.nosilac.uzrast] + [s.uzrast for s in body.saputnici if (s.ime or "").strip()]
+    # prefill iz Grafika/Pretrage postavlja samo količinu (broj osoba), ne i listu saputnika:
+    # ako je količina veća od unetih putnika, višak se broji kao ADL
+    kol = int(round(float(vals.get("kolaranz") or 0)))
+    if kol > len(uzrasti):
+        uzrasti += ["ADL"] * (kol - len(uzrasti))
+    iznos = None
+    if vals.get("cenaaranz") is not None and vals.get("kolaranz") is not None:
+        iznos = round(float(vals["cenaaranz"]) * float(vals["kolaranz"]), 2)
+    soba_broj = vals.get("soba")
+    struktura = vals.get("gde") or vals.get("apartman")
+    # varijanta izabrana u PROVERI OBRAČUN: obračun (soba_cenovnik, koeficijent) ide po njoj,
+    # a Rezervacija (soba, apartman, gde) ostaje kakva jeste
+    prevoz = bool(body.nosilac.ow or body.nosilac.rt)
+    if body.obracunIzbor is not None:
+        soba_broj = body.obracunIzbor.broj_sobe
+        struktura = body.obracunIzbor.struktura or struktura
+        if body.obracunIzbor.prevoz is not None:
+            prevoz = body.obracunIzbor.prevoz
+    return {
+        "smestaj_id": body.boravak.smestajId,
+        "soba_broj": soba_broj,
+        # koeficijent se traži za strukturu virtuelne sobe (gde), inače za sobe.tip (apartman)
+        "struktura": struktura,
+        "uzrasti": uzrasti,
+        "prevoz": prevoz,
+        "iznos_eur": iznos,
+        "datumod": vals.get("datumod"),
+        "datumdo": vals.get("datumdo"),
+    }
+
+
 def create_app(static_dir: str) -> FastAPI:
     engine = get_engine()
     init_db(engine)
@@ -1813,7 +1859,7 @@ def create_app(static_dir: str) -> FastAPI:
     init_banke(engine)
     init_notifikacije(engine)
     init_rezervacija_log(engine)
-    init_profil(engine)
+    init_obracun_po_aranzmanu(engine)
 
     api = APIRouter()
     register_cenovnici(api, engine, get_current_user)
@@ -3079,6 +3125,17 @@ def create_app(static_dir: str) -> FastAPI:
                         "cenovnik_id": cen["id"] if cen else None})
         return out
 
+    @api.get("/obracun/varijante-cene")
+    def obracun_varijante_cene(smestaj_id: int, soba_id: int, datumod: SubDate, datumdo: SubDate,
+                               adl: int = 0, chd: int = 0, inf: int = 0,
+                               _: dict = Depends(get_current_user)):
+        if datumdo <= datumod:
+            raise HTTPException(status_code=400, detail="datumdo mora biti posle datumod")
+        if min(adl, chd, inf) < 0 or adl + chd + inf == 0:
+            raise HTTPException(status_code=400, detail="Unesite bar jednog putnika")
+        with engine.connect() as conn:
+            return varijante_cene(conn, smestaj_id, soba_id, datumod, datumdo, adl, chd, inf)
+
     @api.get("/slobodne-sobe")
     def slobodne_sobe(request: Request, _: dict = Depends(get_current_user)):
         q = dict(request.query_params)
@@ -3096,6 +3153,9 @@ def create_app(static_dir: str) -> FastAPI:
         sopstveni = prevoz_raw.startswith("sopstveni")
         # postojeći ugovor (obračun/promena plaćanja u Rezervaciji): njegova soba se ne broji kao zauzeta
         iskl = (q.get("iskluci_kljuc") or "").strip() or None
+        # opcioni filter na jedan smeštaj (Grafik popup): obračun se računa samo za njega
+        smestaj_raw = (q.get("smestaj_id") or "").strip()
+        smestaj_filter = int(smestaj_raw) if smestaj_raw.isdigit() else None
         if not od:
             raise HTTPException(status_code=400, detail="datum_od je obavezan")
         try:
@@ -3181,6 +3241,8 @@ def create_app(static_dir: str) -> FastAPI:
                 if d_do <= d_od:
                     raise HTTPException(status_code=400, detail="Datum do mora biti posle datuma od")
                 smestaji = _smestaji_za_termin(conn, d_od, d_do, iskl)
+                if smestaj_filter is not None:
+                    smestaji = [g for g in smestaji if g["smestaj_id"] == smestaj_filter]
                 # smeštaj koji ne prima decu ispod N godina: ako neko od dece
                 # putnika ima manje od N, smeštaj se ne nudi (DA ili nedefinisane
                 # godine ne utiču na pretragu)
@@ -3549,198 +3611,6 @@ def create_app(static_dir: str) -> FastAPI:
             raise HTTPException(status_code=404, detail="Datum nije pronađen")
         return {"ok": True}
 
-    # ── Knjigovodstvo: preuzimanje ugovora ──────────────────────────────────
-    ARANZMAN_INT = {
-        "prevozow", "prevozrt", "viza", "kolviza", "kolow", "kolrt",
-        "legal", "avioid", "avioid1", "avioid4", "keptp",
-    }
-    # Kolone prebačene u aranzman_dopuna (saputnik po redu)
-    ARANZMAN_DOPUNA_STR = {"saputnik", "uzrast", "ulazak", "smer"}
-    ARANZMAN_DOPUNA_INT = {"prevozow", "prevozrt", "viza"}
-    MOVED_COLS_RE = re.compile(
-        r"^(saputnik\d+|uzrast\d+|ulazak\d+|prevoz\d+(ow|rt)|viza\d+)$"
-    )
-    ARANZMAN_FLOAT = {
-        "procenatar", "procenatpr", "procenatpra", "procenatvi",
-        "cenaviza", "cenaow", "cenadow", "cenart", "cenadrt",
-        "cenachd", "cenaaranz", "cenaaranzd", "kolchd", "kolaranz",
-        "cenadod", "koldod", "popustar", "popustpr", "popustvi",
-        "uplaceno", "uplacenod", "uplatasmestaj", "uplataprevoz",
-        "uplataviza", "osiguranje", "osiguranje1",
-        "helas1", "helas2", "helas3", "helas4", "helas5",
-        "iznosfiskalni", "bod",
-    }
-    ARANZMAN_TS = {
-        "danas", "datumod", "datumdo", "spajanje1od", "spajanje1do",
-        "spajanje2od", "spajanje2do", "timelimit", "datumkeptp", "datumfiskalni",
-    }
-    ARANZMAN_INT_NULLABLE = {"avioid", "avioid1", "avioid4", "keptp"}
-    ARANZMAN_FLOAT_NULLABLE = {"bod"}
-
-    @api.get("/preuzimanje_podataka/{broj:path}")
-    def preuzmi_ugovor(broj: str, _: dict = Depends(get_current_user)):
-        broj = broj.strip().strip("/")
-        if not broj:
-            raise HTTPException(status_code=400, detail="Broj ugovora je obavezan")
-        import httpx
-        from urllib.parse import quote
-        url = f"http://188.255.223.36/api/uplatejson.php?ugovor={quote(broj.split('/')[0], safe='')}"
-        try:
-            resp = httpx.get(url, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Greška pri preuzimanju podataka: {e}")
-        if not data.get("success"):
-            raise HTTPException(status_code=404, detail=data.get("message") or "Ugovor nije pronađen")
-
-        def conv_int(col, v):
-            if v in (None, ""):
-                return None if col in ARANZMAN_INT_NULLABLE else 0
-            try:
-                return int(float(v))
-            except (TypeError, ValueError):
-                return None if col in ARANZMAN_INT_NULLABLE else 0
-
-        def conv_float(col, v):
-            if v in (None, ""):
-                return None if col in ARANZMAN_FLOAT_NULLABLE else 0.0
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                return None if col in ARANZMAN_FLOAT_NULLABLE else 0.0
-
-        def conv_ts(v):
-            if v in (None, ""):
-                return None
-            return str(v).strip() or None
-
-        def conv_str(v):
-            if v is None:
-                return None
-            return str(v)
-
-        def dopuna_iz_rec(rec: dict) -> list[dict]:
-            """Izvuči saputnike (saputnik1..N) iz zapisa eksternog API-ja u redove."""
-            redovi = []
-            for i in range(1, 21):
-                if not any(
-                    k in rec for k in
-                    (f"saputnik{i}", f"uzrast{i}", f"prevoz{i}ow",
-                     f"prevoz{i}rt", f"viza{i}", f"ulazak{i}")
-                ):
-                    break
-                def s(k):
-                    v = rec.get(k)
-                    return str(v).strip() if v is not None else ""
-                def n(k):
-                    v = rec.get(k)
-                    if v in (None, ""):
-                        return None
-                    try:
-                        return int(float(v))
-                    except (TypeError, ValueError):
-                        return None
-                saputnik = s(f"saputnik{i}")
-                uzrast = s(f"uzrast{i}")
-                prevozow, prevozrt, viza = n(f"prevoz{i}ow"), n(f"prevoz{i}rt"), n(f"viza{i}")
-                ulazak = s(f"ulazak{i}")
-                # preskoči potpuno prazne saputnike (samo nule/prazno)
-                if not saputnik and not uzrast and not ulazak \
-                        and not prevozow and not prevozrt and not viza:
-                    continue
-                redovi.append({
-                    "saputnik": saputnik, "uzrast": uzrast,
-                    "prevozow": prevozow, "prevozrt": prevozrt,
-                    "viza": viza, "ulazak": ulazak or None,
-                })
-            return redovi
-
-        with engine.begin() as conn:
-            aranzmani = data.get("aranzman") or []
-            for rec in aranzmani:
-                dopuna = dopuna_iz_rec(rec)
-                # polja saputnika (saputnik1, uzrast1, prevoz1ow, viza1, ulazak1...)
-                # prebačena su u aranzman_dopuna — ne idu više u aranzman
-                cols = [k for k in rec.keys()
-                        if k != "id" and not MOVED_COLS_RE.match(k)]
-                if not cols:
-                    continue
-                vals = {}
-                for c in cols:
-                    v = rec[c]
-                    if c in ARANZMAN_INT:
-                        vals[c] = conv_int(c, v)
-                    elif c in ARANZMAN_FLOAT:
-                        vals[c] = conv_float(c, v)
-                    elif c in ARANZMAN_TS:
-                        vals[c] = conv_ts(v)
-                    else:
-                        vals[c] = conv_str(v)
-                if not vals.get("kljuc"):
-                    vals["kljuc"] = broj.split("/")[0]
-                # uvek upiši kljuc u formatu <broj>/<godina> (npr. 33333/26)
-                if "/" in broj:
-                    vals["kljuc"] = broj
-                else:
-                    vals["kljuc"] = f"{broj}/26"
-                if "kljuc" not in cols:
-                    cols.append("kljuc")
-                col_sql = ", ".join(cols)
-                ph_sql = ", ".join(f":{c}" for c in cols)
-                upd_sql = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != "kljuc")
-                aid = conn.execute(text(
-                    f"INSERT INTO aranzman ({col_sql}) VALUES ({ph_sql}) "
-                    f"ON CONFLICT (kljuc) DO UPDATE SET {upd_sql} "
-                    f"RETURNING id"
-                ), vals).scalar_one()
-                # saputnici: osveži redove u aranzman_dopuna
-                if dopuna or rec.get("saputnik1") is not None:
-                    conn.execute(text(
-                        "DELETE FROM aranzman_dopuna WHERE aranzman_id = :i"
-                    ), {"i": aid})
-                    for red in dopuna:
-                        conn.execute(text("""
-                            INSERT INTO aranzman_dopuna
-                                (aranzman_id, saputnik, uzrast, prevozow, prevozrt, viza, ulazak)
-                            VALUES (:i, :saputnik, :uzrast, :prevozow, :prevozrt, :viza, :ulazak)
-                        """), {"i": aid, **red})
-
-            uplate = data.get("uplate") or []
-            for rec in uplate:
-                if rec.get("id") in (None, "") or rec.get("kljuc") in (None, ""):
-                    continue
-                cols = []
-                vals = {}
-                for k, v in rec.items():
-                    if k in ("id", "kljuc"):
-                        try:
-                            vals[k] = int(float(v))
-                            cols.append(k)
-                        except (TypeError, ValueError):
-                            continue
-                    elif k in ("din", "evro", "uevro"):
-                        try:
-                            vals[k] = None if v in (None, "") else float(v)
-                            cols.append(k)
-                        except (TypeError, ValueError):
-                            vals[k] = None
-                            cols.append(k)
-                    else:
-                        vals[k] = conv_str(v)
-                        cols.append(k)
-                if not cols or "kljuc" not in cols or "id" not in cols:
-                    continue
-                col_sql = ", ".join(cols)
-                ph_sql = ", ".join(f":{c}" for c in cols)
-                upd_sql = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != "kljuc")
-                conn.execute(text(
-                    f"INSERT INTO uplate ({col_sql}) VALUES ({ph_sql}) "
-                    f"ON CONFLICT (kljuc) DO UPDATE SET {upd_sql}"
-                ), vals)
-
-        return {"ok": True, "aranzman": len(aranzmani), "uplate": len(uplate)}
-
     # ── Knjigovodstvo: lista ugovora (server-side search/sort/pagination) ───
     UGOVORI_SORT = {"kljuc", "danas", "putnik", "mesto", "naziv", "datumod", "datumdo", "subagent"}
     UGOVORI_SEARCH_COLS = [
@@ -3855,10 +3725,12 @@ def create_app(static_dir: str) -> FastAPI:
         sum_naplata = 0.0
         sum_provizija = 0.0
         sum_putnika = 0
+        dodatni_mapa = dodatni_za_ugovori([r._mapping.get("kljuc") for r in rows])
         for r in rows:
             row = dict(r._mapping)
-            calc = calc_ugovor_values(row, dodatni_za_ugovor(row.get("kljuc")))
+            calc = calc_ugovor_values(row, dodatni_mapa.get(str(row.get("kljuc") or "").strip().strip("/"), []))
             provizija = calc["provizija"]
+            naplata = calc["naplata"]
             sum_naplata += naplata
             sum_provizija += provizija
             bp = int(row.get("broj_putnika") or 0)
@@ -3896,6 +3768,69 @@ def create_app(static_dir: str) -> FastAPI:
                 "provizija": round(sum_provizija, 2),
                 "ukupno_eur": ukupno_eur,
                 "ukupno_din": round(ukupno_eur * kurs, 2) if kurs else None,
+            },
+        }
+
+    @api.get("/pregledi/uplate")
+    def pregled_uplata(
+        datum: Optional[str] = None,
+        _: dict = Depends(get_current_user),
+    ):
+        """Dnevni pregled uplata — sve uplate čiji uplate.danas pada na izabrani dan."""
+        import datetime
+        d = None
+        if datum:
+            for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+                try:
+                    d = datetime.datetime.strptime(datum.strip(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+        if d is None:
+            d = datetime.date.today()
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT kljuc, to_char(danas, 'HH24:MI') AS vreme, id, faktura,
+                       ime, nacin, din, svrha, obradio, poslovnica
+                FROM uplate
+                WHERE danas::date = :d
+                ORDER BY danas NULLS LAST, kljuc
+            """), {"d": d}).mappings().fetchall()
+
+        kurs, _kurs_datum = get_eur_middle_za_datum(d.isoformat())
+        kurs_ok = bool(kurs) and math.isfinite(kurs) and kurs > 0
+        out = []
+        sum_din = 0.0
+        sum_eur = 0.0
+        for r in rows:
+            din = float(r["din"] or 0)
+            eur = round(din / kurs, 2) if kurs_ok else None
+            sum_din += din
+            if eur is not None:
+                sum_eur += eur
+            ugovor = str(r["faktura"] or "").strip() or str(r["id"] or "").strip()
+            out.append({
+                "kljuc": r["kljuc"],
+                "vreme": r["vreme"],
+                "ugovor": ugovor,
+                "ime": r["ime"],
+                "nacin": r["nacin"],
+                "svrha": r["svrha"],
+                "din": round(din, 2),
+                "eur": eur,
+                "obradio": r["obradio"],
+                "poslovnica": r["poslovnica"],
+            })
+
+        return {
+            "datum": d.strftime("%d.%m.%Y"),
+            "kurs": kurs if kurs_ok else None,
+            "rows": out,
+            "totals": {
+                "broj": len(out),
+                "din": round(sum_din, 2),
+                "eur": round(sum_eur, 2) if kurs_ok else None,
             },
         }
 
@@ -4172,9 +4107,11 @@ def create_app(static_dir: str) -> FastAPI:
         )
 
     @api.get("/ugovori/{kljuc:path}/cis-link")
-    def ugovor_cis_link(kljuc: str, _: dict = Depends(get_current_user)):
+    def ugovor_cis_link(kljuc: str, cena_eur: str | None = Query(None), _: dict = Depends(get_current_user)):
         """Link za CIS (e-dokumenti importData): podaci iz sačuvanog ugovora,
-        RGZ/JMBG/kod iz podešavanja agencije i programPutovanjaJID = mesto.cis."""
+        RGZ/JMBG/kod iz podešavanja agencije i programPutovanjaJID = mesto.cis.
+        cena_eur (opciono) = 'Ukupno aranžman (EUR)' sa ekrana rezervacije; bez nje se računa iz ugovora."""
+        cena_eur_ekran = cena_eur
         from urllib.parse import urlencode, quote
         import datetime as _dt
 
@@ -4236,13 +4173,19 @@ def create_app(static_dir: str) -> FastAPI:
         kurs = get_eur_middle()
         calc = calc_ugovor_values(dict(arow), dodatni_za_ugovor(arow.get("kljuc")))
         cena_eur = round(float(calc["naplata"]), 2)
+        if cena_eur_ekran not in (None, ""):
+            try:
+                vrednost = round(float(str(cena_eur_ekran).replace(",", ".")), 2)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Neispravna vrednost cene (EUR)")
+            cena_eur = vrednost
         cena_rsd = round(cena_eur * kurs, 2) if kurs else None
         od, do = arow.get("datumod"), arow.get("datumdo")
         noci = (do - od).days if od and do else 0
 
         params = [
             ("programPutovanjaJID", mesto_cis.strip()),
-            ("brojUgovora", kljuc_clean.split("/")[0]),
+            ("brojUgovora", kljuc_clean),
             ("putnici", str(len(putnici))),
         ]
         for i in range(8):
@@ -4264,7 +4207,7 @@ def create_app(static_dir: str) -> FastAPI:
             ("vrstaPrevozaSifra", str(vrsta_prevoza)),
             ("datumPocetka", od.date().isoformat() if od else ""),
             ("datumZavrsetka", do.date().isoformat() if do else ""),
-            ("gradOpstinaPolaska", _s(arow.get("mesto_izlaska")) or _s(arow.get("ulazak"))),
+            ("gradOpstinaPolaska", _s(arow.get("mesto_izlaska")) or _s(arow.get("ulazak")) or "BEOGRAD"),
             ("brojNocenja", str(noci)),
             ("brojDana", str(noci + 1)),
             ("vrstaUslugeSmestajaSifra", "1"),
@@ -5140,12 +5083,33 @@ def create_app(static_dir: str) -> FastAPI:
                 soba_broj = (r.broj_sobe or "").strip() or None
         if soba_broj is None:
             soba_broj = _rez_str(b.sobaBroj, 200)
-        # struktura: ako klijent nije poslao, uzmi tip izabrane sobe
-        struktura_val = (b.struktura or "").strip()
-        if not struktura_val and b.sobaId is not None:
-            r = conn.execute(text("SELECT TRIM(tip) AS tip FROM sobe WHERE id = :i"), {"i": b.sobaId}).fetchone()
-            if r and r.tip:
-                struktura_val = r.tip
+        # Smeštajna jedinica iz izabrane (stvarne) sobe: apartman = sobe.tip, opis = sobe.opis;
+        # gde = struktura VIRTUELNE sobe — Grafik/Pretraga šalju stvarnu sobu + strukturu
+        # izabranog reda cenovnika; ako je to dodatni koeficijent sobe (≠ sobe.tip),
+        # izabrana je virtuelna soba (npr. FLORA A v15-1 → soba 15, gde = 1/3).
+        # Soba van šifarnika (stari ugovor) → kolone se ne diraju.
+        smestajna_polja: dict = {}
+        if b.sobaId is not None:
+            srow = conn.execute(text(
+                "SELECT TRIM(COALESCE(tip, '')) AS tip, TRIM(COALESCE(opis, '')) AS opis FROM sobe WHERE id = :i"
+            ), {"i": b.sobaId}).fetchone()
+            if srow:
+                def _norm_str(v) -> str:
+                    return re.sub(r"\s+", "", v or "").upper()
+                struktura_val = (b.struktura or "").strip()
+                gde_val = None
+                if struktura_val and _norm_str(struktura_val) != _norm_str(srow.tip):
+                    for (k_str,) in conn.execute(text(
+                        "SELECT TRIM(struktura) FROM soba_koeficijenti WHERE soba_id = :i ORDER BY id"
+                    ), {"i": b.sobaId}).fetchall():
+                        if _norm_str(k_str) == _norm_str(struktura_val):
+                            gde_val = k_str[:200]
+                            break
+                smestajna_polja = {
+                    "apartman": srow.tip[:10] or None,
+                    "opis": srow.opis[:20] or None,
+                    "gde": gde_val,
+                }
 
         # obavezna provera zauzeća pre upisa (POST i PUT; PUT izuzima sebe)
         _rez_proveri_konflikt(conn, smestaj_naziv, soba_broj, datum_od, datum_do, exclude_kljuc)
@@ -5192,6 +5156,7 @@ def create_app(static_dir: str) -> FastAPI:
             "naziv": smestaj_naziv,
             "smestaj_id": smestaj_id_val,
             "soba": soba_broj,
+            **smestajna_polja,
             "destinacija": destinacija_naziv,
             "destinacija_prevoz_id": destinacija_prevoz_id,
             "datumod": datetime(datum_od.year, datum_od.month, datum_od.day),
@@ -5272,6 +5237,7 @@ def create_app(static_dir: str) -> FastAPI:
                         f"INSERT INTO aranzman ({', '.join(cols)}) VALUES ({ph}) RETURNING id"
                     ), vals).scalar_one()
                     rez_saputnici_upisi(conn, aid, body.saputnici)
+                    obracun_iz_rezervacije(conn, aid, **_obracun_argumenti(body, vals))
                     if body.transferi:
                         rez_transferi_upisi(conn, kljuc, body.transferi)
                     uid, uime = log_user(conn, current_user)
@@ -5314,6 +5280,7 @@ def create_app(static_dir: str) -> FastAPI:
             conn.execute(text(f"UPDATE aranzman SET {sets} WHERE kljuc = :wk"),
                          {**vals, "wk": kljuc})
             rez_saputnici_upisi(conn, arow.id, body.saputnici)
+            obracun_iz_rezervacije(conn, arow.id, **_obracun_argumenti(body, vals))
             if body.transferi is not None:
                 rez_transferi_upisi(conn, kljuc, body.transferi)
             uid, uime = log_user(conn, current_user)
@@ -5688,6 +5655,9 @@ def create_app(static_dir: str) -> FastAPI:
             dodatni_popusti = conn.execute(text("""
                 SELECT id, naziv, eur, rsd, procenat FROM dodatni_popusti WHERE aranzman_id = :i ORDER BY id
             """), {"i": row.id}).mappings().all()
+            obr = conn.execute(text(
+                "SELECT soba_cenovnik, struktura, prevoz FROM obracun_po_aranzmanu WHERE aranzman_id = :i"
+            ), {"i": row.id}).fetchone()
         d = dict(row._mapping)
         dodatni_lista = dodatni_popusti_iznosi(d, [dict(p) for p in dodatni_popusti])
         subagent = None
@@ -5777,6 +5747,11 @@ def create_app(static_dir: str) -> FastAPI:
             "osiguranje1": d.get("osiguranje1"),
             "soba": d.get("soba"),
             "apartman": d.get("apartman"),
+            "opis": d.get("opis"),
+            "gde": d.get("gde"),
+            # varijanta iz PROVERI OBRAČUN (soba_cenovnik + struktura iz obračuna ugovora)
+            "obracun": {"soba_cenovnik": obr.soba_cenovnik, "struktura": obr.struktura,
+                        "prevoz": bool(obr.prevoz)} if obr else None,
             "napomena": d.get("napomena"),
             "napomena1": d.get("napomena1"),
             "obradio": d.get("obradio"),
@@ -5849,10 +5824,28 @@ def create_app(static_dir: str) -> FastAPI:
             if len(fval) >= 3:
                 conds.append(f"{fexpr} ILIKE :f_{fkey}")
                 bind[f"f_{fkey}"] = f"%{fval}%"
+
+        # Tabovi stranice Ugovori: tip = predrezervacija | storno | rezervacije (sve ostalo)
+        tip_expr = "UPPER(TRIM(COALESCE(a.tiprezervacije, '')))"
+        tip_grupa_expr = (
+            f"CASE WHEN {tip_expr} = 'PREDREZERVACIJA' THEN 'predrezervacija' "
+            f"WHEN {tip_expr} = 'STORNO' THEN 'storno' ELSE 'rezervacije' END"
+        )
+        where_bez_tipa = ("WHERE " + " AND ".join(conds)) if conds else ""
+        tip = (q.get("tip") or "").strip().lower()
+        if tip in ("predrezervacija", "storno", "rezervacije"):
+            conds.append(f"({tip_grupa_expr}) = :tip_grupa")
+            bind["tip_grupa"] = tip
         where = ("WHERE " + " AND ".join(conds)) if conds else ""
 
         with engine.connect() as conn:
             total = conn.execute(text(f"SELECT COUNT(*) FROM aranzman a {where}"), bind).scalar() or 0
+            bind_bez_tipa = {k: v for k, v in bind.items() if k != "tip_grupa"}
+            po_tipu = {"predrezervacija": 0, "storno": 0, "rezervacije": 0}
+            for g, c in conn.execute(text(
+                f"SELECT {tip_grupa_expr} AS g, COUNT(*) FROM aranzman a {where_bez_tipa} GROUP BY 1"
+            ), bind_bez_tipa).fetchall():
+                po_tipu[g] = int(c)
             rows = conn.execute(text(f"""
                 SELECT kljuc,
                        to_char(danas, 'DD.MM.YYYY') AS danas_fmt,
@@ -5906,6 +5899,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "ukupna_vrednost": row_ukupna(r),
             } for r in rows],
             "total": total,
+            "po_tipu": po_tipu,
             "page": page,
             "page_size": page_size,
         }

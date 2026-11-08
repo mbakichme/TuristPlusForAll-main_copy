@@ -18,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -42,7 +43,7 @@ import { PageLoader } from "@/components/PageLoader";
 import { PrebacivanjeUplatePopup } from "@/components/PrebacivanjeUplatePopup";
 
 // ── konstante ──────────────────────────────────────────────────────────────
-const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minute", "First minute"];
+const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minute", "First minute", "U jesen o letu", "Napolje zima u mislima leto", "Sajam", "Rođendan"];
 const SMER_OPCIJE = ["Polazak", "Povratak"];
 const NACIN_PLACANJA = ["Gotovina", "Kartica", "Ček", "Virman", "IPC", "Vaučer", "Ostalo"];
 const SVRHA_UPLATE = ["Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček", "Povraćaj"];
@@ -155,6 +156,27 @@ const datumZaInput = (v: string | null | undefined) => {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : "";
 };
 const brojUString = (v: number | null | undefined) => v == null ? "" : String(v);
+// Odgovor GET /obracun/varijante-cene: ponude po varijanti (sa prevozom / bez prevoza) za ceo boravak
+type PopustPonude = {
+  redni: number; tip_popusta: string; vazi: boolean; vrsta: string; umanjenje: number;
+  vazi_od: string | null; vazi_do: string | null; cena_snizena: number | null;
+};
+type PonudaCene = {
+  dostupno: boolean; razlog: string | null; tip_cene: string | null; koeficijent: number | null;
+  osnova: number | null; osnova_cenovnika: number | null; cena_jedinicna: number | null; korekcija_prevoza: number | null; cena: number | null;
+  termini: { datum_od: string; datum_do: string; cena: number }[];
+  popusti: PopustPonude[]; cena_konacna: number | null;
+};
+type VarijantaCene = {
+  soba_id: number; broj_sobe: string | null; struktura: string | null; opis: string; virtuelna: boolean;
+  ponude: { sa_prevozom: PonudaCene | null; bez_prevoza: PonudaCene | null };
+};
+type VarijanteOdgovor = { cenovnik_id: number | null; naziv: string | null; periodi: unknown[]; varijante: VarijantaCene[] };
+// primenjena varijanta; kljuc = smeštaj|soba|od|do u trenutku izbora
+type ObracunIzbor = { broj_sobe: string; struktura: string; prevoz: boolean; kljuc: string };
+const kljucBoravka = (b: { smestaj: string; soba: string; datumOd: string; datumDo: string }) =>
+  `${b.smestaj}|${b.soba}|${b.datumOd}|${b.datumDo}`;
+const normStruktura = (v: string | null | undefined) => (v ?? "").replace(/\s+/g, "").toUpperCase();
 // destinacija prevoza iz ugovora → id (string) za Select; legacy red bez id-ja: traži po nazivu
 const dpIdIzUgovora = (lista: DestinacijaPrevoz[], id: number | null | undefined, naziv: string | null | undefined) => {
   if (id != null) return String(id);
@@ -711,6 +733,8 @@ export default function RezervacijePage() {
   const [izborUcitava, setIzborUcitava] = useState(false);
   const [izabraniUgovor, setIzabraniUgovor] = useState<string | null>(null);
   const [ucitanUgovor, setUcitanUgovor] = useState<UgovorDetail | null>(null);
+  /** Soba (sobe.id) sačuvana na učitanom ugovoru — za opis/tip u zaglavlju „Ugovor“ */
+  const [sobaUgovoraId, setSobaUgovoraId] = useState<number | null>(null);
   const navigate = useNavigate();
   const aktivniUgovor = useRef<string | null>(null);
   // sinhronizacija ref-a: async tokovi (potvrda uplate, keptp) proveravaju da li je ugovor još izabran
@@ -1013,7 +1037,14 @@ export default function RezervacijePage() {
       dodatneSesija.current += 1; // nova sesija liste dodatnih stavki
       const novoMesto = mestoId ? String(mestoId) : (d.mesto ?? "").trim() ? CUVAR : "";
       mestoUgovoraRef.current = novoMesto || null; // destinacija se ne veže ponovo dok se mesto ne promeni
-      setBoravak({ datumOd: datumZaInput(d.datumod), datumDo: datumZaInput(d.datumdo), smestaj: smestajId ? String(smestajId) : (d.naziv ?? "").trim() ? CUVAR : "", soba: sobaId ? String(sobaId) : (d.soba ?? "").trim() ? CUVAR : "", mesto: novoMesto, struktura: d.apartman ?? "", promenaStrukture: "", viza: Number(d.viza) === 1, napomena: d.napomena ?? "", napomenaInterna: d.napomena1 ?? "", napomenaPrevoz: d.napomena_prevoz ?? "" });
+      const novoBoravak = { datumOd: datumZaInput(d.datumod), datumDo: datumZaInput(d.datumdo), smestaj: smestajId ? String(smestajId) : (d.naziv ?? "").trim() ? CUVAR : "", soba: sobaId ? String(sobaId) : (d.soba ?? "").trim() ? CUVAR : "", mesto: novoMesto, struktura: (d.gde ?? "").trim() || (d.apartman ?? ""), promenaStrukture: "", viza: Number(d.viza) === 1, napomena: d.napomena ?? "", napomenaInterna: d.napomena1 ?? "", napomenaPrevoz: d.napomena_prevoz ?? "" };
+      setBoravak(novoBoravak);
+      // sačuvana varijanta iz PROVERI OBRAČUN: vraća se samo ako se obračun razlikuje od forme (soba/struktura/prevoz)
+      const obr = d.obracun;
+      const formaPrevoz = !!d.prevozow || !!d.prevozrt;
+      const varijantaSacuvana = !!obr?.soba_cenovnik && !!obr.struktura &&
+        (normStruktura(obr.soba_cenovnik) !== normStruktura(d.soba) || normStruktura(obr.struktura) !== normStruktura(novoBoravak.struktura) || obr.prevoz !== formaPrevoz);
+      setObracunIzbor(varijantaSacuvana && obr ? { broj_sobe: obr.soba_cenovnik ?? "", struktura: obr.struktura ?? "", prevoz: !!obr.prevoz, kljuc: kljucBoravka(novoBoravak) } : null);
       // način plaćanja iz baze (promena se kasnije potvrđuje dijalogom)
       setPlacanje(d.nacin_placanja === "delimicno" || d.nacin_placanja === "u_celosti" ? d.nacin_placanja : "");
       setPlacanjeZahtev(null);
@@ -1037,6 +1068,7 @@ export default function RezervacijePage() {
       setUplata({ uplatilac: "nosilac", ...UPLATA_PODRAZUMEVANO, iznos: "" });
       setIzabraniUgovor(d.kljuc);
       setUcitanUgovor(d);
+      setSobaUgovoraId(sobaId || null);
       void osveziKeptp(d.kljuc);
       setIzmena(false); // učitavam postojeći ugovor → polja zaključana do klika na „Izmeni“
       setBoravakOtkljucan(false);
@@ -1128,14 +1160,14 @@ export default function RezervacijePage() {
         popustSmestaj: !popustPct && popust && Number(popust) > 0 ? popust : "",
       }));
     }
+    // Prevoz iz Grafika: autobuski → RT za nosioca i sve saputnike (štiklira se i bez odrasli/cene); sopstveni → SP
     const prevozParam = searchParams.get("prevoz");
-    if (Number.isFinite(odrasli) && odrasli >= 1) {
-      const rt = prevozParam === "autobuski";
-      const sp = prevozParam === "sopstveni";
-      setNosilac((prev) => ({ ...prev, rt, sp, ow: false }));
-      const brojSaputnika = Math.max(0, odrasli + deca - 1);
-      setSaputnici(Array.from({ length: brojSaputnika }, () => ({ ...prazanSaputnik(`s${++uidRef.current}`), rt, sp })));
-    }
+    const rt = prevozParam === "autobuski";
+    const sp = prevozParam === "sopstveni";
+    setNosilac((prev) => ({ ...prev, rt, sp, ow: false }));
+    // svi putnici iz linka (nosilac + odrasli + deca) dobijaju isti prevoz, bez obzira na uzrast
+    const brojPutnika = (Number.isFinite(odrasli) && odrasli >= 1 ? odrasli : 1) + deca;
+    setSaputnici(Array.from({ length: Math.max(0, brojPutnika - 1) }, () => ({ ...prazanSaputnik(`s${++uidRef.current}`), rt, sp })));
     // Primena samo pri promeni parametara linka, tek nakon referentnih podataka.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noviIzLinka, referenceSpremne, ugovorIzLinka, searchParams]);
@@ -1144,6 +1176,61 @@ export default function RezervacijePage() {
     () => sobe.filter((s) => String(s.veza_id_smestaj) === boravak.smestaj),
     [sobe, boravak.smestaj],
   );
+  // Izabrana soba u „Boravak i smeštaj“ (opis prati izbor) i soba učitanog ugovora (zaglavlje)
+  const izabranaSoba = useMemo(
+    () => (boravak.soba && boravak.soba !== CUVAR ? sobe.find((s) => String(s.id) === boravak.soba) ?? null : null),
+    [sobe, boravak.soba],
+  );
+  const sobaUgovora = useMemo(
+    () => (sobaUgovoraId ? sobe.find((s) => s.id === sobaUgovoraId) ?? null : null),
+    [sobe, sobaUgovoraId],
+  );
+  // Zaglavlje obračuna: soba čuvanog ugovora kad je izabrano „sačuvano“, inače izabrana soba
+  const sobaZaPrikaz = izabranaSoba ?? (boravak.soba === CUVAR ? sobaUgovora : null);
+  // Struktura kao u bazi: apartman = sobe.tip; gde = struktura virtuelne sobe (samo ako se razlikuje od tipa)
+  const prikazStrukture = useMemo(() => {
+    const forma = boravak.struktura.trim();
+    const norm = (v: string) => v.replace(/\s+/g, "").toUpperCase();
+    const tip = sobaZaPrikaz?.tip?.trim() ?? "";
+    if (!tip) return forma || "—";
+    if (!forma || norm(forma) === norm(tip)) return tip;
+    return `${tip} (${forma})`;
+  }, [boravak.struktura, sobaZaPrikaz]);
+
+  // PROVERI OBRAČUN: cene izabrane sobe i njenih virtuelnih varijanti (bez provere zauzeća)
+  const [varijanteOtvoren, setVarijanteOtvoren] = useState(false);
+  const [varijante, setVarijante] = useState<VarijanteOdgovor | null>(null);
+  const [varijanteUcitava, setVarijanteUcitava] = useState(false);
+  const [varijanteGreska, setVarijanteGreska] = useState<string | null>(null);
+  // izbor u dijalogu (još nije primenjen) i primenjena varijanta (ide u payload za obračun)
+  const [varijantaIzbor, setVarijantaIzbor] = useState<{ soba_id: number; prevoz: boolean } | null>(null);
+  // switch u dijalogu: koja cena (sa / bez prevoza) se prikazuje i primenjuje
+  const [prevozSwitch, setPrevozSwitch] = useState(true);
+  const [obracunIzbor, setObracunIzbor] = useState<ObracunIzbor | null>(null);
+  // izbor važi samo dok su soba, smeštaj i termin isti kao kad je izabran (ključ boravka)
+  const aktivanIzbor = obracunIzbor && obracunIzbor.kljuc === kljucBoravka(boravak) ? obracunIzbor : null;
+  const proveriObracun = () => {
+    if (!izabranaSoba || !boravak.smestaj || boravak.smestaj === CUVAR || !boravak.datumOd || !boravak.datumDo) return;
+    // putnici kao u snimanju (_obracun_argumenti): nosilac + saputnici, višak količine = ADL
+    const uzrasti = [nosilac.uzrast, ...saputnici.filter((s) => s.ime.trim()).map((s) => s.uzrast)];
+    const kol = Math.round(Number(cene.kolSmestaj) || 0);
+    while (uzrasti.length < kol) uzrasti.push("ADL");
+    const broji = (u: string) => uzrasti.filter((x) => (x ?? "").trim() === u).length;
+    const params = new URLSearchParams({
+      smestaj_id: boravak.smestaj, soba_id: String(izabranaSoba.id),
+      datumod: boravak.datumOd, datumdo: boravak.datumDo,
+      adl: String(broji("ADL")), chd: String(broji("CHD")), inf: String(broji("INF")),
+    });
+    setVarijanteOtvoren(true);
+    setVarijante(null);
+    setVarijantaIzbor(null);
+    setVarijanteGreska(null);
+    setVarijanteUcitava(true);
+    apiFetch<VarijanteOdgovor>(`/obracun/varijante-cene?${params}`)
+      .then(setVarijante)
+      .catch((e: unknown) => setVarijanteGreska(e instanceof Error ? e.message : "Greška pri učitavanju cena"))
+      .finally(() => setVarijanteUcitava(false));
+  };
 
   // spisak putnika za tabove Prevoz i Uplate
   const putnici = useMemo(() => [
@@ -1889,7 +1976,8 @@ export default function RezervacijePage() {
     setCisUcitava(true);
     try {
       const token = getToken();
-      const res = await fetch(`/api/ugovori/${encodeURIComponent(izabraniUgovor)}/cis-link`, {
+      const qs = ukupnoAranzmanEUR != null ? `?cena_eur=${ukupnoAranzmanEUR.toFixed(2)}` : "";
+      const res = await fetch(`/api/ugovori/${encodeURIComponent(izabraniUgovor)}/cis-link${qs}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       if (!res.ok) {
@@ -2009,6 +2097,7 @@ export default function RezervacijePage() {
       izlazak: prevozRedovi["nosilac"]?.mestoIzlaska ?? "",
       napomenaPrevoz: boravak.napomenaPrevoz,
       nacinPlacanja: placanje,
+      obracunIzbor: aktivanIzbor ? { broj_sobe: aktivanIzbor.broj_sobe, struktura: aktivanIzbor.struktura, prevoz: aktivanIzbor.prevoz } : null,
       transferi: [...transferStavke, ...placenaMestaStavke].map((t) => ({ usluga: t.usluga ?? "", eur: t.eur ?? 0 })),
       cene: {
         cenaSmestajEUR: num(cene.cenaSmestaj), kolSmestajEUR: qty(cene.kolSmestaj),
@@ -2303,6 +2392,119 @@ export default function RezervacijePage() {
         </div>
       </div>
 
+      <Dialog open={varijanteOtvoren} onOpenChange={setVarijanteOtvoren}>
+        <DialogContent className="max-w-md gap-2 bg-card p-3 sm:p-4">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              Cene sobe {izabranaSoba?.broj_sobe ?? ""}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {varijante?.naziv ?? "Cenovnik za izabrani smeštaj i termin"}
+            </DialogDescription>
+          </DialogHeader>
+          {varijanteUcitava && <div className="py-4 text-center text-sm text-muted-foreground">Učitavanje…</div>}
+          {varijanteGreska && <div className="py-2 text-sm text-red-600">{varijanteGreska}</div>}
+          {!varijanteUcitava && varijante && varijante.varijante.length === 0 && (
+            <div className="py-2 text-sm text-muted-foreground">
+              Nema cena za izabranu sobu u cenovniku koji važi za ovaj datum.
+            </div>
+          )}
+          {!varijanteUcitava && varijante && varijante.varijante.length > 0 && (
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-2 py-1.5 text-xs">
+              <span className={cn("font-medium", !prevozSwitch && "text-muted-foreground")}>Sa prevozom</span>
+              <Switch
+                checked={!prevozSwitch}
+                aria-label="Bez prevoza"
+                onCheckedChange={(bez) => {
+                  const novo = !bez;
+                  setPrevozSwitch(novo);
+                  // ako je već izabrana soba, izbor se prebacuje na novo stanje
+                  setVarijantaIzbor((prev) => (prev ? { ...prev, prevoz: novo } : prev));
+                }}
+              />
+              <span className={cn("font-medium", prevozSwitch && "text-muted-foreground")}>Bez prevoza</span>
+            </div>
+          )}
+          {!varijanteUcitava && varijante && varijante.varijante.map((v) => {
+            const poklapa = (v.struktura ?? "").replace(/\s+/g, "").toUpperCase() === boravak.struktura.replace(/\s+/g, "").toUpperCase();
+            const jeIzabrana = varijantaIzbor?.soba_id === v.soba_id;
+            const p = v.ponude[prevozSwitch ? "sa_prevozom" : "bez_prevoza"];
+            return (
+              <div key={v.soba_id} className={cn("space-y-1 rounded-xl border p-2", poklapa ? "border-sky-400 bg-sky-50" : "border-border/60 bg-muted/40")}>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-semibold tabular-nums">{v.broj_sobe}</span>
+                  <span className="text-muted-foreground">·</span>
+                  <span className="tabular-nums">{v.struktura ?? "—"}</span>
+                  <span className="text-muted-foreground">·</span>
+                  <span>{v.opis || "—"}</span>
+                  {v.virtuelna && <span className="ml-auto rounded bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-800">virtuelna</span>}
+                </div>
+                <button
+                  type="button"
+                  disabled={!p || !p.dostupno}
+                  onClick={() => setVarijantaIzbor({ soba_id: v.soba_id, prevoz: prevozSwitch })}
+                  className={cn(
+                    "flex w-full flex-col items-start rounded-lg border px-2 py-1.5 text-left text-xs tabular-nums transition-colors",
+                    !p || !p.dostupno ? "cursor-not-allowed border-dashed text-muted-foreground" : "border-border bg-background hover:bg-muted",
+                    jeIzabrana && "border-sky-500 bg-sky-100 font-semibold text-sky-900",
+                  )}
+                >
+                  {p && p.dostupno ? (
+                    <>
+                      <span className="text-sm">
+                        {(p.cena_jedinicna ?? 0).toLocaleString("sr-RS", { minimumFractionDigits: 2 })} EUR
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        osnova cenovnika {(p.osnova_cenovnika ?? 0).toLocaleString("sr-RS", { minimumFractionDigits: 2 })}
+                        {p.koeficijent ? ` · koef. ${p.koeficijent}` : ""}
+                        {p.korekcija_prevoza ? ` · prevoz ${p.korekcija_prevoza > 0 ? "+" : ""}${p.korekcija_prevoza.toLocaleString("sr-RS", { minimumFractionDigits: 2 })}` : ""}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        ukupno {(p.cena_konacna ?? 0).toLocaleString("sr-RS", { minimumFractionDigits: 2 })} EUR
+                      </span>
+
+                      {p.popusti.map((pop) => (
+                        <span key={pop.redni} className={cn("text-[10px]", pop.vazi ? "text-emerald-700" : "text-muted-foreground line-through")}>
+                          {pop.tip_popusta}: {pop.vrsta === "procenat" ? `−${pop.umanjenje}%` : `−${pop.umanjenje.toLocaleString("sr-RS")} EUR`}
+                          {pop.vazi && pop.cena_snizena != null ? ` → ${pop.cena_snizena.toLocaleString("sr-RS", { minimumFractionDigits: 2 })}` : ""}
+                          {!pop.vazi ? ` (ne važi danas)` : ""}
+                        </span>
+                      ))}
+                    </>
+                  ) : (
+                    <span className="text-[10px]">{p?.razlog ?? "Nije dostupno za izabrani režim"}</span>
+                  )}
+                  {jeIzabrana && <span className="mt-0.5 text-[10px] text-sky-700">izabrano</span>}
+                </button>
+              </div>
+            );
+          })}
+          {!varijanteUcitava && varijante && varijante.varijante.length > 0 && (
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setVarijanteOtvoren(false)}>
+                Otkaži
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-8"
+                disabled={!varijantaIzbor}
+                onClick={() => {
+                  const v = varijante.varijante.find((x) => x.soba_id === varijantaIzbor?.soba_id);
+                  const p = v?.ponude[varijantaIzbor?.prevoz ? "sa_prevozom" : "bez_prevoza"];
+                  if (!v || !p || !p.dostupno || p.cena_jedinicna == null || varijantaIzbor == null) return;
+                  updCene({ cenaSmestaj: String(p.cena_jedinicna), ...(p.koeficijent != null ? { kolSmestaj: String(p.koeficijent) } : {}) });
+                  setObracunIzbor({ broj_sobe: v.broj_sobe ?? "", struktura: v.struktura ?? "", prevoz: varijantaIzbor.prevoz, kljuc: kljucBoravka(boravak) });
+                  setVarijanteOtvoren(false);
+                }}
+              >
+                Potvrdi
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={fiskalPopup !== null} onOpenChange={(open) => { if (!open && fiskalPopup?.faza !== "cekanje") setFiskalPopup(null); }}>
         <DialogContent className="max-w-lg bg-card" onEscapeKeyDown={(e) => { if (fiskalPopup?.faza === "cekanje") e.preventDefault(); }}>
           <DialogHeader>
@@ -2437,7 +2639,8 @@ export default function RezervacijePage() {
                       ucitanUgovor.putnik,
                       ucitanUgovor.mesto,
                       ucitanUgovor.naziv,
-                      ucitanUgovor.soba,
+                      [ucitanUgovor.soba, sobaUgovora?.opis, sobaUgovora?.tip]
+                        .map((v) => (v ?? "").trim()).filter(Boolean).join(" · ") || null,
                       prikazPeriodaUgovora(ucitanUgovor.datumod, ucitanUgovor.datumdo),
                     ].filter((v): v is string => !!v)).map((v, i) => (
                       <span key={i} className="flex items-center gap-2">
@@ -2812,7 +3015,18 @@ export default function RezervacijePage() {
                     disabled={boravakZakljucan}
                   />
                 </Fld>
-                <Fld label="Promena strukture" className="md:col-span-2 xl:col-span-5">
+                <Fld label="Opis sobe" className="md:col-span-3 xl:col-span-2">
+                  <Input
+                    aria-label="Opis sobe"
+                    data-testid="opis-sobe"
+                    value={izabranaSoba?.opis?.trim() ?? ""}
+                    placeholder={boravak.soba ? "—" : "Prati izabranu sobu"}
+                    readOnly
+                    tabIndex={-1}
+                    className="bg-muted/40 cursor-default focus-visible:ring-0"
+                  />
+                </Fld>
+                <Fld label="Promena strukture" className="md:col-span-2 xl:col-span-3">
                   <Input
                     value={boravak.promenaStrukture}
                     onChange={(e) => setBoravak({ ...boravak, promenaStrukture: e.target.value })}
@@ -2867,11 +3081,19 @@ export default function RezervacijePage() {
                 <CardTitle className="text-sm flex items-center gap-2 uppercase tracking-wide text-sky-800">
                   <SekcijaIkona ton="sky"><BedDouble /></SekcijaIkona>Smeštaj · Prevoz · Osiguranje
                 </CardTitle>
-                <div className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-xs">
-                  <span className="text-muted-foreground">Broj sobe | Struktura: </span>
-                  <span className="font-semibold tabular-nums text-sky-800">
-                    {(boravak.soba === CUVAR ? sobaSacuvana : sobe.find((b) => String(b.id) === boravak.soba)?.broj_sobe) ?? "—"} | {boravak.struktura.trim() || "—"}
-                  </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-xs tabular-nums text-sky-800">
+                    <span className="text-muted-foreground">Broj sobe: </span>
+                    <span className="font-semibold">{(boravak.soba === CUVAR ? sobaSacuvana : sobe.find((b) => String(b.id) === boravak.soba)?.broj_sobe) ?? "—"}</span>
+                    <span className="text-muted-foreground"> | Struktura: </span>
+                    <span className="font-semibold">{prikazStrukture}</span>
+                    <span className="text-muted-foreground"> | Tip: </span>
+                    <span className="font-semibold">{sobaZaPrikaz?.opis?.trim() || "—"}</span>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={proveriObracun}
+                    disabled={!izabranaSoba || !boravak.smestaj || boravak.smestaj === CUVAR || !boravak.datumOd || !boravak.datumDo}>
+                    PROVERI OBRAČUN
+                  </Button>
                 </div>
               </div>
             </CardHeader>
@@ -2879,7 +3101,7 @@ export default function RezervacijePage() {
               <div className="grid gap-x-3 gap-y-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
                 <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,1.4fr)_minmax(0,0.6fr)]">
                   <Fld label="Cena smeštaja (EUR)">
-                    <Input inputMode="decimal" aria-label="Cena smeštaja (EUR)" value={cene.cenaSmestaj} onChange={(e) => updCene({ cenaSmestaj: e.target.value })} placeholder="0,00" disabled={zakljucano} />
+                    <Input inputMode="decimal" aria-label="Cena smeštaja (EUR)" value={cene.cenaSmestaj} onChange={(e) => { updCene({ cenaSmestaj: e.target.value }); setObracunIzbor(null); }} placeholder="0,00" disabled={zakljucano} />
                   </Fld>
                   <Fld label="Količina">
                     <Input inputMode="decimal" aria-label="Količina za cenu smeštaja (EUR)" value={cene.kolSmestaj} onChange={(e) => updCene({ kolSmestaj: e.target.value })} placeholder="1" disabled={zakljucano} />

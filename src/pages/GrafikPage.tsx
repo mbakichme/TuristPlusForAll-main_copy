@@ -751,9 +751,11 @@ export default function GrafikPage() {
   // /slobodne-sobe (osnovna već umanjena za sopstveni prevoz) → popust čiji je tip plaćanja izabran.
   const slotStruktura = (slotCena?.tip || slotSoba?.tip || "").trim();
   const [slotObracun, setSlotObracun] = useState<SlotObracun | null>(null);
+  const [slotObracunUcitava, setSlotObracunUcitava] = useState(false);
   useEffect(() => {
-    if (!slotOtvoren || !slotSec || !slotSoba || !brzaOd || !brzaDo || brzaDo <= brzaOd) { setSlotObracun(null); return; }
+    if (!slotOtvoren || !slotSec || !slotSoba || !brzaOd || !brzaDo || brzaDo <= brzaOd) { setSlotObracun(null); setSlotObracunUcitava(false); return; }
     let aktivan = true;
+    setSlotObracunUcitava(true);
     const ddmm = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
     const smestajId = slotSec.smestaj.id;
     const sobaId = slotSoba.id;
@@ -767,7 +769,7 @@ export default function GrafikPage() {
           if (aktivan) setSlotObracun({ adl: 0, struktura: slotStruktura, osnovna: null, snizena: null, popust: 0, napomena: `Nema koeficijenta za strukturu ${slotStruktura || "—"}` });
           return;
         }
-        const params = new URLSearchParams({ datum_od: ddmm(brzaOd), datum_do: ddmm(brzaDo), odrasli: String(adl), prevoz: slotPrevoz });
+        const params = new URLSearchParams({ datum_od: ddmm(brzaOd), datum_do: ddmm(brzaDo), odrasli: String(adl), prevoz: slotPrevoz, smestaj_id: String(smestajId) });
         if (mestoId) params.set("mesto_id", mestoId);
         const grupe = await apiFetch<SlobodnaGrupa[]>(`/slobodne-sobe?${params}`);
         if (!aktivan) return;
@@ -791,6 +793,8 @@ export default function GrafikPage() {
         });
       } catch {
         if (aktivan) setSlotObracun({ adl: 0, struktura: slotStruktura, osnovna: null, snizena: null, popust: 0, napomena: "Obračun cene nije dostupan" });
+      } finally {
+        if (aktivan) setSlotObracunUcitava(false);
       }
     })();
     return () => { aktivan = false; };
@@ -861,8 +865,9 @@ export default function GrafikPage() {
     setSlotSec(sec);
     setSlotSoba(soba);
     setSlotPeriod(p);
-    setSlotCena(null);
-    setSlotSubagent("");
+    // prva dostupna cena po redu je unapred izabrana (korisnik može da promeni klikom)
+    setSlotCena(cenaOpcije(sec, soba, p).opcije.find((o) => !o.blokirano && o.cena != null) ?? null);
+
     setSlotPlacanje("delimicno");
     // predefinisani datumi slobodnog termina (mogu se ispraviti u formi)
     setBrzaOd(isoOdPrikaza(p.datum_od));
@@ -1226,31 +1231,28 @@ export default function GrafikPage() {
 
       {/* Popup: slobodan termin → Klasična / Brza rezervacija */}
       <Dialog open={slotOtvoren} onOpenChange={(o) => { if (!o) zatvoriSlotove(); }}>
-        <DialogContent className="gap-5 rounded-2xl bg-card p-5 shadow-xl sm:max-w-lg sm:rounded-2xl sm:p-6">
+        <DialogContent className="gap-2 rounded-2xl bg-card p-3 shadow-xl sm:max-w-lg sm:rounded-2xl sm:p-4">
           <DialogHeader className="text-left">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-green-600/10 text-green-600">
-                <CalendarCheck2 className="h-6 w-6" aria-hidden="true" />
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-green-600/10 text-green-600">
+                <CalendarCheck2 className="h-4 w-4" aria-hidden="true" />
               </div>
-              <div className="space-y-1">
-                <DialogTitle className="text-xl tracking-tight">Slobodan termin</DialogTitle>
-                <DialogDescription>Izaberite način rezervacije za odabrani boravak.</DialogDescription>
-              </div>
+              <DialogTitle className="text-base tracking-tight">Slobodan termin</DialogTitle>
+              <DialogDescription className="sr-only">Izaberite način rezervacije za odabrani boravak.</DialogDescription>
             </div>
           </DialogHeader>
-          <div className="space-y-3 rounded-xl border border-border/60 bg-muted/40 p-4">
-            <div className="flex items-center gap-3">
-              <BedDouble className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/40 p-2.5">
+            <div className="flex items-center gap-2">
+              <BedDouble className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{slotSec?.smestaj.naziv || "—"}</p>
-                <p className="text-xs text-muted-foreground">Soba {slotSoba?.broj_sobe || "—"}</p>
+                <p className="truncate text-sm font-semibold">{slotSec?.smestaj.naziv || "—"} · Soba {slotSoba?.broj_sobe || "—"}</p>
               </div>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-600/10 px-2.5 py-1 text-xs font-medium text-green-600">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-600/10 px-2 py-0.5 text-xs font-medium text-green-600">
                 <span className="h-1.5 w-1.5 rounded-full bg-green-600" />
                 Slobodno
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+            <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-1.5">
               <DatumBoravka label="Datum od" value={brzaOd} onChange={setBrzaOd} smene={slotSec?.periodi} />
               <DatumBoravka label="Datum do" value={brzaDo} onChange={setBrzaDo} smene={slotSec?.periodi} />
             </div>
@@ -1263,11 +1265,11 @@ export default function GrafikPage() {
               opcije={subagentiIzbor.map((s) => ({ value: s.naziv, label: s.naziv }))}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Način plaćanja</Label>
               <Select value={slotPlacanje || "nista"} onValueChange={(v) => setSlotPlacanje(v === "nista" ? "" : v)}>
-                <SelectTrigger aria-label="Način plaćanja" className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger aria-label="Način plaćanja" className="h-8"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="nista">Bez izbora</SelectItem>
                   <SelectItem value="delimicno">Delimično</SelectItem>
@@ -1275,10 +1277,10 @@ export default function GrafikPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Prevoz</Label>
               <Select value={slotPrevoz} onValueChange={setSlotPrevoz}>
-                <SelectTrigger aria-label="Prevoz" className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger aria-label="Prevoz" className="h-8"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="autobuski">Autobuski</SelectItem>
                   <SelectItem value="sopstveni">Sopstveni</SelectItem>
@@ -1295,13 +1297,18 @@ export default function GrafikPage() {
               onIzbor={(o) => setSlotCena((prev) => (prev?.sobaId === o.sobaId ? null : o))}
             />
           ) : null}
-          {slotObracun ? (
-            <div className="space-y-2 rounded-xl border border-border/60 bg-muted/40 p-4">
+          {slotObracunUcitava ? (
+            <div role="status" aria-live="polite" className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/40 p-3 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+              Računanje cene…
+            </div>
+          ) : slotObracun ? (
+            <div className="space-y-1 rounded-xl border border-border/60 bg-muted/40 p-3">
               <p className="text-xs font-medium text-muted-foreground">
                 Obračun · {slotObracun.adl} {slotObracun.adl === 1 ? "osoba" : "osobe"}{slotObracun.struktura ? ` · ${slotObracun.struktura}` : ""}
               </p>
               {slotObracun.osnovna != null ? (
-                <div className="space-y-1 text-sm">
+                <div className="space-y-0.5 text-sm">
                   <div className="flex justify-between gap-3">
                     <span>Osnovna cena{slotPrevoz === "sopstveni" ? " (umanjenje za sopstveni prevoz uračunato)" : ""}</span>
                     <span className="font-mono tabular-nums">{fmtEur(slotObracun.osnovna)}</span>
@@ -1312,7 +1319,7 @@ export default function GrafikPage() {
                       <span className="font-mono tabular-nums">−{fmtEur(slotObracun.popust)}</span>
                     </div>
                   ) : null}
-                  <div className="flex justify-between gap-3 border-t border-border/60 pt-1 font-semibold">
+                  <div className="flex justify-between gap-3 border-t border-border/60 pt-0.5 font-semibold">
                     <span>Cena za rezervaciju</span>
                     <span className="font-mono tabular-nums">{fmtEur(slotObracun.snizena ?? slotObracun.osnovna)}</span>
                   </div>
@@ -1321,19 +1328,19 @@ export default function GrafikPage() {
               {slotObracun.napomena ? <p className="text-xs text-muted-foreground">{slotObracun.napomena}</p> : null}
             </div>
           ) : null}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2">
             <Button
-              className="h-auto min-h-14 w-full gap-2 rounded-xl bg-green-600 px-2 py-3 text-white shadow-sm transition-colors hover:bg-green-700 sm:px-3"
+              className="h-9 w-full gap-2 rounded-xl bg-green-600 px-2 text-white shadow-sm transition-colors hover:bg-green-700 sm:px-3"
               onClick={klasicnaRez}
             >
-              <ClipboardList className="h-5 w-5 shrink-0" aria-hidden="true" />
+              <ClipboardList className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="whitespace-normal text-xs leading-snug sm:text-sm">Klasična rezervacija</span>
             </Button>
             <Button
-              className="h-auto min-h-14 w-full gap-2 rounded-xl bg-blue-600 px-2 py-3 text-white shadow-sm transition-colors hover:bg-blue-700 sm:px-3"
+              className="h-9 w-full gap-2 rounded-xl bg-blue-600 px-2 text-white shadow-sm transition-colors hover:bg-blue-700 sm:px-3"
               onClick={() => { if (!obavestiZauzet()) { setSlotOtvoren(false); setBrzaOtvoren(true); } }}
             >
-              <Zap className="h-5 w-5 shrink-0" aria-hidden="true" />
+              <Zap className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="whitespace-normal text-xs leading-snug sm:text-sm">Brza rezervacija</span>
             </Button>
           </div>

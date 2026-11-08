@@ -23,7 +23,7 @@ class UgovorPDFAcceptance(unittest.TestCase):
         }
         self.agency["lice_reklamacije"] = "Lice zaduženo za reklamacije je Radomir Kratovac, adresa Svetozara Markovića 4, Beograd, email astratravel@astratravel.rs, telefon 011/2622104."
         self.clauses = tuple(re.sub(r"<[^>]+>", "", c) for c in legal_clauses(
-            "Agencija Čačak", date(2026, 6, 2), self.agency["lice_reklamacije"]))
+            "Agencija Čačak", date(2026, 6, 2), self.agency["lice_reklamacije"], delimicno=True))
         self.contract = {
             "aranzman": {
                 "kljuc": "2424/26", "danas": datetime(2025, 12, 15, 18, 30),
@@ -37,6 +37,7 @@ class UgovorPDFAcceptance(unittest.TestCase):
                 "prevozow": 0, "prevozrt": 1, "viza": 0, "ulazak": "Beograd", "mesto_izlaska": "Subotica",
                 "smer": "Povratak",
                 "napomena": "Javna napomena š č ć ž đ <bezbedno>", "napomena1": "TAJNA INTERNA BELEŠKA",
+                "nacin_placanja": "delimicno",
                 "keptp": 1759, "organizator": "Organizator Travel", "poslovnica": "Stadion 3",
                 "osiguranje": 0,
             },
@@ -65,27 +66,32 @@ class UgovorPDFAcceptance(unittest.TestCase):
             text = self.text(doc)
             for expected in (
                 "UGOVOR/PREDRACUN Br.: 2424/26", "Datum izdavanja: 15.12.2025", "PUTNICI",
-                "OBRAČUN", "REKAPITULACIJA OBRAČUNA", "DODATNE USLUGE / OSTALO", "PREVOZ I POLAZAK",
+                "OBRAČUN", "REKAPITULACIJA OBRAČUNA", "DODATNE USLUGE / OSTALO",
                 "Podnosilac prijave", "IZJAVE I USLOVI PUTOVANJA",
                 "RAKIĆ MARINA",
                 "KOVAČEVIĆ DINA", "ADULT",
-                "Grčka", "VRASNA PARALIA", "DAFNI", "1/2 STD", "1.SPR", "Soba 7", "RR",
-                "Napomena: Blizu plaže", "JID: 82096", "Ulazak", "Dolazak", "Subotica", "Novi Sad",
-                "02.07.2026", "12.07.2026", "01.07.2026", "Prevoz RT", "Niš",
+                "Grčka", "VRASNA PARALIA", "DAFNI", "1/2 STD", "1.SPR", "Soba 7",
+                "Napomena: Blizu plaže", "Tip prevoza: Autobuski", "Tip plaćanja: delimično", "JID: 82096", "Ulazak", "Dolazak", "Subotica", "Novi Sad",
+                "02.07 – 12.07.2026", "01.07.2026", "Prevoz RT", "Niš",
                 "Naziv: ZETA TOURS", "PIB: 123456789", "MB: 987654321",
                 "Adresa: Kneza Miloša 1, Beograd", "E-mail: sub@example.test", "Telefon: 0641234567",
                 "Naziv: ZETA TOURS | PIB: 123456789 | MB: 987654321",
                 "E-mail: sub@example.test | Telefon: 0641234567",
-                "Beograd", "Javna napomena š č ć ž đ <bezbedno>",
+                "Beograd", "Napomena: TAJNA INTERNA BELEŠKA",
                 "860,00", "172,00", "68,00", "630,00", "430,00 EUR", "117.07",
                 "PROVIZIJA", "-68,00", "DOPLATE", "+10,00",
                 "Doplata pogled more — 10,00 EUR / 500,00 RSD",
-                "Potpis stranke", "Potpis službenika", "Ugovor je punovažan bez potpisa i pecata",
+                "Potpis stranke", "Potpis službenika", "Ugovor/Predračun je punovažan bez potpisa i pečata",
             ):
                 self.assertIn(expected, text)
             for clause in self.clauses:
                 self.assertIn(clause, text)
-            self.assertNotIn("TAJNA INTERNA", text)
+            self.assertNotIn("Mesto i datum", text)
+            self.assertNotIn("Javna napomena", text)
+            self.assertNotIn("Usluga osiguranja", text)
+            self.assertNotIn("Usluga / obrok", text)
+            self.assertNotIn("Početak usluge", text)
+            self.assertNotIn("Završetak usluge", text)
             self.assertNotIn("698,00", text)
             self.assertNotIn("81.044,24", text)
             self.assertIn("I:RSD74254,10", build_ugovor_ips_qr(self.contract, self.agency))
@@ -130,7 +136,8 @@ class UgovorPDFAcceptance(unittest.TestCase):
                         self.assertIn(expected, page.get_text())
                     else:
                         self.assertNotIn(expected, page.get_text())
-                self.assertIn(f"Strana {page.number + 1}", page.get_text())
+                self.assertNotIn("Strana", page.get_text())
+                self.assertNotIn("Ugovor/prijava", page.get_text())
                 words = page.get_text("words")
                 for word in words:
                     self.assertGreaterEqual(word[0], 29)

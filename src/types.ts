@@ -181,6 +181,9 @@ export interface UgovorDetail {
   osiguranje1?: number | null; // EUR
   soba?: string | null;
   apartman?: string | null;
+  opis?: string | null;
+  gde?: string | null;
+  obracun?: { soba_cenovnik: string | null; struktura: string | null; prevoz: boolean } | null;
   napomena?: string | null;
   napomena1?: string | null;
   obradio?: string | null;
@@ -374,6 +377,7 @@ export interface BankaRow {
 export interface UgovoriResponse {
   rows: UgovorRow[];
   total: number;
+  po_tipu?: { predrezervacija: number; storno: number; rezervacije: number };
   page: number;
   page_size: number;
 }
@@ -461,8 +465,31 @@ export interface ProdajaAranzmanaResp {
     putnika: number;
     naplata: number;
     provizija: number;
-    ukupno_eur: number;
     ukupno_din: number | null;
+  };
+}
+
+export interface PregledUplataRow {
+  kljuc: number;
+  vreme: string | null;
+  ugovor: string;
+  ime: string | null;
+  nacin: string | null;
+  svrha: string | null;
+  din: number;
+  eur: number | null;
+  obradio: string | null;
+  poslovnica: string | null;
+}
+
+export interface PregledUplataResp {
+  datum: string;
+  kurs: number | null;
+  rows: PregledUplataRow[];
+  totals: {
+    broj: number;
+    din: number;
+    eur: number | null;
   };
 }
 
