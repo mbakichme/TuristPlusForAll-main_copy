@@ -3398,10 +3398,13 @@ def create_app(static_dir: str) -> FastAPI:
                     ORDER BY a.kljuc
                 """), {"naziv": srow.naziv, "sid": srow.id, "mpref": mpref,
                        "g": grupa_id, "m": srow.mesto}).fetchall()
-                # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora
+                # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora.
+                # Dodatni popusti jednim batch upitom (ne po ugovoru — N+1 je usporavao grafik).
+                popusti_po_kljucu = dodatni_za_ugovori([r.kljuc for r in ugovori])
                 ugovori_out = []
                 for r in ugovori:
-                    calc = calc_ugovor_values(dict(r._mapping), dodatni_za_ugovor(r.kljuc))
+                    popusti = popusti_po_kljucu.get(str(r.kljuc or "").strip().strip("/"), [])
+                    calc = calc_ugovor_values(dict(r._mapping), popusti)
                     saldo_rsd = round(calc["saldo"] * kurs, 2)
                     kategorija = kategorija_grafika(
                         r.tiprezervacije, r.subagent, r.timelimit, saldo_rsd, sada
