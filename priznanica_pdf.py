@@ -242,10 +242,15 @@ def build_priznanica_pdf(uplata: dict, aranzman: dict | None,
              Paragraph(f"Datum: {esc(datum_fmt)}", right_label)],
         ]], [content_w * 0.6, content_w * 0.4])
 
+        adresa_red = ", ".join(
+            x for x in (str(uplata.get("adresa") or "").strip(), str(uplata.get("grad") or "").strip()) if x
+        )
         payer = [
             Paragraph("UPLATILAC", label_style),
             Paragraph(esc(str(uplata.get("ime") or "").strip().upper()), name_style),
-            Paragraph(esc(uplata.get("adresa")) or "—", value_style),
+            Paragraph(esc(adresa_red) or "—", value_style),
+            *([Paragraph(f"Email: {esc(str(uplata.get('email')).strip())}", value_style)]
+              if str(uplata.get("email") or "").strip() else []),
         ]
         amount = [
             Paragraph("IZNOS UPLATE", right_label),
