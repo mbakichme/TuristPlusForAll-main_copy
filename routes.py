@@ -36,7 +36,14 @@ from dobavljaci_api import init_dobavljaci, register_dobavljaci
 from banke_api import init_banke, register_banke
 from notifikacije_api import init_notifikacije, register_notifikacije
 from profil_api import init_profil, register_profil
+from subagent_api import (
+    SCOPE_REZERVACIJA, SCOPE_PRETRAGA,
+    autentifikuj_subagenta,
+    init_subagent_api, register_subagent_api, sinhronizuj_nakon_izmene, sinhronizuj_subagenta,
+    deaktiviraj_pre_brisanja, ensure_super_admin_subagent, je_zasticen,
+)
 from dashboard_api import register_dashboard
+from app2_sync import register_app2_sync, sinhronizuj_posle_izmene
 from obracun_po_aranzmanu import init_obracun_po_aranzmanu, obracun_iz_rezervacije, varijante_cene
 from rezervacija_log import (
     OBLAST_OBRACUN, OBLAST_SAPUTNICI, OBLAST_UPLATA, OBLAST_REZERVACIJA,
@@ -1846,6 +1853,8 @@ def _obracun_argumenti(body, vals: dict) -> dict:
 
 def create_app(static_dir: str) -> FastAPI:
     engine = get_engine()
+    # Read-only engine za sub_ rute (App2 pretraga); bez SEARCH_DATABASE_URL = lokalni engine.
+    search_engine = db_config.get_search_engine(engine)
     init_db(engine)
     init_cenovnici(engine)
     init_koeficijenti(engine)
@@ -1860,6 +1869,11 @@ def create_app(static_dir: str) -> FastAPI:
     init_notifikacije(engine)
     init_rezervacija_log(engine)
     init_obracun_po_aranzmanu(engine)
+    init_subagent_api(engine)
+    try:
+        ensure_super_admin_subagent(engine)
+    except Exception as exc:  # App1 ne sme da padne zbog App2 nedostupnosti
+        print(f"[subagent] zaštićeni subagent superadmina: {exc}")
 
     api = APIRouter()
     register_cenovnici(api, engine, get_current_user)
@@ -1873,6 +1887,8 @@ def create_app(static_dir: str) -> FastAPI:
     register_notifikacije(api, engine, get_current_user)
     register_rezervacija_log(api, engine, get_current_user)
     register_profil(api, engine, get_current_user, hash_password, verify_password)
+    register_subagent_api(api, engine, get_current_user)
+    register_app2_sync(api, engine)
     register_dashboard(api, engine, get_current_user)
 
     # ── Health ──────────────────────────────────────────────────────────────
@@ -6010,25 +6026,52 @@ def create_app(static_dir: str) -> FastAPI:
                         COALESCE(:ugovor_broj, ''), :ugovor_datumod, :ugovor_datumdo, COALESCE(:ta, true))
                 RETURNING id
             """), body.model_dump()).fetchone()
-        return {"id": row.id}
+        status, greska = sinhronizuj_subagenta(engine, row.id)
+        return {"id": row.id, "api_sync": status, "api_sync_error": greska}
 
     @api.put("/subagenti/{item_id}")
     def update_subagent(item_id: int, body: SubagentUpdate, _: dict = Depends(get_current_user)):
         fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if not (k == "naziv" and v is None)}
         if not fields:
             raise HTTPException(status_code=400, detail="Nema podataka za ažuriranje")
+        if je_zasticen(engine, item_id) and any(k in fields for k in ("pib", "email")):
+            raise HTTPException(
+                status_code=403,
+                detail="Email i PIB subagenta superadmina su zaključani",
+            )
         set_clause = ", ".join(f"{k} = :{k}" for k in fields)
         fields["id"] = item_id
         with engine.begin() as conn:
+            stari = conn.execute(text(
+                "SELECT pib, email FROM subagenti WHERE id = :id"
+            ), {"id": item_id}).fetchone()
             row = conn.execute(text(
                 f"UPDATE subagenti SET {set_clause} WHERE id = :id RETURNING id"
             ), fields).fetchone()
-        if not row:
+        if not row or stari is None:
             raise HTTPException(status_code=404, detail="Subagent nije pronađen")
-        return {"id": row.id}
+        kljucna = any(
+            k in fields and fields[k] != (getattr(stari, k) or "") for k in ("pib", "email")
+        )
+        status, greska = sinhronizuj_nakon_izmene(engine, row.id, kljucna_promena=kljucna)
+        return {"id": row.id, "api_sync": status, "api_sync_error": greska}
 
     @api.delete("/subagenti/{item_id}")
     def delete_subagent(item_id: int, _: dict = Depends(get_current_user)):
+        if je_zasticen(engine, item_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Subagent superadmina se ne može obrisati",
+            )
+        try:
+            status, greska = deaktiviraj_pre_brisanja(engine, item_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Subagent nije pronađen")
+        if status != "deactivated":
+            raise HTTPException(
+                status_code=502,
+                detail=f"Subagent nije obrisan: App2 nije deaktivirao vezu ({greska})",
+            )
         with engine.begin() as conn:
             row = conn.execute(text(
                 "DELETE FROM subagenti WHERE id = :id RETURNING id"
