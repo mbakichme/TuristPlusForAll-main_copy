@@ -9,7 +9,7 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
-DB_URL_ENV = "ASTRATRAVEL_DATABASE_URL"
+DB_URL_ENV = "EXTERNAL_NEON_DATABASE_URL"
 
 
 def get_database_url() -> str:

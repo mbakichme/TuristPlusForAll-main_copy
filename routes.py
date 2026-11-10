@@ -3398,10 +3398,13 @@ def create_app(static_dir: str) -> FastAPI:
                     ORDER BY a.kljuc
                 """), {"naziv": srow.naziv, "sid": srow.id, "mpref": mpref,
                        "g": grupa_id, "m": srow.mesto}).fetchall()
-                # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora
+                # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora.
+                # Dodatni popusti jednim batch upitom (ne po ugovoru — N+1 je usporavao grafik).
+                popusti_po_kljucu = dodatni_za_ugovori([r.kljuc for r in ugovori])
                 ugovori_out = []
                 for r in ugovori:
-                    calc = calc_ugovor_values(dict(r._mapping), dodatni_za_ugovor(r.kljuc))
+                    popusti = popusti_po_kljucu.get(str(r.kljuc or "").strip().strip("/"), [])
+                    calc = calc_ugovor_values(dict(r._mapping), popusti)
                     saldo_rsd = round(calc["saldo"] * kurs, 2)
                     kategorija = kategorija_grafika(
                         r.tiprezervacije, r.subagent, r.timelimit, saldo_rsd, sada
@@ -4729,6 +4732,16 @@ def create_app(static_dir: str) -> FastAPI:
                 WHERE split_part(a.kljuc, '/', 1) = :broj
                 ORDER BY a.id DESC LIMIT 1
             """), {"broj": str((u._mapping.get("faktura") or "").strip() or u.id)}).mappings().first()
+            # Grad i email uplatioca: nosilac → aranzman (grad, refno = email);
+            # saputnik (ime se ne poklapa sa nosiocem) → red u aranzman_dopuna
+            ime_up = str(u._mapping.get("ime") or "").strip().upper()
+            kontakt = None
+            if ar and ime_up and ime_up != str(ar.get("putnik") or "").strip().upper():
+                kontakt = conn.execute(text("""
+                    SELECT grad, email FROM aranzman_dopuna
+                    WHERE aranzman_id = :i AND UPPER(TRIM(saputnik)) = :ime
+                    ORDER BY id LIMIT 1
+                """), {"i": ar["id"], "ime": ime_up}).mappings().first()
         # Preostalo za uplatu (EUR) = naplata ugovora − zbir uplata (isto kao Pregled uplata)
         preostalo_eur = None
         if ar:
@@ -4746,6 +4759,12 @@ def create_app(static_dir: str) -> FastAPI:
             uplata["ime"] = aranzman.get("putnik")
         if not (uplata.get("adresa") or "").strip() and aranzman:
             uplata["adresa"] = aranzman.get("adresa")
+        if kontakt is not None:
+            uplata["grad"] = kontakt.get("grad")
+            uplata["email"] = kontakt.get("email")
+        elif aranzman:
+            uplata["grad"] = aranzman.get("grad")
+            uplata["email"] = aranzman.get("refno")
         pdf_bytes = build_priznanica_pdf(
             uplata=uplata,
             aranzman=aranzman,
