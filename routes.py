@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from datetime import date as SubDate
 from decimal import Decimal
 from typing import Optional, List
+from types import SimpleNamespace
 from urllib.parse import quote
 
 from fastapi import FastAPI, APIRouter, Request, Depends, HTTPException, UploadFile, File, Query
@@ -1891,6 +1892,12 @@ def create_app(static_dir: str) -> FastAPI:
     register_app2_sync(api, engine)
     register_dashboard(api, engine, get_current_user)
 
+    # Read rute pretrage: prihvataju korisnika (JWT) ili App2 subagenta (X-Client-Id/Secret).
+    def get_caller_or_subagent(request: Request):
+        if request.headers.get("X-Client-Id"):
+            return autentifikuj_subagenta(engine, request)
+        return get_current_user(request)
+
     # ── Health ──────────────────────────────────────────────────────────────
     @api.get("/health")
     def health():
@@ -2207,6 +2214,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Destinacija ─────────────────────────────────────────────────────────
     @api.get("/destinacija")
     def list_destinacija(_: dict = Depends(get_current_user)):
+        return _destinacija_upit(engine)
+
+    @api.get("/sub_destinacija")
+    def sub_destinacija(_: dict = Depends(get_caller_or_subagent)):
+        return _destinacija_upit(search_engine)
+
+    def _destinacija_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT d.id, d.naziv, d.drzava, d.status, d.organizator,
@@ -2287,6 +2301,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/mesto")
     def list_mesto(_: dict = Depends(get_current_user)):
+        return _mesto_upit(engine)
+
+    @api.get("/sub_mesto")
+    def sub_mesto(_: dict = Depends(get_caller_or_subagent)):
+        return _mesto_upit(search_engine)
+
+    def _mesto_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT m.id, m.naziv, m.drzava, m.destinacija, m.grupa_datuma, m.status,
@@ -2435,6 +2456,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Smestaj ─────────────────────────────────────────────────────────────
     @api.get("/smestaj")
     def list_smestaj(_: dict = Depends(get_current_user)):
+        return _smestaj_upit(engine)
+
+    @api.get("/sub_smestaj")
+    def sub_smestaj(_: dict = Depends(get_caller_or_subagent)):
+        return _smestaj_upit(search_engine)
+
+    def _smestaj_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT s.id, s.naziv, s.drzava, s.destinacija, s.mesto, s.tip_smestaja,
@@ -2555,6 +2583,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Sobe (veza na smestaj: više soba → jedan smeštaj) ──────────────────
     @api.get("/sobe")
     def list_sobe(request: Request, _: dict = Depends(get_current_user)):
+        return _sobe_upit(engine, request)
+
+    @api.get("/sub_sobe")
+    def sub_sobe(request: Request, _: dict = Depends(get_caller_or_subagent)):
+        return _sobe_upit(search_engine, request)
+
+    def _sobe_upit(engine, request: Request):
         q = (request.query_params.get("q") or "").strip()
         where = ""
         bind = {}
@@ -2700,6 +2735,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/polazak")
     def list_polazak(_: dict = Depends(get_current_user)):
+        return _polazak_upit(engine)
+
+    @api.get("/sub_polazak")
+    def sub_polazak(_: dict = Depends(get_caller_or_subagent)):
+        return _polazak_upit(search_engine)
+
+    def _polazak_upit(engine):
         with engine.connect() as conn:
             return _polazak_sa_nazivima(conn)
 
@@ -3154,6 +3196,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/slobodne-sobe")
     def slobodne_sobe(request: Request, _: dict = Depends(get_current_user)):
+        return _slobodne_sobe_upit(engine, request)
+
+    @api.get("/sub_slobodne-sobe")
+    def sub_slobodne_sobe(request: Request, _: dict = Depends(get_caller_or_subagent)):
+        return _slobodne_sobe_upit(search_engine, request)
+
+    def _slobodne_sobe_upit(engine, request: Request):
         q = dict(request.query_params)
         od = (q.get("datum_od") or "").strip()
         do = (q.get("datum_do") or "").strip()
@@ -3522,6 +3571,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Periodi ─────────────────────────────────────────────────────────────
     @api.get("/period-grupa")
     def list_period_grupa(_: dict = Depends(get_current_user)):
+        return _period_grupa_upit(engine)
+
+    @api.get("/sub_period-grupa")
+    def sub_period_grupa(_: dict = Depends(get_caller_or_subagent)):
+        return _period_grupa_upit(search_engine)
+
+    def _period_grupa_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT g.id, g.naziv, g.created_at,
@@ -3668,6 +3724,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/kurs")
     def get_kurs(_: dict = Depends(get_current_user)):
+        return _kurs_upit(engine)
+
+    @api.get("/sub_kurs")
+    def sub_kurs(_: dict = Depends(get_caller_or_subagent)):
+        return _kurs_upit(search_engine)
+
+    def _kurs_upit(engine):
         kurs, datum = get_eur_rate(engine, _belgrade_now().date().isoformat())
         return {
             "kurs": kurs,
@@ -5243,11 +5306,8 @@ def create_app(static_dir: str) -> FastAPI:
                 "INSERT INTO dodatne (ugovor, usluga, eur, din) VALUES (:u, :usluga, :eur, :din)"
             ), {"u": ugovor, **vals})
 
-    @api.post("/rezervacije", status_code=201)
-    def kreiraj_rezervaciju(body: RezervacijaIn, current_user: dict = Depends(get_current_user)):
-        """Sačuvaj — novi ugovor. Broj = MAX(broj) unutar godine iz Datuma od + 1,
-        pod advisory lock-om + UNIQUE(kljuc) kao poslednjom odbranom od duplikata."""
-        urow = _rez_user_row(current_user)
+    def _sacuvaj_novu_rezervaciju(body: RezervacijaIn, urow, uid, uime) -> str:
+        """Dodela broja i upis novog aranžmana (zajedničko za korisnika i App2 subagenta)."""
         datum_od_d = _rez_datum(body.boravak.datumOd, "Datum od")
         if datum_od_d is None:
             raise HTTPException(status_code=400, detail="Datum od je obavezan")
@@ -5275,17 +5335,44 @@ def create_app(static_dir: str) -> FastAPI:
                     obracun_iz_rezervacije(conn, aid, **_obracun_argumenti(body, vals))
                     if body.transferi:
                         rez_transferi_upisi(conn, kljuc, body.transferi)
-                    uid, uime = log_user(conn, current_user)
                     for oblast, promene in podeli_po_oblastima({}, vals).items():
                         zabelezi(conn, kljuc, oblast, "kreirana", uid, uime, promene)
                     zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "kreirana", uid, uime,
                              diff_saputnike([], rez_saputnici_snimak(body.saputnici, conn)))
-                return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
+                return kljuc
             except IntegrityError:
                 # UNIQUE(kljuc) — import je ubacio isti broj u međuvremenu;
                 # preskoči na sledeći slobodan broj
                 continue
         raise HTTPException(status_code=500, detail="Dodela broja ugovora nije uspela — pokušajte ponovo")
+
+    @api.post("/rezervacije", status_code=201)
+    def kreiraj_rezervaciju(body: RezervacijaIn, current_user: dict = Depends(get_current_user)):
+        """Sačuvaj — novi ugovor. Broj = MAX(broj) unutar godine iz Datuma od + 1,
+        pod advisory lock-om + UNIQUE(kljuc) kao poslednjom odbranom od duplikata."""
+        urow = _rez_user_row(current_user)
+        with engine.connect() as conn:
+            uid, uime = log_user(conn, current_user)
+        kljuc = _sacuvaj_novu_rezervaciju(body, urow, uid, uime)
+        sinhronizuj_posle_izmene(engine, kljuc)
+        return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
+
+    @api.post("/sub_rezervacije", status_code=201)
+    def sub_kreiraj_rezervaciju(body: RezervacijaIn, request: Request):
+        """Sačuvaj — novi ugovor iz App2 subagenta (X-Client-Id / X-Client-Secret).
+        Subagent se izvodi iz API klijenta na serveru; polje `subagent` iz tela se ignoriše."""
+        klijent = autentifikuj_subagenta(engine, request, SCOPE_REZERVACIJA)
+        with engine.connect() as conn:
+            naziv = conn.execute(text("SELECT naziv FROM subagenti WHERE id = :i"),
+                                 {"i": klijent["subagent_id"]}).scalar()
+        if not naziv:
+            raise HTTPException(status_code=403, detail="Subagent nije pronađen")
+        body = body.model_copy(update={"subagent": naziv})
+        urow = SimpleNamespace(id=None, first_name=naziv, last_name="(subagent)",
+                               status="aktivan", poslovnica_naziv=None)
+        kljuc = _sacuvaj_novu_rezervaciju(body, urow, None, f"{naziv} (subagent)")
+        sinhronizuj_posle_izmene(engine, kljuc)
+        return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
 
     @api.put("/rezervacije/{kljuc:path}")
     def izmeni_rezervaciju(kljuc: str, body: RezervacijaIn,
@@ -5323,6 +5410,7 @@ def create_app(static_dir: str) -> FastAPI:
                 zabelezi(conn, kljuc, oblast, "izmena", uid, uime, promene)
             zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "izmena", uid, uime,
                      diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici, conn)))
+        sinhronizuj_posle_izmene(engine, kljuc)
         return {"ok": True, "kljuc": kljuc, "message": "Izmene su sačuvane"}
 
     @api.get("/keptp/ugovor/{kljuc:path}")
