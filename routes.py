@@ -213,11 +213,17 @@ def init_db(engine):
 
         # Seed superadmin — always update password hash to ensure compatibility
         superadmin_pass = hash_password("admin123")
-        conn.execute(text("""
-            INSERT INTO users (first_name, last_name, email, username, password_hash, status, is_superadmin)
-            VALUES ('Super', 'Admin', 'www@oktopod.rs', 'superadmin', :pw, 'aktivan', TRUE)
-            ON CONFLICT (email) DO UPDATE SET password_hash = :pw
-        """), {"pw": superadmin_pass})
+        postojeci_sa = conn.execute(text(
+            "SELECT email FROM users WHERE username = 'superadmin'"
+        )).first()
+        if postojeci_sa is None or postojeci_sa.email == "www@oktopod.rs":
+            conn.execute(text("""
+                INSERT INTO users (first_name, last_name, email, username, password_hash, status, is_superadmin)
+                VALUES ('Super', 'Admin', 'www@oktopod.rs', 'superadmin', :pw, 'aktivan', TRUE)
+                ON CONFLICT (email) DO UPDATE SET password_hash = :pw
+            """), {"pw": superadmin_pass})
+        else:
+            print(f"[seed] superadmin već postoji sa emailom {postojeci_sa.email}; seed preskočen")
 
         # ── New tables ──────────────────────────────────────────────────────
         conn.execute(text("""
