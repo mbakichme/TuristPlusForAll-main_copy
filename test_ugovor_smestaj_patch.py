@@ -45,7 +45,7 @@ ZAUZECA = [
 PREKLAPANJE = {"id": 501, "kljuc": "77777/26", "naziv": "DIMITRA", "soba": "12",
                "datumod": OD("2026-07-05"), "datumdo": OD("2026-07-12")}
 
-UPDATE_COLS = {"naziv", "mesto", "destinacija", "soba", "apartman",
+UPDATE_COLS = {"smestaj_id", "naziv", "mesto", "destinacija", "soba", "apartman",
                "datumod", "datumdo", "datumoddo"}
 
 
@@ -85,6 +85,8 @@ class FakeConnection:
 
     def execute(self, query, params=None):
         sql = str(query)
+        if not self._state.get("armed", True):
+            return FakeResult()
         self._state["sql_calls"].append((sql, dict(params or {})))
 
         if "FROM users u" in sql:
@@ -163,9 +165,11 @@ class UgovorSmestajPatchTest(unittest.TestCase):
             "conn": None,
         }
         fake_engine = FakeEngine(self.state)
+        self.state["armed"] = False  # init šema (create_app) ide kroz lažnu konekciju — ignoriši
         with patch.object(routes, "get_engine", return_value=fake_engine), \
              patch.object(routes, "init_db", lambda engine: None):
             self.app = create_app("./dist")
+        self.state["armed"] = True
         self.token = create_access_token({"sub": "1"})
         self.hdr = {"Authorization": f"Bearer {self.token}"}
         self.client = TestClient(self.app)

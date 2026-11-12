@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Save, Building } from "lucide-react";
@@ -46,6 +47,7 @@ interface AgencijaData {
   tekuci_racun4?: string;
   banka4?: string;
   lice_reklamacije?: string;
+  opis_smestaja_ugovor?: string;
 }
 
 const empty: AgencijaData = {
@@ -163,6 +165,23 @@ export default function AgencijaPage() {
             <Field label="Matični broj" name="mb" value={form.mb || ""} onChange={setField} />
             <Field label="JBKJS" name="jbkjs" value={form.jbkjs || ""} onChange={setField} />
             <Field label="JMBG" name="jmbg" value={form.jmbg || ""} onChange={setField} />
+            <div className="space-y-2 sm:col-span-2">
+              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Opis smeštaja za ugovor</Label>
+              <RadioGroup
+                value={form.opis_smestaja_ugovor || "dugacak"}
+                onValueChange={(v) => setField("opis_smestaja_ugovor", v)}
+                className="flex gap-6"
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="kratak" id="opis-kratak" />
+                  <Label htmlFor="opis-kratak" className="font-normal">Kratak (samo struktura, npr. 1/2 STD)</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="dugacak" id="opis-dugacak" />
+                  <Label htmlFor="opis-dugacak" className="font-normal">Dugačak (broj sobe, struktura, spratnost)</Label>
+                </div>
+              </RadioGroup>
+            </div>
           </Section>
 
           <Section title="Kontakt">

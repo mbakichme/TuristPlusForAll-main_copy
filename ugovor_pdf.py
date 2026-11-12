@@ -426,16 +426,19 @@ def generate_ugovor_pdf(ugovor: dict, agencija: dict) -> bytes:
 
     # --- putovanje -------------------------------------------------------------
     nights = _nights(raw.get("datumod"), raw.get("datumdo"))
+    # opis smeštaja za ugovor (Osnovni podaci): 'dugacak' (podrazumevano) ili 'kratak' (samo struktura)
+    dugacak_opis = str(agencija.get("opis_smestaja_ugovor") or "dugacak").strip() != "kratak"
     story.append(grid([
         [p("Period:"), p(_period_tekst(raw)), p("Trajanje:"), p(f"{nights} noćenja" if nights is not None else "—", "monoB")],
         [p("Destinacija:"), p(_text(raw.get("destinacija"))), p("Mesto:"), p(_text(raw.get("mesto")))],
         [p("Smeštaj:"), [p(_text(raw.get("naziv")), "monoB")] + (
             [p(f"Napomena: {str(raw.get('smestaj_napomena')).strip()}", "small")] if str(raw.get("smestaj_napomena") or "").strip() else []),
          p("Soba:"), p(" | ".join(x for x in (
-             f"broj {_text(raw.get('soba'))}",
+             # kratak opis: samo struktura, bez broja/spratnosti/dodatnog teksta
+             f"broj {_text(raw.get('soba'))}" if dugacak_opis else "",
              f"struktura {' '.join(x for x in (str(raw.get('soba_tip') or '').strip(), _kategorija_sobe(raw.get('soba_opis'))) if x)}".rstrip(),
-             f"spratnost: {_prvi_deo(raw.get('soba_opis_dodatno'))}" if _prvi_deo(raw.get("soba_opis_dodatno")) else "",
-             str(raw.get("soba_opis_ugovor") or "").strip()) if x))],
+             f"spratnost: {_prvi_deo(raw.get('soba_opis_dodatno'))}" if (dugacak_opis and _prvi_deo(raw.get("soba_opis_dodatno"))) else "",
+             str(raw.get("soba_opis_ugovor") or "").strip() if dugacak_opis else "") if x))],
         [p("Tip prevoza:"), p(_tip_prevoza(raw)), p("Tip plaćanja:"), p(_nacin_placanja(raw))],
     ], [0.13, 0.37, 0.12, 0.38], box=True))
 

@@ -347,6 +347,10 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE IF EXISTS agencija ADD COLUMN IF NOT EXISTS lice_reklamacije TEXT NULL"
         ))
+        # Opis smeštaja na ugovoru: 'dugacak' (podrazumevano, kao do sada) | 'kratak' (samo struktura)
+        conn.execute(text(
+            "ALTER TABLE IF EXISTS agencija ADD COLUMN IF NOT EXISTS opis_smestaja_ugovor VARCHAR(10) NOT NULL DEFAULT 'dugacak'"
+        ))
         # Ensure at least one agencija row exists
         conn.execute(text("""
             INSERT INTO agencija (id) VALUES (1)
@@ -1334,6 +1338,7 @@ class UplataCreate(BaseModel):
     nacin: str
     din: float
     svrha: str
+    datum: Optional[str] = None  # YYYY-MM-DD; samo računovodstvo (uplate.danas = taj dan + sada vreme)
 
 
 class DodatnaOriginal(BaseModel):
@@ -3771,6 +3776,42 @@ def create_app(static_dir: str) -> FastAPI:
             },
         }
 
+    @api.get("/kontrola-ugovora")
+    def kontrola_ugovora(_: dict = Depends(get_current_user)):
+        """Ugovori sa štikliranim OW / RT (nosilac i saputnici) bez izabrane destinacije
+        prevoza: OW → Destinacija OW, RT → Destinacija polaska. Isto pravilo kao čuvanje rezervacije."""
+        cond_ow = ("COALESCE({p}.prevozow, 0) = 1 AND {p}.destinacija_ow_id IS NULL "
+                   "AND NULLIF(TRIM(COALESCE({p}.destinacija_ow, '')), '') IS NULL")
+        cond_rt = ("COALESCE({p}.prevozrt, 0) = 1 AND {p}.destinacija_polaska_id IS NULL "
+                   "AND NULLIF(TRIM(COALESCE({p}.destinacija_polaska, '')), '') IS NULL")
+        sql = f"""
+            SELECT a.kljuc, a.datumod, a.datumdo, a.putnik AS osoba_ime, 'Nosilac' AS osoba,
+                   'OW' AS prevoz, 'Destinacija OW' AS nedostaje
+            FROM aranzman a WHERE {cond_ow.format(p='a')}
+            UNION ALL
+            SELECT a.kljuc, a.datumod, a.datumdo, a.putnik, 'Nosilac', 'RT', 'Destinacija polaska'
+            FROM aranzman a WHERE {cond_rt.format(p='a')}
+            UNION ALL
+            SELECT a.kljuc, a.datumod, a.datumdo, d.saputnik, 'Saputnik', 'OW', 'Destinacija OW'
+            FROM aranzman_dopuna d JOIN aranzman a ON a.id = d.aranzman_id
+            WHERE {cond_ow.format(p='d')}
+            UNION ALL
+            SELECT a.kljuc, a.datumod, a.datumdo, d.saputnik, 'Saputnik', 'RT', 'Destinacija polaska'
+            FROM aranzman_dopuna d JOIN aranzman a ON a.id = d.aranzman_id
+            WHERE {cond_rt.format(p='d')}
+            ORDER BY datumod NULLS LAST, kljuc, osoba_ime
+        """
+        with engine.connect() as conn:
+            rows = conn.execute(text(sql)).mappings().fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            for k in ("datumod", "datumdo"):
+                d[k] = d[k].isoformat()[:10] if d.get(k) else None
+            out.append(d)
+        ugovori = {r["kljuc"] for r in out}
+        return {"rows": out, "total": len(out), "ugovori": len(ugovori)}
+
     @api.get("/pregledi/uplate")
     def pregled_uplata(
         datum: Optional[str] = None,
@@ -3833,6 +3874,92 @@ def create_app(static_dir: str) -> FastAPI:
                 "eur": round(sum_eur, 2) if kurs_ok else None,
             },
         }
+
+    @api.get("/pregledi/uplate/pdf")
+    def pregled_uplata_pdf(
+        datum: Optional[str] = None,
+        nacin: str = "Gotovina",
+        _: dict = Depends(get_current_user),
+    ):
+        """PDF dnevnog pregleda uplata za izabrani način plaćanja (Gotovina / Ček / Kartica)."""
+        import datetime
+        from pregled_uplata_pdf import build_pregled_uplata_pdf
+
+        if nacin not in ("Gotovina", "Ček", "Kartica"):
+            raise HTTPException(status_code=400, detail="Nepoznat način plaćanja")
+        d = None
+        if datum:
+            for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+                try:
+                    d = datetime.datetime.strptime(datum.strip(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+        if d is None:
+            d = datetime.date.today()
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT kljuc, to_char(danas, 'HH24:MI') AS vreme, id, faktura,
+                       ime, din, svrha, obradio, poslovnica,
+                       tip_kartice, broj_kartice, broj_potvrde, broj_odobrenja
+                FROM uplate
+                WHERE danas::date = :d AND nacin = :n
+                ORDER BY danas NULLS LAST, kljuc
+            """), {"d": d, "n": nacin}).mappings().fetchall()
+            kljucevi = [r["kljuc"] for r in rows]
+            cekovi = []
+            if nacin == "Ček" and kljucevi:
+                cekovi = conn.execute(text("""
+                    SELECT c.uplata_kljuc, c.redni, to_char(c.datum, 'DD.MM.YYYY') AS datum,
+                           c.iznos, c.banka, bk.naziv AS banka_klijenta_naziv, c.serijski_broj
+                    FROM cekovi c LEFT JOIN banke bk ON bk.id = c.banka_klijenta
+                    WHERE c.uplata_kljuc = ANY(:k)
+                    ORDER BY c.uplata_kljuc, c.redni
+                """), {"k": kljucevi}).mappings().fetchall()
+            ag = conn.execute(text("SELECT * FROM agencija ORDER BY id LIMIT 1")).fetchone()
+            logo_row = conn.execute(text(
+                "SELECT slika, slika_mime FROM dokumenti WHERE tip = 'logo'"
+            )).fetchone()
+
+        logo_data_url = None
+        if logo_row and logo_row.slika:
+            mime = logo_row.slika_mime or "image/png"
+            logo_data_url = f"data:{mime};base64,{logo_row.slika}"
+
+        uplate_by_kljuc = {}
+        uplate = []
+        for r in rows:
+            m = dict(r)
+            m["ugovor"] = str(m.get("faktura") or "").strip() or str(m.get("id") or "").strip()
+            uplate.append(m)
+            uplate_by_kljuc[m["kljuc"]] = m
+
+        cekovi_out = []
+        for c in cekovi:
+            u = uplate_by_kljuc.get(c["uplata_kljuc"], {})
+            cekovi_out.append({
+                "vreme": u.get("vreme"), "ugovor": u.get("ugovor"), "ime": u.get("ime"),
+                "redni": c["redni"], "datum": c["datum"], "iznos": c["iznos"],
+                "banka": c["banka"], "banka_klijenta_naziv": c["banka_klijenta_naziv"],
+                "serijski_broj": c["serijski_broj"],
+            })
+
+        pdf_bytes = build_pregled_uplata_pdf(
+            nacin=nacin,
+            datum_display=d.strftime("%d.%m.%Y"),
+            uplate=uplate,
+            cekovi=cekovi_out,
+            agencija=dict(ag._mapping) if ag else None,
+            logo_data_url=logo_data_url,
+        )
+        ime_fajla = {"Gotovina": "Gotovina", "Ček": "Cek", "Kartica": "Kartica"}[nacin]
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition":
+                     f'attachment; filename="Pregled_uplata_{ime_fajla}_{d.strftime("%d-%m-%Y")}.pdf"'},
+        )
 
     @api.get("/pregledi/prodaja-aranzmana/pdf")
     def pregled_prodaja_aranzmana_pdf(
@@ -4518,14 +4645,29 @@ def create_app(static_dir: str) -> FastAPI:
 
         with engine.begin() as conn:
             urow = conn.execute(text(
-                "SELECT u.id, u.first_name, u.last_name, u.status, p.naziv AS poslovnica_naziv "
+                "SELECT u.id, u.first_name, u.last_name, u.status, u.is_superadmin, "
+                "ut.slug AS tip_slug, p.naziv AS poslovnica_naziv "
                 "FROM users u LEFT JOIN poslovnice p ON p.id = u.poslovnica_id "
+                "LEFT JOIN user_types ut ON ut.id = u.user_type_id "
                 "WHERE u.id = :id"
             ), {"id": user_id}).fetchone()
             if not urow:
                 raise HTTPException(status_code=401, detail="Neautorizovan pristup")
             if (urow.status or "") != "aktivan":
                 raise HTTPException(status_code=403, detail="Nalog je neaktivan")
+
+            # datum uplate: samo računovodstvo (i superadmin); uplate.danas = izabrani dan + sada vreme
+            danas_unosa = _belgrade_now()
+            if body.datum:
+                if not (urow.is_superadmin or urow.tip_slug == "racunovodstvo"):
+                    raise HTTPException(status_code=403, detail="Nemate pravo da menjate datum uplate")
+                try:
+                    datum_uplate = datetime.strptime(body.datum.strip(), "%Y-%m-%d").date()
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Neispravan datum uplate")
+                if datum_uplate > danas_unosa.date():
+                    raise HTTPException(status_code=400, detail="Datum uplate ne može biti u budućnosti")
+                danas_unosa = datetime.combine(datum_uplate, danas_unosa.time())
 
             # ugovor: tačan ključ (33333/26) ili broj pre kose crte (33333)
             if "/" in ugovor:
@@ -4567,7 +4709,7 @@ def create_app(static_dir: str) -> FastAPI:
                 RETURNING kljuc
             """), {
                 "id": ugovor_id,
-                "danas": _belgrade_now(),
+                "danas": danas_unosa,
                 "ime": ime,
                 "adresa": adresa,
                 "nacin": nacin,
@@ -4739,12 +4881,19 @@ def create_app(static_dir: str) -> FastAPI:
                     WHERE aranzman_id = :i AND UPPER(TRIM(saputnik)) = :ime
                     ORDER BY id LIMIT 1
                 """), {"i": ar["id"], "ime": ime_up}).mappings().first()
-        # Preostalo za uplatu (EUR) = naplata ugovora − zbir uplata (isto kao Pregled uplata)
+        # Preostalo za uplatu (EUR) = cena aranžmana − zbir uplata. Cena kao u rezervaciji/ugovoru:
+        # naplata − cenadod (zamenjen dodatnim uslugama) + dodatne usluge (tabela dodatne, po ključu ugovora)
         preostalo_eur = None
         if ar:
             uplate_ug = _uplate_za_ugovor(ar["kljuc"])
             uplaceno_eur = sum((r.get("suma_eur") or 0) for r in uplate_ug)
-            preostalo_eur = round(calc_ugovor_values(dict(ar), dodatni_za_ugovor(ar["kljuc"]))["naplata"] - uplaceno_eur, 2)
+            with engine.connect() as conn:
+                deur = conn.execute(text(
+                    "SELECT COALESCE(SUM(eur), 0) FROM dodatne WHERE ugovor = :k"
+                ), {"k": ar["kljuc"]}).scalar_one()
+            naplata_eur = calc_ugovor_values(dict(ar), dodatni_za_ugovor(ar["kljuc"]))["naplata"]
+            cena_eur = naplata_eur - float(ar.get("cenadod") or 0) + float(deur or 0)
+            preostalo_eur = round(cena_eur - uplaceno_eur, 2)
 
         logo_data_url = None
         if logo_row and logo_row.slika:
@@ -4887,6 +5036,7 @@ def create_app(static_dir: str) -> FastAPI:
             }
             conn.execute(text("""
                 UPDATE aranzman SET
+                    smestaj_id = :smestaj_id,
                     naziv = :naziv,
                     mesto = :mesto,
                     destinacija = :destinacija,
@@ -4896,7 +5046,7 @@ def create_app(static_dir: str) -> FastAPI:
                     datumdo = :datumdo,
                     datumoddo = :datumoddo
                 WHERE id = :id
-            """), {"id": arow.id, **novi_smestaj})
+            """), {"id": arow.id, "smestaj_id": brow.smestaj_id, **novi_smestaj})
             uid, uime = log_user(conn, current_user)
             zabelezi(conn, kljuc, OBLAST_REZERVACIJA, "smestaj_promenjen", uid, uime,
                      podeli_po_oblastima(dict(arow._mapping), novi_smestaj).get(OBLAST_REZERVACIJA, []))
@@ -6616,9 +6766,11 @@ def create_app(static_dir: str) -> FastAPI:
             "pib", "mb", "jbkjs", "jmbg",
             "tekuci_racun1", "banka1", "tekuci_racun2", "banka2",
             "tekuci_racun3", "banka3", "tekuci_racun4", "banka4",
-            "lice_reklamacije",
+            "lice_reklamacije", "opis_smestaja_ugovor",
         ]
         fields = {k: v for k, v in data.items() if k in allowed}
+        if "opis_smestaja_ugovor" in fields and fields["opis_smestaja_ugovor"] not in ("kratak", "dugacak"):
+            raise HTTPException(status_code=400, detail="Opis smeštaja za ugovor mora biti kratak ili dugacak")
         if not fields:
             return {"ok": True}
         set_clause = ", ".join(f"{k} = :{k}" for k in fields)

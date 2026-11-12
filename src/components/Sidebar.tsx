@@ -8,7 +8,7 @@ import { useAgencijaPrviNaziv } from "../hooks/useAgencijaPrviNaziv";
 import {
   LayoutDashboard, Users, UserPlus,
   ChevronLeft, ChevronRight, ChevronDown, LogOut, ShieldCheck, Settings,
-  Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus,
+  Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus, ClipboardCheck,
   FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage,
   Eye, ShoppingBag, Banknote, Palette, Sigma, Bell, Store, ArrowRightLeft, Ban, Calculator, Armchair
 } from "lucide-react";
@@ -261,7 +261,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !preglediOpen ? "max-h-0 opacity-0" : "max-h-56 opacity-100"
+              !collapsed && !preglediOpen ? "max-h-0 opacity-0" : "max-h-72 opacity-100"
             )}
           >
             {!collapsed ? (
@@ -294,9 +294,13 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
                     <NavItem to="/pregledi/dnevni-izvestaji/uplate" icon={Receipt} label="Pregled uplata" collapsed={collapsed} onClick={onNavClick} />
                   </div>
                 </div>
+                <NavItem to="/pregledi/kontrola-ugovora" icon={ClipboardCheck} label="Kontrola ugovora" collapsed={collapsed} onClick={onNavClick} />
               </>
             ) : (
-              <NavItem to="/pregledi/dnevni-izvestaji/prodaja-aranzmana" icon={ShoppingBag} label="Prodaja aranžmana" collapsed={collapsed} onClick={onNavClick} />
+              <>
+                <NavItem to="/pregledi/dnevni-izvestaji/prodaja-aranzmana" icon={ShoppingBag} label="Prodaja aranžmana" collapsed={collapsed} onClick={onNavClick} />
+                <NavItem to="/pregledi/kontrola-ugovora" icon={ClipboardCheck} label="Kontrola ugovora" collapsed={collapsed} onClick={onNavClick} />
+              </>
             )}
           </div>
         </div>
@@ -664,7 +668,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !preglediOpen ? "max-h-0 opacity-0" : "max-h-56 opacity-100"
+                    !preglediOpen ? "max-h-0 opacity-0" : "max-h-72 opacity-100"
                   )}
                 >
                   <button

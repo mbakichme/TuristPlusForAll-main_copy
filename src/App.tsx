@@ -44,6 +44,7 @@ import PredracuniPage from "./pages/PredracuniPage";
 import PredracunFormPage from "./pages/PredracunFormPage";
 import PregledProdajaAranzmanaPage from "./pages/PregledProdajaAranzmanaPage";
 import PregledUplataPage from "./pages/PregledUplataPage";
+import KontrolaUgovoraPage from "./pages/KontrolaUgovoraPage";
 import NotifikacijePage from "./pages/NotifikacijePage";
 import ProfilPage from "./pages/ProfilPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
@@ -142,6 +143,7 @@ function ProtectedLayout() {
             <Route path="/knjigovodstvo/dok-povecanju" element={<PlaceholderPage title="Dokumenti o povećanju" />} />
             <Route path="/pregledi/dnevni-izvestaji/prodaja-aranzmana" element={<PregledProdajaAranzmanaPage />} />
             <Route path="/pregledi/dnevni-izvestaji/uplate" element={<PregledUplataPage />} />
+            <Route path="/pregledi/kontrola-ugovora" element={<KontrolaUgovoraPage />} />
             <Route path="/podesavanja/tipovi-korisnika" element={<UserTypesPage />} />
             <Route path="/podesavanja/korisnici" element={<UsersPage />} />
             <Route path="/podesavanja/agencija" element={<AgencijaPage />} />

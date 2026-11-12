@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Calendar } from "@/components/ui/calendar";
+import { useAuth } from "../context/AuthContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -795,6 +796,10 @@ export default function RezervacijePage() {
   const [polasciGreska, setPolasciGreska] = useState(false);
   const [polasciOsvezi, setPolasciOsvezi] = useState(0);
   const [uplata, setUplata] = useState<Uplata>({ uplatilac: "nosilac", ...UPLATA_PODRAZUMEVANO, iznos: "" });
+  // datum uplate (samo računovodstvo menja; šalje se na backend kao uplate.danas)
+  const { user: prijavljen } = useAuth();
+  const jeRacunovodstvo = !!prijavljen && (prijavljen.is_superadmin || prijavljen.user_type_slug === "racunovodstvo");
+  const [uplataDatum, setUplataDatum] = useState<string>(() => datumToIso(new Date()));
   // popup kartice: uvek za postojeću uplatu (dugme "Kartica" u redu tabele)
   const [karticaPopup, setKarticaPopup] = useState<{ kljuc: number; vrednost: KarticaPodaci } | null>(null);
   const [karticaCuva, setKarticaCuva] = useState(false);
@@ -1393,11 +1398,18 @@ export default function RezervacijePage() {
 
   useEffect(() => {
     // ako je izabrani uplatilac obrisan, vrati se na nosioca
-    if (uplata.uplatilac !== "nosilac" && !putnici.some((p) => p.uid === uplata.uplatilac)) {
+    if (uplata.uplatilac !== "nosilac" && uplata.uplatilac !== "subagent"
+      && !putnici.some((p) => p.uid === uplata.uplatilac)) {
       setUplatilac("nosilac");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saputnici]);
+
+  // subagent uklonjen iz rezervacije → uplatilac više nije subagent
+  useEffect(() => {
+    if (uplata.uplatilac === "subagent" && !subagent.trim()) setUplatilac("nosilac");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subagent]);
 
   const setUplatilac = (v: string) => setUplata((u) => ({ ...u, uplatilac: v }));
   const updPrevoz = (uid: string, patch: Partial<PrevozRed>) =>
@@ -1728,7 +1740,10 @@ export default function RezervacijePage() {
     if (!Number.isFinite(din) || din === 0) { toast.error("Iznos mora biti različit od nule"); return; }
     if (!uplata.nacin || !uplata.svrha) { toast.error("Izaberite način plaćanja i svrhu uplate"); return; }
     const platilac = uplata.uplatilac === "nosilac"
-      ? nosilac : saputnici.find((p) => p.uid === uplata.uplatilac);
+      ? nosilac
+      : uplata.uplatilac === "subagent"
+        ? { ime: subagent.trim(), adresa: "" }
+        : saputnici.find((p) => p.uid === uplata.uplatilac);
     if (!platilac?.ime.trim()) { toast.error("Ime uplatioca je obavezno"); return; }
     const ugovor = izabraniUgovor;
     uplataZakljucana.current = true;
@@ -1738,7 +1753,8 @@ export default function RezervacijePage() {
         method: "POST",
         body: JSON.stringify({ ugovor, ime: platilac.ime.trim(),
           adresa: (platilac.adresa ?? "").trim(),
-          nacin: uplata.nacin, din, svrha: uplata.svrha }),
+          nacin: uplata.nacin, din, svrha: uplata.svrha,
+          ...(jeRacunovodstvo && uplataDatum ? { datum: uplataDatum } : {}) }),
       });
       toast.success("Uplata je uspešno uneta", { description: `Broj uplate: ${result.kljuc} · Ugovor: ${ugovor}` });
       if (uplata.nacin.trim() === "Kartica" && ugovor === aktivniUgovor.current) {
@@ -2034,6 +2050,10 @@ export default function RezervacijePage() {
     if (saputnikBezUzrasta !== -1) { toast.error(`Izaberite uzrast saputnika ${saputnikBezUzrasta + 1} (ADL / CHD / INF)`); return; }
     const saputnikBezPrevoza = saputnici.findIndex((s) => s.ime.trim() && !s.ow && !s.rt && !s.sp);
     if (saputnikBezPrevoza !== -1) { toast.error(`Štiklirajte prevoz saputnika ${saputnikBezPrevoza + 1} (RT, OW ili SP)`); return; }
+    // Obavezna je samo zajednička "Izbor destinacije" (pored Napomene prevoz); po osobama nije obavezna
+    const imaOwRt = nosilac.ow || nosilac.rt || saputnici.some((s) => s.ime.trim() && (s.ow || s.rt));
+    const destinacijaIzabrana = sopstveniZaSve || (destinacijaZaSve !== "" && (destinacijaZaSve !== CUVAR || !!destinacijaSacuvana));
+    if (imaOwRt && !destinacijaIzabrana) { toast.error("Izaberite destinaciju prevoza (Izbor destinacije)"); return; }
     if (!boravak.datumOd || !boravak.datumDo) { toast.error("Unesite datum od i datum do boravka"); return; }
     if (boravak.datumDo <= boravak.datumOd) { toast.error("Datum do mora biti posle Datuma od"); return; }
 
@@ -3844,11 +3864,15 @@ export default function RezervacijePage() {
               <CardDescription>Evidencija uplata za ovu rezervaciju</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="grid gap-4 grid-cols-1 md:grid-cols-4">
+              <div className={cn("grid gap-4 grid-cols-1 md:grid-cols-4", jeRacunovodstvo && "md:grid-cols-5")}>
                 <Fld label="Uplatilac">
+
                   <Select value={uplata.uplatilac} onValueChange={setUplatilac}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
+                      {subagent.trim() && (
+                        <SelectItem value="subagent">{subagent.trim()}</SelectItem>
+                      )}
                       {putnici.map((p) => (
                         <SelectItem key={p.uid} value={p.uid}>{p.ime}</SelectItem>
                       ))}
@@ -3882,6 +3906,9 @@ export default function RezervacijePage() {
                     </SelectContent>
                   </Select>
                 </Fld>
+                {jeRacunovodstvo && (
+                  <DatumField label="Datum uplate" value={uplataDatum} onChange={setUplataDatum} />
+                )}
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -3923,6 +3950,7 @@ export default function RezervacijePage() {
                         <TableHeader>
                           <TableRow>
                             <TableHead>Datum</TableHead>
+                            <TableHead>Uplatilac</TableHead>
                             <TableHead>Način plaćanja</TableHead>
                             <TableHead className="text-right">RSD</TableHead>
                             <TableHead className="text-right">Suma u €</TableHead>
@@ -3940,6 +3968,7 @@ export default function RezervacijePage() {
                           {uplateRedovi.map((u, i) => (
                             <TableRow key={u.kljuc ?? `${u.id}-${u.danas}-${i}`}>
                               <TableCell className="whitespace-nowrap">{u.danas ?? "—"}</TableCell>
+                              <TableCell>{u.ime?.trim() || "—"}</TableCell>
                               <TableCell>{u.nacin?.trim() || "—"}</TableCell>
                               <TableCell className="whitespace-nowrap text-right">{u.din != null ? `${nf2.format(u.din)} din` : "—"}</TableCell>
                               <TableCell

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PregledUplataResp, PregledUplataRow } from "../types";
-import { apiFetch } from "../lib/api";
+import { apiFetch, getToken } from "../lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Receipt, Search } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Download, Loader2, Receipt, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
   Kalendar, fmtDatum, isoToDate, keyOf, shiftIso, toIso, viewFromIso,
@@ -96,6 +96,40 @@ export default function PregledUplataPage() {
 
   const sumVisibleDin = visibleRows.reduce((a, r) => a + (r.din || 0), 0);
 
+  // ─── PDF: pregled po načinu plaćanja ──────────────────────────────────────
+  const [downloadingNacin, setDownloadingNacin] = useState<string | null>(null);
+
+  async function downloadPregledPdf(nacin: "Gotovina" | "Ček" | "Kartica") {
+    if (downloadingNacin) return;
+    setDownloadingNacin(nacin);
+    try {
+      const token = getToken();
+      const res = await fetch(
+        `/api/pregledi/uplate/pdf?datum=${encodeURIComponent(iso)}&nacin=${encodeURIComponent(nacin)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ime = nacin === "Ček" ? "Cek" : nacin;
+      a.download = `Pregled_uplata_${ime}_${iso.split("-").reverse().join("-")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(
+        err instanceof TypeError
+          ? "Server nije dostupan — osveži stranicu i pokušaj ponovo"
+          : "Greška pri preuzimanju dokumenta"
+      );
+    } finally {
+      setDownloadingNacin(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -159,6 +193,22 @@ export default function PregledUplataPage() {
               >
                 <ChevronRight className="w-4 h-4" />
               </Button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {(["Gotovina", "Ček", "Kartica"] as const).map((n) => (
+                <Button
+                  key={n}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => downloadPregledPdf(n)}
+                  disabled={downloadingNacin !== null}
+                >
+                  {downloadingNacin === n
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <Download className="w-4 h-4" />}
+                  PDF {n}
+                </Button>
+              ))}
             </div>
             </div>
           </div>
