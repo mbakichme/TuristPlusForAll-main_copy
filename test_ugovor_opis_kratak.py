@@ -18,16 +18,34 @@ class OpisSmestajaKratakTests(unittest.TestCase):
         self.contract["aranzman"]["soba_opis"] = "STD"
         self.contract["aranzman"]["soba_opis_dodatno"] = "1.SPR, F+S"
         self.contract["aranzman"]["soba_opis_ugovor"] = "Economy UT"
+        self.contract["aranzman"]["apartman"] = "1/2"
+        self.contract["aranzman"]["gde"] = "1/3"
 
-    def _text(self, opis_mode):
+    def _text(self, opis_mode, struktura_mode="osnovna"):
         agency = dict(self.base.agency)
         if opis_mode is None:
             agency.pop("opis_smestaja_ugovor", None)
         else:
             agency["opis_smestaja_ugovor"] = opis_mode
+        agency["struktura_ugovor"] = struktura_mode
         pdf = generate_ugovor_pdf(self.contract, agency)
         with pymupdf.open(stream=pdf, filetype="pdf") as doc:
             return self.base.text(doc)
+
+    def test_given_osnovna_then_struktura_is_aranzman_apartman(self):
+        text = self._text("dugacak", "osnovna")
+        self.assertIn("struktura 1/2 STD", text)
+        self.assertNotIn("1/3 STD", text)
+
+    def test_given_promenjena_then_struktura_is_aranzman_gde(self):
+        text = self._text("dugacak", "promenjena")
+        self.assertIn("struktura 1/3 STD", text)
+        self.assertNotIn("struktura 1/2 STD", text)
+
+    def test_given_promenjena_without_gde_then_falls_back_to_apartman(self):
+        self.contract["aranzman"]["gde"] = None
+        text = self._text("kratak", "promenjena")
+        self.assertIn("struktura 1/2 STD", text)
 
     def test_given_kratak_then_only_struktura_is_shown(self):
         text = self._text("kratak")

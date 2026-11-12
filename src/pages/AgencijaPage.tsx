@@ -48,6 +48,7 @@ interface AgencijaData {
   banka4?: string;
   lice_reklamacije?: string;
   opis_smestaja_ugovor?: string;
+  struktura_ugovor?: string;
 }
 
 const empty: AgencijaData = {
@@ -179,6 +180,23 @@ export default function AgencijaPage() {
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="dugacak" id="opis-dugacak" />
                   <Label htmlFor="opis-dugacak" className="font-normal">Dugačak (broj sobe, struktura, spratnost)</Label>
+                </div>
+              </RadioGroup>
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Struktura na ugovoru</Label>
+              <RadioGroup
+                value={form.struktura_ugovor || "osnovna"}
+                onValueChange={(v) => setField("struktura_ugovor", v)}
+                className="flex gap-6"
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="osnovna" id="struktura-osnovna" />
+                  <Label htmlFor="struktura-osnovna" className="font-normal">Osnovna (struktura smeštaja)</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="promenjena" id="struktura-promenjena" />
+                  <Label htmlFor="struktura-promenjena" className="font-normal">Promenjena (struktura iz promene strukture)</Label>
                 </div>
               </RadioGroup>
             </div>
