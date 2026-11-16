@@ -81,6 +81,22 @@ function jeAsns(s: Subagent): boolean {
   return (s.naziv || "").toUpperCase().includes("ASNS");
 }
 
+/** Stanje App2 sinhronizacije za prikaz u koloni "App2". */
+function appStanje(s: Subagent): { tekst: string; klasa: string } {
+  if (jeAsns(s)) return { tekst: "—", klasa: "text-muted-foreground" };
+  if (s.is_active === false) return { tekst: "Isključen", klasa: "text-muted-foreground" };
+  switch (s.api_sync) {
+    case "synced":
+      return { tekst: "Sinhronizovan", klasa: "text-emerald-600 font-medium" };
+    case "failed":
+      return { tekst: "Greška", klasa: "text-destructive font-medium" };
+    case "deactivate_pending":
+      return { tekst: "Čeka isključenje", klasa: "text-amber-600 font-medium" };
+    default:
+      return { tekst: "Nije sinhronizovan", klasa: "text-muted-foreground" };
+  }
+}
+
 interface SinhronizacijaRezultat {
   id: number;
   naziv: string;
@@ -129,6 +145,7 @@ export default function SubagentiPage() {
   // selekcija za sinhronizaciju sa App2
   const [selektovani, setSelektovani] = useState<Set<number>>(new Set());
   const [sinhronizujem, setSinhronizujem] = useState(false);
+  const [promenaId, setPromenaId] = useState<number | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput.trim()), 400);
@@ -286,6 +303,25 @@ export default function SubagentiPage() {
     });
   }
 
+  async function promeniSync(s: Subagent, ukljuci: boolean) {
+    if (promenaId !== null) return;
+    setPromenaId(s.id);
+    try {
+      const putanja = ukljuci ? "aktiviraj" : "deaktiviraj";
+      const r = await apiFetch<SinhronizacijaRezultat>(`/subagenti/${s.id}/${putanja}`, { method: "POST" });
+      if (r.api_sync_error) {
+        toast.warning(`${s.naziv || `#${s.id}`}: ${r.api_sync_error}`);
+      } else {
+        toast.success(ukljuci ? `${s.naziv} je sinhronizovan` : `${s.naziv} je isključen iz sinhronizacije`);
+      }
+      await loadBatch(1, true, search, sort, dir);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Greška pri promeni sinhronizacije");
+    } finally {
+      setPromenaId(null);
+    }
+  }
+
   async function sinhronizujSelektovane() {
     if (selektovani.size === 0 || sinhronizujem) return;
     const ids = Array.from(selektovani);
@@ -400,19 +436,20 @@ export default function SubagentiPage() {
                       )}
                     </TableHead>
                   ))}
+                  <TableHead className="w-28 whitespace-nowrap">App2 sinhronizacija</TableHead>
                   <TableHead className="w-20 text-right">Akcije</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading && rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="text-center py-10">
+                    <TableCell colSpan={16} className="text-center py-10">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" />
                     </TableCell>
                   </TableRow>
                 ) : rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={16} className="text-center text-muted-foreground py-10">
                       {search ? "Nema rezultata za pretragu" : "Nema subagenata"}
                     </TableCell>
                   </TableRow>
@@ -446,6 +483,19 @@ export default function SubagentiPage() {
                         ) : (
                           <span className="text-muted-foreground">0</span>
                         )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          {!jeAsns(s) && (
+                            <Switch
+                              checked={s.api_sync === "synced" && s.is_active !== false}
+                              disabled={promenaId === s.id || !!s.zasticen}
+                              onCheckedChange={(v) => promeniSync(s, v)}
+                              aria-label={`Sinhronizacija sa App2 za ${s.naziv || "subagenta"}`}
+                            />
+                          )}
+                          <span className={appStanje(s).klasa}>{appStanje(s).tekst}</span>
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">

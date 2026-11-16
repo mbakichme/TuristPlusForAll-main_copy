@@ -6081,6 +6081,9 @@ def create_app(static_dir: str) -> FastAPI:
                 SELECT s.id, s.naziv, s.adresa, s.mesto, s.osoba, s.tel, s.tel1,
                        s.tel2, s.fax, s.racun, s.provizija, s.punnaziv, s.kontakt,
                        s.pib, s.matbroj, s.email, s.ugovor_broj, s.ugovor_datumod, s.ugovor_datumdo, s.ta,
+                       s.is_active, s.zasticen,
+                       (SELECT c.sync_status FROM subagent_api_clients c
+                         WHERE c.subagent_id = s.id AND c.is_active LIMIT 1) AS api_sync,
                        COALESCE(cnt.c, 0) AS broj_ugovora
                 FROM subagenti s
                 LEFT JOIN cnt ON cnt.subagent = s.naziv AND s.naziv <> ''
