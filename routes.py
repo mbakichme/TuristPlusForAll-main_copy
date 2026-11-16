@@ -307,6 +307,21 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS provizija INTEGER NOT NULL DEFAULT 10"
         ))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS polazak (
+                id SERIAL PRIMARY KEY,
+                destinacija VARCHAR(60) DEFAULT NULL,
+                polazak VARCHAR(60) DEFAULT NULL,
+                sat VARCHAR(10) DEFAULT NULL,
+                valuta VARCHAR(3) DEFAULT NULL,
+                adlrt DOUBLE PRECISION DEFAULT NULL,
+                chdrt DOUBLE PRECISION DEFAULT NULL,
+                infrt DOUBLE PRECISION DEFAULT NULL,
+                adlow DOUBLE PRECISION DEFAULT NULL,
+                chdow DOUBLE PRECISION DEFAULT NULL,
+                infow DOUBLE PRECISION DEFAULT NULL
+            )
+        """))
         conn.execute(text(
             "ALTER TABLE IF EXISTS polazak ADD COLUMN IF NOT EXISTS cena_transfera DOUBLE PRECISION NULL"
         ))
