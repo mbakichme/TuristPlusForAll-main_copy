@@ -376,6 +376,14 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE IF EXISTS agencija ADD COLUMN IF NOT EXISTS lice_reklamacije TEXT NULL"
         ))
+        # Opis smeštaja na ugovoru: 'dugacak' (podrazumevano, kao do sada) | 'kratak' (samo struktura)
+        conn.execute(text(
+            "ALTER TABLE IF EXISTS agencija ADD COLUMN IF NOT EXISTS opis_smestaja_ugovor VARCHAR(10) NOT NULL DEFAULT 'dugacak'"
+        ))
+        # Struktura na ugovoru: 'osnovna' (aranzman.apartman, podrazumevano) | 'promenjena' (aranzman.gde, ako postoji)
+        conn.execute(text(
+            "ALTER TABLE IF EXISTS agencija ADD COLUMN IF NOT EXISTS struktura_ugovor VARCHAR(12) NOT NULL DEFAULT 'osnovna'"
+        ))
         # Ensure at least one agencija row exists
         conn.execute(text("""
             INSERT INTO agencija (id) VALUES (1)
@@ -1363,6 +1371,7 @@ class UplataCreate(BaseModel):
     nacin: str
     din: float
     svrha: str
+    datum: Optional[str] = None  # YYYY-MM-DD; samo računovodstvo (uplate.danas = taj dan + sada vreme)
 
 
 class DodatnaOriginal(BaseModel):
@@ -3413,7 +3422,109 @@ def create_app(static_dir: str) -> FastAPI:
             """), {"g": grupa_id}).fetchall()
             periodi = [{"datum_od": r.od, "datum_do": r.doo} for r in periodi_rows]
 
-            def sekcija(srow):
+            def cenovnici_smestaja(ids):
+                """Aktivan cenovnik po smeštaju (pravilo kao ranije: najnoviji cenovnik čija
+                opcija pokriva danas). Za sve smeštaje: 4 upita umesto 4 po smeštaju."""
+                out: dict = {}
+                if not ids:
+                    return out
+                cen_rows = conn.execute(text("""
+                    SELECT DISTINCT ON (c.smestaj_id) c.id, c.smestaj_id, c.sobe, c.periodi
+                    FROM cenovnici c
+                    JOIN cenovnik_opcije o ON o.cenovnik_id = c.id
+                    WHERE c.smestaj_id = ANY(:ids) AND o.datumod <= :d AND o.datumdo >= :d
+                    ORDER BY c.smestaj_id, c.id DESC
+                """), {"ids": list(ids), "d": sada.date()}).mappings().all()
+                if not cen_rows:
+                    return out
+                cids = [int(r["id"]) for r in cen_rows]
+                blok_po: dict = {}
+                for b in conn.execute(text(
+                    "SELECT cenovnik_id, soba_id, period_id, blokirano FROM opcije_soba WHERE cenovnik_id = ANY(:c)"
+                ), {"c": cids}).mappings():
+                    blok_po.setdefault(int(b["cenovnik_id"]), []).append(b)
+                popust_po: dict = {}
+                for pr in conn.execute(text(
+                    "SELECT cenovnik_id, soba_id, period_id, redni, tip_popusta, tip_placanja, umanjenje_vrsta, umanjenje, vazi_od, vazi_do "
+                    "FROM popust_soba WHERE cenovnik_id = ANY(:c) ORDER BY redni"
+                ), {"c": cids}).mappings():
+                    popust_po.setdefault(int(pr["cenovnik_id"]), []).append(pr)
+                cene_po: dict = {}
+                for cr in conn.execute(text(
+                    "SELECT cenovnik_id, soba_id, period_id, cena FROM cenovnik_cene WHERE cenovnik_id = ANY(:c)"
+                ), {"c": cids}).mappings():
+                    cene_po.setdefault(int(cr["cenovnik_id"]), []).append(cr)
+
+                def _dmy(s):
+                    return datetime.fromisoformat(str(s)[:10]).strftime("%d.%m.%Y")
+
+                danas_g = sada.date()
+                for cen_row in cen_rows:
+                    cid = int(cen_row["id"])
+                    per = {int(p["id"]): p for p in (cen_row["periodi"] or [])}
+                    # Blokada (opcije_soba.blokirano): eksplicitan red po periodu, inače
+                    # globalni red (period_id = 0) za sobu — isto pravilo kao opcije-celije
+                    blok = blok_po.get(cid, [])
+                    blok_globalno = {int(b["soba_id"]) for b in blok if int(b["period_id"]) == 0 and b["blokirano"]}
+                    blok_eksplicitno = {(int(b["soba_id"]), int(b["period_id"])): bool(b["blokirano"])
+                                        for b in blok if int(b["period_id"]) != 0}
+                    # Popusti po (soba, period): eksplicitan period, inače globalni (period_id = 0)
+                    popusti_mapa: dict = {}
+                    for pr in popust_po.get(cid, []):
+                        popusti_mapa.setdefault((int(pr["soba_id"]), int(pr["period_id"])), []).append(pr)
+                    cene_out = []
+                    for cr in cene_po.get(cid, []):
+                        p = per.get(int(cr["period_id"]))
+                        if p is None:
+                            continue
+                        sid, pid = int(cr["soba_id"]), int(cr["period_id"])
+                        pops = popusti_mapa.get((sid, pid)) or popusti_mapa.get((sid, 0)) or []
+                        cene_out.append({
+                            "soba_id": sid,
+                            "datum_od": _dmy(p["datum_od"]), "datum_do": _dmy(p["datum_do"]),
+                            "cena": float(cr["cena"]),
+                            "blokirano": blok_eksplicitno.get((sid, pid), sid in blok_globalno),
+                            "popusti": [{
+                                "redni": int(pr["redni"]),
+                                "tip_popusta": pr["tip_popusta"],
+                                "tip_placanja": pr["tip_placanja"],
+                                "vrsta": pr["umanjenje_vrsta"],
+                                "umanjenje": float(pr["umanjenje"]),
+                                "vazi": (pr["vazi_od"] is None or pr["vazi_od"] <= danas_g)
+                                        and (pr["vazi_do"] is None or pr["vazi_do"] >= danas_g),
+                            } for pr in pops],
+                        })
+                    out[int(cen_row["smestaj_id"])] = {
+                        "sobe": [{
+                            "id": int(s["id"]), "broj_sobe": s.get("broj_sobe") or "",
+                            "tip": s.get("tip") or "", "izvor_soba_id": s.get("izvor_soba_id"),
+                        } for s in (cen_row["sobe"] or []) if s.get("id") is not None],
+                        "cene": cene_out,
+                    }
+                return out
+
+            def dodatni_nadskup(ids, nazivi):
+                """Dodatni popusti za SVE ugovore koji mogu pripadati ovim smeštajima
+                (smestaj_id ili legacy naziv) jednim upitom → {kljuc: [popust, ...]}.
+                Nadskup je dovoljan: sekcija() čita samo ključeve svojih ugovora."""
+                out: dict = {}
+                for r in conn.execute(text("""
+                    SELECT a.kljuc, dp.id, dp.naziv, dp.eur, dp.rsd, dp.procenat
+                    FROM dodatni_popusti dp JOIN aranzman a ON a.id = dp.aranzman_id
+                    WHERE a.smestaj_id = ANY(:ids) OR TRIM(a.naziv) = ANY(:nazivi)
+                    ORDER BY dp.id
+                """), {"ids": list(ids), "nazivi": list(nazivi)}).mappings():
+                    out.setdefault(r["kljuc"], []).append(
+                        {k: r[k] for k in ("id", "naziv", "eur", "rsd", "procenat")})
+                return out
+
+            def pripremi(srows):
+                """Dodatni popusti + cenovnici za sve smeštaje odjednom."""
+                ids = [s.id for s in srows]
+                nazivi = sorted({(s.naziv or "").strip() for s in srows} - {""})
+                return dodatni_nadskup(ids, nazivi), cenovnici_smestaja(ids)
+
+            def sekcija(srow, dod_pre, cen_pre):
                 """Grafik-podaci za jedan smeštaj (sobe + ugovori + saldo)."""
                 sobe = conn.execute(text("""
                     SELECT id, broj_sobe, tip, opis, opis_dodatno
@@ -3489,8 +3600,7 @@ def create_app(static_dir: str) -> FastAPI:
                 popusti_po_kljucu = dodatni_za_ugovori([r.kljuc for r in ugovori])
                 ugovori_out = []
                 for r in ugovori:
-                    popusti = popusti_po_kljucu.get(str(r.kljuc or "").strip().strip("/"), [])
-                    calc = calc_ugovor_values(dict(r._mapping), popusti)
+                    calc = calc_ugovor_values(dict(r._mapping), dod_pre.get(r.kljuc, []))
                     saldo_rsd = round(calc["saldo"] * kurs, 2)
                     kategorija = kategorija_grafika(
                         r.tiprezervacije, r.subagent, r.timelimit, saldo_rsd, sada
@@ -3504,67 +3614,9 @@ def create_app(static_dir: str) -> FastAPI:
                         "boja_kategorija": kategorija,
                         "boja": boje.get(kategorija, "zelena"),
                     })
-                # Aktivan cenovnik smeštaja (ista pravila kao pretraga) — osnovne cene po
-                # sobi i virtuelnoj sobi za tooltip praznih polja. Datumi perioda DD.MM.YYYY
-                # kao u grafiku. Bez aktivnog cenovnika: cenovnik = None.
-                cenovnik_out = None
-                cen_row = conn.execute(text("""
-                    SELECT c.id, c.sobe, c.periodi
-                    FROM cenovnici c
-                    JOIN cenovnik_opcije o ON o.cenovnik_id = c.id
-                    WHERE c.smestaj_id = :sid AND o.datumod <= :d AND o.datumdo >= :d
-                    ORDER BY c.id DESC LIMIT 1
-                """), {"sid": srow.id, "d": sada.date()}).fetchone()
-                if cen_row:
-                    def _dmy(s):
-                        return datetime.fromisoformat(str(s)[:10]).strftime("%d.%m.%Y")
-                    per = {int(p["id"]): p for p in (cen_row.periodi or [])}
-                    # Blokada (opcije_soba.blokirano): eksplicitan red po periodu, inače
-                    # globalni red (period_id = 0) za sobu — isto pravilo kao opcije-celije
-                    blok_rows = conn.execute(text(
-                        "SELECT soba_id, period_id, blokirano FROM opcije_soba WHERE cenovnik_id = :c"
-                    ), {"c": cen_row.id}).all()
-                    blok_globalno = {int(s) for s, pid, b in blok_rows if int(pid) == 0 and b}
-                    blok_eksplicitno = {(int(s), int(pid)): bool(b) for s, pid, b in blok_rows if int(pid) != 0}
-                    # Popusti po (soba, period): eksplicitan period, inače globalni (period_id = 0)
-                    popusti_mapa: dict = {}
-                    for pr in conn.execute(text(
-                        "SELECT soba_id, period_id, redni, tip_popusta, tip_placanja, umanjenje_vrsta, umanjenje, vazi_od, vazi_do "
-                        "FROM popust_soba WHERE cenovnik_id = :c ORDER BY redni"
-                    ), {"c": cen_row.id}).mappings():
-                        popusti_mapa.setdefault((int(pr["soba_id"]), int(pr["period_id"])), []).append(pr)
-                    danas_g = sada.date()
-                    cene_out = []
-                    for cr in conn.execute(text(
-                        "SELECT soba_id, period_id, cena FROM cenovnik_cene WHERE cenovnik_id = :c"
-                    ), {"c": cen_row.id}):
-                        p = per.get(int(cr.period_id))
-                        if p is None:
-                            continue
-                        sid, pid = int(cr.soba_id), int(cr.period_id)
-                        pops = popusti_mapa.get((sid, pid)) or popusti_mapa.get((sid, 0)) or []
-                        cene_out.append({
-                            "soba_id": sid,
-                            "datum_od": _dmy(p["datum_od"]), "datum_do": _dmy(p["datum_do"]),
-                            "cena": float(cr.cena),
-                            "blokirano": blok_eksplicitno.get((sid, pid), sid in blok_globalno),
-                            "popusti": [{
-                                "redni": int(pr["redni"]),
-                                "tip_popusta": pr["tip_popusta"],
-                                "tip_placanja": pr["tip_placanja"],
-                                "vrsta": pr["umanjenje_vrsta"],
-                                "umanjenje": float(pr["umanjenje"]),
-                                "vazi": (pr["vazi_od"] is None or pr["vazi_od"] <= danas_g)
-                                        and (pr["vazi_do"] is None or pr["vazi_do"] >= danas_g),
-                            } for pr in pops],
-                        })
-                    cenovnik_out = {
-                        "sobe": [{
-                            "id": int(s["id"]), "broj_sobe": s.get("broj_sobe") or "",
-                            "tip": s.get("tip") or "", "izvor_soba_id": s.get("izvor_soba_id"),
-                        } for s in (cen_row.sobe or []) if s.get("id") is not None],
-                        "cene": cene_out,
-                    }
+                # Aktivan cenovnik smeštaja — iz batch mape (cenovnici_smestaja); bez
+                # aktivnog cenovnika: None.
+                cenovnik_out = cen_pre.get(srow.id)
                 return {
                     "smestaj": {"id": srow.id, "naziv": srow.naziv},
                     "cenovnik": cenovnik_out,
@@ -3581,13 +3633,17 @@ def create_app(static_dir: str) -> FastAPI:
                 srows = conn.execute(text(
                     "SELECT id, naziv, mesto FROM smestaj WHERE grupa_datuma = :g AND mesto = :m AND status = 1 ORDER BY naziv"
                 ), {"g": grupa_id, "m": mesto_id}).fetchall()
-                return {"sve": True, "sekcije": [sekcija(s) for s in srows]}
+                if not srows:
+                    return {"sve": True, "sekcije": []}
+                dod_pre, cen_pre = pripremi(srows)
+                return {"sve": True, "sekcije": [sekcija(s, dod_pre, cen_pre) for s in srows]}
             srow = conn.execute(text(
                 "SELECT id, naziv, mesto FROM smestaj WHERE id = :id AND mesto = :m AND status = 1"
             ), {"id": smestaj_id, "m": mesto_id}).fetchone()
             if not srow:
                 raise HTTPException(status_code=404, detail="Smeštaj nije pronađen u izabranom mestu ili nije aktivan")
-            return sekcija(srow)
+            dod_pre, cen_pre = pripremi([srow])
+            return sekcija(srow, dod_pre, cen_pre)
 
     # ── Periodi ─────────────────────────────────────────────────────────────
     @api.get("/period-grupa")
@@ -3874,6 +3930,42 @@ def create_app(static_dir: str) -> FastAPI:
             },
         }
 
+    @api.get("/kontrola-ugovora")
+    def kontrola_ugovora(_: dict = Depends(get_current_user)):
+        """Ugovori sa štikliranim OW / RT (nosilac i saputnici) bez izabrane destinacije
+        prevoza: OW → Destinacija OW, RT → Destinacija polaska. Isto pravilo kao čuvanje rezervacije."""
+        cond_ow = ("COALESCE({p}.prevozow, 0) = 1 AND {p}.destinacija_ow_id IS NULL "
+                   "AND NULLIF(TRIM(COALESCE({p}.destinacija_ow, '')), '') IS NULL")
+        cond_rt = ("COALESCE({p}.prevozrt, 0) = 1 AND {p}.destinacija_polaska_id IS NULL "
+                   "AND NULLIF(TRIM(COALESCE({p}.destinacija_polaska, '')), '') IS NULL")
+        sql = f"""
+            SELECT a.kljuc, a.datumod, a.datumdo, a.putnik AS osoba_ime, 'Nosilac' AS osoba,
+                   'OW' AS prevoz, 'Destinacija OW' AS nedostaje
+            FROM aranzman a WHERE {cond_ow.format(p='a')}
+            UNION ALL
+            SELECT a.kljuc, a.datumod, a.datumdo, a.putnik, 'Nosilac', 'RT', 'Destinacija polaska'
+            FROM aranzman a WHERE {cond_rt.format(p='a')}
+            UNION ALL
+            SELECT a.kljuc, a.datumod, a.datumdo, d.saputnik, 'Saputnik', 'OW', 'Destinacija OW'
+            FROM aranzman_dopuna d JOIN aranzman a ON a.id = d.aranzman_id
+            WHERE {cond_ow.format(p='d')}
+            UNION ALL
+            SELECT a.kljuc, a.datumod, a.datumdo, d.saputnik, 'Saputnik', 'RT', 'Destinacija polaska'
+            FROM aranzman_dopuna d JOIN aranzman a ON a.id = d.aranzman_id
+            WHERE {cond_rt.format(p='d')}
+            ORDER BY datumod NULLS LAST, kljuc, osoba_ime
+        """
+        with engine.connect() as conn:
+            rows = conn.execute(text(sql)).mappings().fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            for k in ("datumod", "datumdo"):
+                d[k] = d[k].isoformat()[:10] if d.get(k) else None
+            out.append(d)
+        ugovori = {r["kljuc"] for r in out}
+        return {"rows": out, "total": len(out), "ugovori": len(ugovori)}
+
     @api.get("/pregledi/uplate")
     def pregled_uplata(
         datum: Optional[str] = None,
@@ -3936,6 +4028,92 @@ def create_app(static_dir: str) -> FastAPI:
                 "eur": round(sum_eur, 2) if kurs_ok else None,
             },
         }
+
+    @api.get("/pregledi/uplate/pdf")
+    def pregled_uplata_pdf(
+        datum: Optional[str] = None,
+        nacin: str = "Gotovina",
+        _: dict = Depends(get_current_user),
+    ):
+        """PDF dnevnog pregleda uplata za izabrani način plaćanja (Gotovina / Ček / Kartica)."""
+        import datetime
+        from pregled_uplata_pdf import build_pregled_uplata_pdf
+
+        if nacin not in ("Gotovina", "Ček", "Kartica"):
+            raise HTTPException(status_code=400, detail="Nepoznat način plaćanja")
+        d = None
+        if datum:
+            for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+                try:
+                    d = datetime.datetime.strptime(datum.strip(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+        if d is None:
+            d = datetime.date.today()
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT kljuc, to_char(danas, 'HH24:MI') AS vreme, id, faktura,
+                       ime, din, svrha, obradio, poslovnica,
+                       tip_kartice, broj_kartice, broj_potvrde, broj_odobrenja
+                FROM uplate
+                WHERE danas::date = :d AND nacin = :n
+                ORDER BY danas NULLS LAST, kljuc
+            """), {"d": d, "n": nacin}).mappings().fetchall()
+            kljucevi = [r["kljuc"] for r in rows]
+            cekovi = []
+            if nacin == "Ček" and kljucevi:
+                cekovi = conn.execute(text("""
+                    SELECT c.uplata_kljuc, c.redni, to_char(c.datum, 'DD.MM.YYYY') AS datum,
+                           c.iznos, c.banka, bk.naziv AS banka_klijenta_naziv, c.serijski_broj
+                    FROM cekovi c LEFT JOIN banke bk ON bk.id = c.banka_klijenta
+                    WHERE c.uplata_kljuc = ANY(:k)
+                    ORDER BY c.uplata_kljuc, c.redni
+                """), {"k": kljucevi}).mappings().fetchall()
+            ag = conn.execute(text("SELECT * FROM agencija ORDER BY id LIMIT 1")).fetchone()
+            logo_row = conn.execute(text(
+                "SELECT slika, slika_mime FROM dokumenti WHERE tip = 'logo'"
+            )).fetchone()
+
+        logo_data_url = None
+        if logo_row and logo_row.slika:
+            mime = logo_row.slika_mime or "image/png"
+            logo_data_url = f"data:{mime};base64,{logo_row.slika}"
+
+        uplate_by_kljuc = {}
+        uplate = []
+        for r in rows:
+            m = dict(r)
+            m["ugovor"] = str(m.get("faktura") or "").strip() or str(m.get("id") or "").strip()
+            uplate.append(m)
+            uplate_by_kljuc[m["kljuc"]] = m
+
+        cekovi_out = []
+        for c in cekovi:
+            u = uplate_by_kljuc.get(c["uplata_kljuc"], {})
+            cekovi_out.append({
+                "vreme": u.get("vreme"), "ugovor": u.get("ugovor"), "ime": u.get("ime"),
+                "redni": c["redni"], "datum": c["datum"], "iznos": c["iznos"],
+                "banka": c["banka"], "banka_klijenta_naziv": c["banka_klijenta_naziv"],
+                "serijski_broj": c["serijski_broj"],
+            })
+
+        pdf_bytes = build_pregled_uplata_pdf(
+            nacin=nacin,
+            datum_display=d.strftime("%d.%m.%Y"),
+            uplate=uplate,
+            cekovi=cekovi_out,
+            agencija=dict(ag._mapping) if ag else None,
+            logo_data_url=logo_data_url,
+        )
+        ime_fajla = {"Gotovina": "Gotovina", "Ček": "Cek", "Kartica": "Kartica"}[nacin]
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition":
+                     f'attachment; filename="Pregled_uplata_{ime_fajla}_{d.strftime("%d-%m-%Y")}.pdf"'},
+        )
 
     @api.get("/pregledi/prodaja-aranzmana/pdf")
     def pregled_prodaja_aranzmana_pdf(
@@ -4621,14 +4799,29 @@ def create_app(static_dir: str) -> FastAPI:
 
         with engine.begin() as conn:
             urow = conn.execute(text(
-                "SELECT u.id, u.first_name, u.last_name, u.status, p.naziv AS poslovnica_naziv "
+                "SELECT u.id, u.first_name, u.last_name, u.status, u.is_superadmin, "
+                "ut.slug AS tip_slug, p.naziv AS poslovnica_naziv "
                 "FROM users u LEFT JOIN poslovnice p ON p.id = u.poslovnica_id "
+                "LEFT JOIN user_types ut ON ut.id = u.user_type_id "
                 "WHERE u.id = :id"
             ), {"id": user_id}).fetchone()
             if not urow:
                 raise HTTPException(status_code=401, detail="Neautorizovan pristup")
             if (urow.status or "") != "aktivan":
                 raise HTTPException(status_code=403, detail="Nalog je neaktivan")
+
+            # datum uplate: samo računovodstvo (i superadmin); uplate.danas = izabrani dan + sada vreme
+            danas_unosa = _belgrade_now()
+            if body.datum:
+                if not (urow.is_superadmin or urow.tip_slug == "racunovodstvo"):
+                    raise HTTPException(status_code=403, detail="Nemate pravo da menjate datum uplate")
+                try:
+                    datum_uplate = datetime.strptime(body.datum.strip(), "%Y-%m-%d").date()
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Neispravan datum uplate")
+                if datum_uplate > danas_unosa.date():
+                    raise HTTPException(status_code=400, detail="Datum uplate ne može biti u budućnosti")
+                danas_unosa = datetime.combine(datum_uplate, danas_unosa.time())
 
             # ugovor: tačan ključ (33333/26) ili broj pre kose crte (33333)
             if "/" in ugovor:
@@ -4670,7 +4863,7 @@ def create_app(static_dir: str) -> FastAPI:
                 RETURNING kljuc
             """), {
                 "id": ugovor_id,
-                "danas": _belgrade_now(),
+                "danas": danas_unosa,
                 "ime": ime,
                 "adresa": adresa,
                 "nacin": nacin,
@@ -4842,12 +5035,19 @@ def create_app(static_dir: str) -> FastAPI:
                     WHERE aranzman_id = :i AND UPPER(TRIM(saputnik)) = :ime
                     ORDER BY id LIMIT 1
                 """), {"i": ar["id"], "ime": ime_up}).mappings().first()
-        # Preostalo za uplatu (EUR) = naplata ugovora − zbir uplata (isto kao Pregled uplata)
+        # Preostalo za uplatu (EUR) = cena aranžmana − zbir uplata. Cena kao u rezervaciji/ugovoru:
+        # naplata − cenadod (zamenjen dodatnim uslugama) + dodatne usluge (tabela dodatne, po ključu ugovora)
         preostalo_eur = None
         if ar:
             uplate_ug = _uplate_za_ugovor(ar["kljuc"])
             uplaceno_eur = sum((r.get("suma_eur") or 0) for r in uplate_ug)
-            preostalo_eur = round(calc_ugovor_values(dict(ar), dodatni_za_ugovor(ar["kljuc"]))["naplata"] - uplaceno_eur, 2)
+            with engine.connect() as conn:
+                deur = conn.execute(text(
+                    "SELECT COALESCE(SUM(eur), 0) FROM dodatne WHERE ugovor = :k"
+                ), {"k": ar["kljuc"]}).scalar_one()
+            naplata_eur = calc_ugovor_values(dict(ar), dodatni_za_ugovor(ar["kljuc"]))["naplata"]
+            cena_eur = naplata_eur - float(ar.get("cenadod") or 0) + float(deur or 0)
+            preostalo_eur = round(cena_eur - uplaceno_eur, 2)
 
         logo_data_url = None
         if logo_row and logo_row.slika:
@@ -4990,6 +5190,7 @@ def create_app(static_dir: str) -> FastAPI:
             }
             conn.execute(text("""
                 UPDATE aranzman SET
+                    smestaj_id = :smestaj_id,
                     naziv = :naziv,
                     mesto = :mesto,
                     destinacija = :destinacija,
@@ -4999,7 +5200,7 @@ def create_app(static_dir: str) -> FastAPI:
                     datumdo = :datumdo,
                     datumoddo = :datumoddo
                 WHERE id = :id
-            """), {"id": arow.id, **novi_smestaj})
+            """), {"id": arow.id, "smestaj_id": brow.smestaj_id, **novi_smestaj})
             uid, uime = log_user(conn, current_user)
             zabelezi(conn, kljuc, OBLAST_REZERVACIJA, "smestaj_promenjen", uid, uime,
                      podeli_po_oblastima(dict(arow._mapping), novi_smestaj).get(OBLAST_REZERVACIJA, []))
@@ -6774,9 +6975,13 @@ def create_app(static_dir: str) -> FastAPI:
             "pib", "mb", "jbkjs", "jmbg",
             "tekuci_racun1", "banka1", "tekuci_racun2", "banka2",
             "tekuci_racun3", "banka3", "tekuci_racun4", "banka4",
-            "lice_reklamacije",
+            "lice_reklamacije", "opis_smestaja_ugovor", "struktura_ugovor",
         ]
         fields = {k: v for k, v in data.items() if k in allowed}
+        if "opis_smestaja_ugovor" in fields and fields["opis_smestaja_ugovor"] not in ("kratak", "dugacak"):
+            raise HTTPException(status_code=400, detail="Opis smeštaja za ugovor mora biti kratak ili dugacak")
+        if "struktura_ugovor" in fields and fields["struktura_ugovor"] not in ("osnovna", "promenjena"):
+            raise HTTPException(status_code=400, detail="Struktura na ugovoru mora biti osnovna ili promenjena")
         if not fields:
             return {"ok": True}
         set_clause = ", ".join(f"{k} = :{k}" for k in fields)

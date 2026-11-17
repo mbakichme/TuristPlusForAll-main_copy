@@ -43,3 +43,35 @@ def register_dashboard(api, engine, get_current_user) -> None:
         out = [{k: r[k] for k in ("kljuc", "nosioc", "mesto", "smestaj",
                                   "datumod", "datumdo", "soba", "struktura", "obradio")} for r in rows]
         return {"datum": danas.strftime("%d.%m.%Y"), "ukupno": len(out), "rows": out}
+
+    @api.get("/predrezervacije-istekle")
+    def predrezervacije_istekle(current_user: dict = Depends(get_current_user)):
+        """Predrezervacije kojima je istekao timelimit (ista definicija kao kategorija
+        'predrezervacija_istekla' u Grafiku: tip PREDREZERVACIJA / LAST MINUTE, timelimit <= sada).
+        Storno se ne uzima; ugovori sa nacin_placanja = 'delimicno' (Tip plaćanja: delimično)
+        se ne prikazuju. Jedan red po ugovoru."""
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT DISTINCT ON (a.kljuc)
+                       a.kljuc,
+                       a.putnik AS nosioc,
+                       a.mesto,
+                       a.naziv AS smestaj,
+                       a.tiprezervacije,
+                       to_char(a.datumod, 'DD.MM.YYYY') AS datumod,
+                       to_char(a.datumdo, 'DD.MM.YYYY') AS datumdo,
+                       to_char(a.timelimit, 'DD.MM.YYYY HH24:MI') AS timelimit,
+                       a.timelimit AS timelimit_ts,
+                       a.obradio
+                FROM aranzman a
+                WHERE UPPER(TRIM(COALESCE(a.tiprezervacije, ''))) IN ('PREDREZERVACIJA', 'LAST MINUTE')
+                  AND a.timelimit IS NOT NULL
+                  AND a.timelimit <= :sada
+                  AND COALESCE(TRIM(a.nacin_placanja), '') <> 'delimicno'
+                  AND a.kljuc IS NOT NULL AND a.kljuc <> ''
+                ORDER BY a.kljuc, a.id
+            """), {"sada": datetime.now(BELGRADE).replace(tzinfo=None)}).mappings().fetchall()
+        rows = sorted(rows, key=lambda r: r["timelimit_ts"])
+        out = [{k: r[k] for k in ("kljuc", "nosioc", "mesto", "smestaj", "tiprezervacije",
+                                  "datumod", "datumdo", "timelimit", "obradio")} for r in rows]
+        return {"ukupno": len(out), "rows": out}
