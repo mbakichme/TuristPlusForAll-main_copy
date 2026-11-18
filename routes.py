@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from datetime import date as SubDate
 from decimal import Decimal
 from typing import Optional, List
+from types import SimpleNamespace
 from urllib.parse import quote
 
 from fastapi import FastAPI, APIRouter, Request, Depends, HTTPException, UploadFile, File, Query
@@ -38,7 +39,14 @@ from blagajna_api import init_blagajna, register_blagajna
 from avansni_racuni_api import init_avansni_racuni, register_avansni_pregled
 from notifikacije_api import init_notifikacije, register_notifikacije
 from profil_api import init_profil, register_profil
+from subagent_api import (
+    SCOPE_REZERVACIJA, SCOPE_PRETRAGA,
+    autentifikuj_subagenta,
+    init_subagent_api, register_subagent_api, sinhronizuj_nakon_izmene, sinhronizuj_subagenta,
+    deaktiviraj_pre_brisanja, ensure_super_admin_subagent, je_zasticen,
+)
 from dashboard_api import register_dashboard
+from app2_sync import register_app2_sync, sinhronizuj_posle_izmene
 from obracun_po_aranzmanu import init_obracun_po_aranzmanu, obracun_iz_rezervacije, varijante_cene
 from rezervacija_log import (
     OBLAST_OBRACUN, OBLAST_SAPUTNICI, OBLAST_UPLATA, OBLAST_REZERVACIJA,
@@ -207,11 +215,17 @@ def init_db(engine):
 
         # Seed superadmin — always update password hash to ensure compatibility
         superadmin_pass = hash_password("admin123")
-        conn.execute(text("""
-            INSERT INTO users (first_name, last_name, email, username, password_hash, status, is_superadmin)
-            VALUES ('Super', 'Admin', 'www@oktopod.rs', 'superadmin', :pw, 'aktivan', TRUE)
-            ON CONFLICT (email) DO UPDATE SET password_hash = :pw
-        """), {"pw": superadmin_pass})
+        postojeci_sa = conn.execute(text(
+            "SELECT email FROM users WHERE username = 'superadmin'"
+        )).first()
+        if postojeci_sa is None or postojeci_sa.email == "www@oktopod.rs":
+            conn.execute(text("""
+                INSERT INTO users (first_name, last_name, email, username, password_hash, status, is_superadmin)
+                VALUES ('Super', 'Admin', 'www@oktopod.rs', 'superadmin', :pw, 'aktivan', TRUE)
+                ON CONFLICT (email) DO UPDATE SET password_hash = :pw
+            """), {"pw": superadmin_pass})
+        else:
+            print(f"[seed] superadmin već postoji sa emailom {postojeci_sa.email}; seed preskočen")
 
         # ── New tables ──────────────────────────────────────────────────────
         conn.execute(text("""
@@ -295,6 +309,21 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS provizija INTEGER NOT NULL DEFAULT 10"
         ))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS polazak (
+                id SERIAL PRIMARY KEY,
+                destinacija VARCHAR(60) DEFAULT NULL,
+                polazak VARCHAR(60) DEFAULT NULL,
+                sat VARCHAR(10) DEFAULT NULL,
+                valuta VARCHAR(3) DEFAULT NULL,
+                adlrt DOUBLE PRECISION DEFAULT NULL,
+                chdrt DOUBLE PRECISION DEFAULT NULL,
+                infrt DOUBLE PRECISION DEFAULT NULL,
+                adlow DOUBLE PRECISION DEFAULT NULL,
+                chdow DOUBLE PRECISION DEFAULT NULL,
+                infow DOUBLE PRECISION DEFAULT NULL
+            )
+        """))
         conn.execute(text(
             "ALTER TABLE IF EXISTS polazak ADD COLUMN IF NOT EXISTS cena_transfera DOUBLE PRECISION NULL"
         ))
@@ -1878,6 +1907,8 @@ def _obracun_argumenti(body, vals: dict) -> dict:
 
 def create_app(static_dir: str) -> FastAPI:
     engine = get_engine()
+    # Read-only engine za sub_ rute (App2 pretraga); bez SEARCH_DATABASE_URL = lokalni engine.
+    search_engine = db_config.get_search_engine(engine)
     init_db(engine)
     init_cenovnici(engine)
     init_koeficijenti(engine)
@@ -1909,7 +1940,15 @@ def create_app(static_dir: str) -> FastAPI:
     register_notifikacije(api, engine, get_current_user)
     register_rezervacija_log(api, engine, get_current_user)
     register_profil(api, engine, get_current_user, hash_password, verify_password)
+    register_subagent_api(api, engine, get_current_user)
+    register_app2_sync(api, engine)
     register_dashboard(api, engine, get_current_user)
+
+    # Read rute pretrage: prihvataju korisnika (JWT) ili App2 subagenta (X-Client-Id/Secret).
+    def get_caller_or_subagent(request: Request):
+        if request.headers.get("X-Client-Id"):
+            return autentifikuj_subagenta(engine, request)
+        return get_current_user(request)
 
     # ── Health ──────────────────────────────────────────────────────────────
     @api.get("/health")
@@ -2227,6 +2266,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Destinacija ─────────────────────────────────────────────────────────
     @api.get("/destinacija")
     def list_destinacija(_: dict = Depends(get_current_user)):
+        return _destinacija_upit(engine)
+
+    @api.get("/sub_destinacija")
+    def sub_destinacija(_: dict = Depends(get_caller_or_subagent)):
+        return _destinacija_upit(search_engine)
+
+    def _destinacija_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT d.id, d.naziv, d.drzava, d.status, d.organizator,
@@ -2307,6 +2353,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/mesto")
     def list_mesto(_: dict = Depends(get_current_user)):
+        return _mesto_upit(engine)
+
+    @api.get("/sub_mesto")
+    def sub_mesto(_: dict = Depends(get_caller_or_subagent)):
+        return _mesto_upit(search_engine)
+
+    def _mesto_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT m.id, m.naziv, m.drzava, m.destinacija, m.grupa_datuma, m.status,
@@ -2524,6 +2577,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Smestaj ─────────────────────────────────────────────────────────────
     @api.get("/smestaj")
     def list_smestaj(_: dict = Depends(get_current_user)):
+        return _smestaj_upit(engine)
+
+    @api.get("/sub_smestaj")
+    def sub_smestaj(_: dict = Depends(get_caller_or_subagent)):
+        return _smestaj_upit(search_engine)
+
+    def _smestaj_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT s.id, s.naziv, s.drzava, s.destinacija, s.mesto, s.tip_smestaja,
@@ -2644,6 +2704,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Sobe (veza na smestaj: više soba → jedan smeštaj) ──────────────────
     @api.get("/sobe")
     def list_sobe(request: Request, _: dict = Depends(get_current_user)):
+        return _sobe_upit(engine, request)
+
+    @api.get("/sub_sobe")
+    def sub_sobe(request: Request, _: dict = Depends(get_caller_or_subagent)):
+        return _sobe_upit(search_engine, request)
+
+    def _sobe_upit(engine, request: Request):
         q = (request.query_params.get("q") or "").strip()
         where = ""
         bind = {}
@@ -2789,6 +2856,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/polazak")
     def list_polazak(_: dict = Depends(get_current_user)):
+        return _polazak_upit(engine)
+
+    @api.get("/sub_polazak")
+    def sub_polazak(_: dict = Depends(get_caller_or_subagent)):
+        return _polazak_upit(search_engine)
+
+    def _polazak_upit(engine):
         with engine.connect() as conn:
             return _polazak_sa_nazivima(conn)
 
@@ -3240,6 +3314,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/slobodne-sobe")
     def slobodne_sobe(request: Request, _: dict = Depends(get_current_user)):
+        return _slobodne_sobe_upit(engine, request)
+
+    @api.get("/sub_slobodne-sobe")
+    def sub_slobodne_sobe(request: Request, _: dict = Depends(get_caller_or_subagent)):
+        return _slobodne_sobe_upit(search_engine, request)
+
+    def _slobodne_sobe_upit(engine, request: Request):
         q = dict(request.query_params)
         od = (q.get("datum_od") or "").strip()
         do = (q.get("datum_do") or "").strip()
@@ -3638,7 +3719,9 @@ def create_app(static_dir: str) -> FastAPI:
                     ORDER BY a.kljuc
                 """), {"naziv": srow.naziv, "sid": srow.id, "mpref": mpref,
                        "g": grupa_id, "m": srow.mesto}).fetchall()
-                # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora
+                # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora.
+                # Dodatni popusti jednim batch upitom (ne po ugovoru — N+1 je usporavao grafik).
+                popusti_po_kljucu = dodatni_za_ugovori([r.kljuc for r in ugovori])
                 ugovori_out = []
                 upl_eur = uplate_eur_za(ugovori)
                 for r in ugovori:
@@ -3692,6 +3775,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Periodi ─────────────────────────────────────────────────────────────
     @api.get("/period-grupa")
     def list_period_grupa(_: dict = Depends(get_current_user)):
+        return _period_grupa_upit(engine)
+
+    @api.get("/sub_period-grupa")
+    def sub_period_grupa(_: dict = Depends(get_caller_or_subagent)):
+        return _period_grupa_upit(search_engine)
+
+    def _period_grupa_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT g.id, g.naziv, g.created_at,
@@ -5741,11 +5831,8 @@ def create_app(static_dir: str) -> FastAPI:
                 "INSERT INTO dodatne (ugovor, usluga, eur, din) VALUES (:u, :usluga, :eur, :din)"
             ), {"u": ugovor, **vals})
 
-    @api.post("/rezervacije", status_code=201)
-    def kreiraj_rezervaciju(body: RezervacijaIn, current_user: dict = Depends(get_current_user)):
-        """Sačuvaj — novi ugovor. Broj = MAX(broj) unutar godine iz Datuma od + 1,
-        pod advisory lock-om + UNIQUE(kljuc) kao poslednjom odbranom od duplikata."""
-        urow = _rez_user_row(current_user)
+    def _sacuvaj_novu_rezervaciju(body: RezervacijaIn, urow, uid, uime) -> str:
+        """Dodela broja i upis novog aranžmana (zajedničko za korisnika i App2 subagenta)."""
         datum_od_d = _rez_datum(body.boravak.datumOd, "Datum od")
         if datum_od_d is None:
             raise HTTPException(status_code=400, detail="Datum od je obavezan")
@@ -5773,17 +5860,44 @@ def create_app(static_dir: str) -> FastAPI:
                     obracun_iz_rezervacije(conn, aid, **_obracun_argumenti(body, vals))
                     if body.transferi:
                         rez_transferi_upisi(conn, kljuc, body.transferi)
-                    uid, uime = log_user(conn, current_user)
                     for oblast, promene in podeli_po_oblastima({}, vals).items():
                         zabelezi(conn, kljuc, oblast, "kreirana", uid, uime, promene)
                     zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "kreirana", uid, uime,
                              diff_saputnike([], rez_saputnici_snimak(body.saputnici, conn)))
-                return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
+                return kljuc
             except IntegrityError:
                 # UNIQUE(kljuc) — import je ubacio isti broj u međuvremenu;
                 # preskoči na sledeći slobodan broj
                 continue
         raise HTTPException(status_code=500, detail="Dodela broja ugovora nije uspela — pokušajte ponovo")
+
+    @api.post("/rezervacije", status_code=201)
+    def kreiraj_rezervaciju(body: RezervacijaIn, current_user: dict = Depends(get_current_user)):
+        """Sačuvaj — novi ugovor. Broj = MAX(broj) unutar godine iz Datuma od + 1,
+        pod advisory lock-om + UNIQUE(kljuc) kao poslednjom odbranom od duplikata."""
+        urow = _rez_user_row(current_user)
+        with engine.connect() as conn:
+            uid, uime = log_user(conn, current_user)
+        kljuc = _sacuvaj_novu_rezervaciju(body, urow, uid, uime)
+        sinhronizuj_posle_izmene(engine, kljuc)
+        return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
+
+    @api.post("/sub_rezervacije", status_code=201)
+    def sub_kreiraj_rezervaciju(body: RezervacijaIn, request: Request):
+        """Sačuvaj — novi ugovor iz App2 subagenta (X-Client-Id / X-Client-Secret).
+        Subagent se izvodi iz API klijenta na serveru; polje `subagent` iz tela se ignoriše."""
+        klijent = autentifikuj_subagenta(engine, request, SCOPE_REZERVACIJA)
+        with engine.connect() as conn:
+            naziv = conn.execute(text("SELECT naziv FROM subagenti WHERE id = :i"),
+                                 {"i": klijent["subagent_id"]}).scalar()
+        if not naziv:
+            raise HTTPException(status_code=403, detail="Subagent nije pronađen")
+        body = body.model_copy(update={"subagent": naziv})
+        urow = SimpleNamespace(id=None, first_name=naziv, last_name="(subagent)",
+                               status="aktivan", poslovnica_naziv=None)
+        kljuc = _sacuvaj_novu_rezervaciju(body, urow, None, f"{naziv} (subagent)")
+        sinhronizuj_posle_izmene(engine, kljuc)
+        return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
 
     @api.put("/rezervacije/{kljuc:path}")
     def izmeni_rezervaciju(kljuc: str, body: RezervacijaIn,
@@ -5821,6 +5935,7 @@ def create_app(static_dir: str) -> FastAPI:
                 zabelezi(conn, kljuc, oblast, "izmena", uid, uime, promene)
             zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "izmena", uid, uime,
                      diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici, conn)))
+        sinhronizuj_posle_izmene(engine, kljuc)
         return {"ok": True, "kljuc": kljuc, "message": "Izmene su sačuvane"}
 
     @api.get("/keptp/ugovor/{kljuc:path}")
@@ -6485,6 +6600,9 @@ def create_app(static_dir: str) -> FastAPI:
                 SELECT s.id, s.naziv, s.adresa, s.mesto, s.osoba, s.tel, s.tel1,
                        s.tel2, s.fax, s.racun, s.provizija, s.punnaziv, s.kontakt,
                        s.pib, s.matbroj, s.email, s.ugovor_broj, s.ugovor_datumod, s.ugovor_datumdo, s.ta,
+                       s.is_active, s.zasticen,
+                       (SELECT c.sync_status FROM subagent_api_clients c
+                         WHERE c.subagent_id = s.id AND c.is_active LIMIT 1) AS api_sync,
                        COALESCE(cnt.c, 0) AS broj_ugovora
                 FROM subagenti s
                 LEFT JOIN cnt ON cnt.subagent = s.naziv AND s.naziv <> ''
@@ -6524,25 +6642,52 @@ def create_app(static_dir: str) -> FastAPI:
                         COALESCE(:ugovor_broj, ''), :ugovor_datumod, :ugovor_datumdo, COALESCE(:ta, true))
                 RETURNING id
             """), body.model_dump()).fetchone()
-        return {"id": row.id}
+        status, greska = sinhronizuj_subagenta(engine, row.id)
+        return {"id": row.id, "api_sync": status, "api_sync_error": greska}
 
     @api.put("/subagenti/{item_id}")
     def update_subagent(item_id: int, body: SubagentUpdate, _: dict = Depends(get_current_user)):
         fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if not (k == "naziv" and v is None)}
         if not fields:
             raise HTTPException(status_code=400, detail="Nema podataka za ažuriranje")
+        if je_zasticen(engine, item_id) and any(k in fields for k in ("pib", "email")):
+            raise HTTPException(
+                status_code=403,
+                detail="Email i PIB subagenta superadmina su zaključani",
+            )
         set_clause = ", ".join(f"{k} = :{k}" for k in fields)
         fields["id"] = item_id
         with engine.begin() as conn:
+            stari = conn.execute(text(
+                "SELECT pib, email FROM subagenti WHERE id = :id"
+            ), {"id": item_id}).fetchone()
             row = conn.execute(text(
                 f"UPDATE subagenti SET {set_clause} WHERE id = :id RETURNING id"
             ), fields).fetchone()
-        if not row:
+        if not row or stari is None:
             raise HTTPException(status_code=404, detail="Subagent nije pronađen")
-        return {"id": row.id}
+        kljucna = any(
+            k in fields and fields[k] != (getattr(stari, k) or "") for k in ("pib", "email")
+        )
+        status, greska = sinhronizuj_nakon_izmene(engine, row.id, kljucna_promena=kljucna)
+        return {"id": row.id, "api_sync": status, "api_sync_error": greska}
 
     @api.delete("/subagenti/{item_id}")
     def delete_subagent(item_id: int, _: dict = Depends(get_current_user)):
+        if je_zasticen(engine, item_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Subagent superadmina se ne može obrisati",
+            )
+        try:
+            status, greska = deaktiviraj_pre_brisanja(engine, item_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Subagent nije pronađen")
+        if status != "deactivated":
+            raise HTTPException(
+                status_code=502,
+                detail=f"Subagent nije obrisan: App2 nije deaktivirao vezu ({greska})",
+            )
         with engine.begin() as conn:
             row = conn.execute(text(
                 "DELETE FROM subagenti WHERE id = :id RETURNING id"
