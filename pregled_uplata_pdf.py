@@ -22,7 +22,7 @@ from priznanica_pdf import _ensure_fonts, _logo_flowable
 BLACK = colors.black
 WHITE = colors.white
 
-NACIN_NASLOV = {"Gotovina": "GOTOVINA", "Ček": "ČEK", "Kartica": "KARTICA"}
+NACIN_NASLOV = {"Gotovina": "GOTOVINA", "Ček": "ČEK", "Kartica": "KARTICA", "Virman": "VIRMAN"}
 
 
 def _fmt(v, dec=2):

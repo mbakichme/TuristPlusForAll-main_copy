@@ -34,6 +34,8 @@ from zabrana_api import init_zabrana, register_zabrana
 from saglasnost_pdf import init_saglasnost
 from dobavljaci_api import init_dobavljaci, register_dobavljaci
 from banke_api import init_banke, register_banke
+from blagajna_api import init_blagajna, register_blagajna
+from avansni_racuni_api import init_avansni_racuni, register_avansni_pregled
 from notifikacije_api import init_notifikacije, register_notifikacije
 from profil_api import init_profil, register_profil
 from dashboard_api import register_dashboard
@@ -834,6 +836,15 @@ def init_db(engine):
               )
         """))
         conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS cis_oznake (
+                id SERIAL PRIMARY KEY,
+                mesto_id INTEGER NOT NULL REFERENCES mesto(id) ON DELETE CASCADE,
+                grupa_datuma INTEGER NOT NULL REFERENCES period_grupa(id) ON DELETE CASCADE,
+                cis_oznaka VARCHAR(100) NOT NULL,
+                UNIQUE (mesto_id, grupa_datuma)
+            )
+        """))
+        conn.execute(text("""
             ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS grupa_datuma INTEGER REFERENCES period_grupa(id) ON DELETE SET NULL
         """))
         conn.execute(text("""
@@ -1031,6 +1042,18 @@ class MestoCreate(BaseModel):
     predstavnik: Optional[int] = None
     grafik: Optional[int] = 0
     cis: Optional[str] = None
+
+
+class CisOznakaCreate(BaseModel):
+    mesto_id: int
+    grupa_datuma: int
+    cis_oznaka: str
+
+
+class CisOznakaUpdate(BaseModel):
+    mesto_id: Optional[int] = None
+    grupa_datuma: Optional[int] = None
+    cis_oznaka: Optional[str] = None
 
 
 class MestoUpdate(BaseModel):
@@ -1869,6 +1892,8 @@ def create_app(static_dir: str) -> FastAPI:
     init_notifikacije(engine)
     init_rezervacija_log(engine)
     init_obracun_po_aranzmanu(engine)
+    init_avansni_racuni(engine)
+    init_blagajna(engine)
 
     api = APIRouter()
     register_cenovnici(api, engine, get_current_user)
@@ -1879,6 +1904,8 @@ def create_app(static_dir: str) -> FastAPI:
     register_zaduzenje(api, engine, get_current_user)
     register_dobavljaci(api, engine, get_current_user)
     register_banke(api, engine, get_current_user)
+    register_blagajna(api, engine, get_current_user)
+    register_avansni_pregled(api, engine, get_current_user)
     register_notifikacije(api, engine, get_current_user)
     register_rezervacija_log(api, engine, get_current_user)
     register_profil(api, engine, get_current_user, hash_password, verify_password)
@@ -2368,6 +2395,75 @@ def create_app(static_dir: str) -> FastAPI:
             "organizator": row.organizator, "predstavnik": row.predstavnik,
             "grafik": row.grafik, "cis": row.cis,
         }
+
+    @api.get("/cis-oznake")
+    def list_cis_oznake(_: dict = Depends(get_current_user)):
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT c.id, c.mesto_id, c.grupa_datuma, c.cis_oznaka,
+                       m.naziv AS mesto_naziv, pg.naziv AS grupa_datuma_naziv
+                FROM cis_oznake c
+                JOIN mesto m ON m.id = c.mesto_id
+                JOIN period_grupa pg ON pg.id = c.grupa_datuma
+                ORDER BY m.naziv, pg.naziv, c.id
+            """)).fetchall()
+        return [{
+            "id": r.id, "mesto_id": r.mesto_id, "mesto_naziv": r.mesto_naziv,
+            "grupa_datuma": r.grupa_datuma, "grupa_datuma_naziv": r.grupa_datuma_naziv,
+            "cis_oznaka": r.cis_oznaka,
+        } for r in rows]
+
+    @api.post("/cis-oznake")
+    def create_cis_oznaka(body: CisOznakaCreate, _: dict = Depends(get_current_user)):
+        oznaka = body.cis_oznaka.strip()
+        if not oznaka:
+            raise HTTPException(status_code=400, detail="CIS oznaka je obavezna")
+        with engine.begin() as conn:
+            postoji = conn.execute(text(
+                "SELECT 1 FROM cis_oznake WHERE mesto_id = :m AND grupa_datuma = :g"
+            ), {"m": body.mesto_id, "g": body.grupa_datuma}).fetchone()
+            if postoji:
+                raise HTTPException(status_code=409, detail="Za ovo mesto i grupu datuma CIS oznaka već postoji")
+            row = conn.execute(text("""
+                INSERT INTO cis_oznake (mesto_id, grupa_datuma, cis_oznaka)
+                VALUES (:m, :g, :o)
+                RETURNING id, mesto_id, grupa_datuma, cis_oznaka
+            """), {"m": body.mesto_id, "g": body.grupa_datuma, "o": oznaka}).fetchone()
+        return {"id": row.id, "mesto_id": row.mesto_id, "grupa_datuma": row.grupa_datuma, "cis_oznaka": row.cis_oznaka}
+
+    @api.put("/cis-oznake/{item_id}")
+    def update_cis_oznaka(item_id: int, body: CisOznakaUpdate, _: dict = Depends(get_current_user)):
+        fields = {k: v for k, v in body.model_dump().items() if v is not None}
+        if "cis_oznaka" in fields:
+            fields["cis_oznaka"] = fields["cis_oznaka"].strip()
+            if not fields["cis_oznaka"]:
+                raise HTTPException(status_code=400, detail="CIS oznaka je obavezna")
+        if not fields:
+            raise HTTPException(status_code=400, detail="Nema podataka za ažuriranje")
+        set_clause = ", ".join(f"{k} = :{k}" for k in fields)
+        fields["id"] = item_id
+        with engine.begin() as conn:
+            try:
+                row = conn.execute(text(f"""
+                    UPDATE cis_oznake SET {set_clause}
+                    WHERE id = :id
+                    RETURNING id, mesto_id, grupa_datuma, cis_oznaka
+                """), fields).fetchone()
+            except IntegrityError:
+                raise HTTPException(status_code=409, detail="Za ovo mesto i grupu datuma CIS oznaka već postoji")
+            if not row:
+                raise HTTPException(status_code=404, detail="CIS oznaka nije pronađena")
+        return {"id": row.id, "mesto_id": row.mesto_id, "grupa_datuma": row.grupa_datuma, "cis_oznaka": row.cis_oznaka}
+
+    @api.delete("/cis-oznake/{item_id}")
+    def delete_cis_oznaka(item_id: int, _: dict = Depends(get_current_user)):
+        with engine.begin() as conn:
+            result = conn.execute(text(
+                "DELETE FROM cis_oznake WHERE id = :id RETURNING id"
+            ), {"id": item_id}).fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="CIS oznaka nije pronađena")
+        return {"ok": True}
 
     @api.delete("/mesto/{item_id}")
     def delete_mesto(item_id: int, _: dict = Depends(get_current_user)):
@@ -3136,14 +3232,11 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/obracun/varijante-cene")
     def obracun_varijante_cene(smestaj_id: int, soba_id: int, datumod: SubDate, datumdo: SubDate,
-                               adl: int = 0, chd: int = 0, inf: int = 0,
                                _: dict = Depends(get_current_user)):
         if datumdo <= datumod:
             raise HTTPException(status_code=400, detail="datumdo mora biti posle datumod")
-        if min(adl, chd, inf) < 0 or adl + chd + inf == 0:
-            raise HTTPException(status_code=400, detail="Unesite bar jednog putnika")
         with engine.connect() as conn:
-            return varijante_cene(conn, smestaj_id, soba_id, datumod, datumdo, adl, chd, inf)
+            return varijante_cene(conn, smestaj_id, soba_id, datumod, datumdo)
 
     @api.get("/slobodne-sobe")
     def slobodne_sobe(request: Request, _: dict = Depends(get_current_user)):
@@ -3432,6 +3525,42 @@ def create_app(static_dir: str) -> FastAPI:
                         {k: r[k] for k in ("id", "naziv", "eur", "rsd", "procenat")})
                 return out
 
+            def uplate_eur_za(ugovori_rows):
+                """Uplaćeno po ugovoru u EUR = zbir uplata (uplate.din / kurs na dan uplate),
+                ista logika kao _uplate_za_ugovor u detalju ugovora. Kolona aranzman.uplaceno
+                se ne koristi jer nije ažurirana uplatama."""
+                out: dict = {}
+                brojevi = {}
+                for r in ugovori_rows:
+                    b = str(r.kljuc or "").strip().strip("/").split("/")[0]
+                    if b:
+                        brojevi[r.kljuc] = b
+                if not brojevi:
+                    return out
+                fakture = sorted(set(brojevi.values()))
+                ids = [int(b) for b in fakture if b.isdigit()] or [0]
+                urows = conn.execute(text(
+                    "SELECT id, COALESCE(faktura, '') AS f, din, danas FROM uplate "
+                    "WHERE COALESCE(faktura, '') = ANY(:b) OR id = ANY(:ids)"
+                ), {"b": fakture, "ids": ids}).mappings().all()
+                kurs_po_datumu: dict = {}
+                for kljuc, b in brojevi.items():
+                    bn = int(b) if b.isdigit() else None
+                    suma = 0.0
+                    for u in urows:
+                        if u["f"] != b and not (bn is not None and u["id"] == bn):
+                            continue
+                        if u["din"] is None or u["danas"] is None:
+                            continue
+                        dan = u["danas"].date().isoformat()
+                        if dan not in kurs_po_datumu:
+                            kurs_po_datumu[dan] = get_eur_middle_za_datum(dan)[0]
+                        k_dan = kurs_po_datumu[dan]
+                        if k_dan and math.isfinite(k_dan) and k_dan > 0:
+                            suma += round(float(u["din"]) / k_dan, 2)
+                    out[kljuc] = round(suma, 2)
+                return out
+
             def pripremi(srows):
                 """Dodatni popusti + cenovnici za sve smeštaje odjednom."""
                 ids = [s.id for s in srows]
@@ -3511,8 +3640,11 @@ def create_app(static_dir: str) -> FastAPI:
                        "g": grupa_id, "m": srow.mesto}).fetchall()
                 # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora
                 ugovori_out = []
+                upl_eur = uplate_eur_za(ugovori)
                 for r in ugovori:
-                    calc = calc_ugovor_values(dict(r._mapping), dod_pre.get(r.kljuc, []))
+                    red = dict(r._mapping)
+                    red["uplaceno"] = upl_eur.get(r.kljuc, 0.0)
+                    calc = calc_ugovor_values(red, dod_pre.get(r.kljuc, []))
                     saldo_rsd = round(calc["saldo"] * kurs, 2)
                     kategorija = kategorija_grafika(
                         r.tiprezervacije, r.subagent, r.timelimit, saldo_rsd, sada
@@ -3706,10 +3838,12 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/kurs")
     def get_kurs(_: dict = Depends(get_current_user)):
-        kurs, datum = get_eur_rate(engine, _belgrade_now().date().isoformat())
+        danas = _belgrade_now().date()
+        kurs, datum = get_eur_rate(engine, danas.isoformat())
         return {
             "kurs": kurs,
             "datum": datetime.strptime(datum, "%Y-%m-%d").strftime("%d.%m.%Y") if datum else None,
+            "danas": danas.strftime("%d.%m.%Y"),
         }
 
     @api.get("/kurs/pregled")
@@ -3933,11 +4067,11 @@ def create_app(static_dir: str) -> FastAPI:
         nacin: str = "Gotovina",
         _: dict = Depends(get_current_user),
     ):
-        """PDF dnevnog pregleda uplata za izabrani način plaćanja (Gotovina / Ček / Kartica)."""
+        """PDF dnevnog pregleda uplata za izabrani način plaćanja (Gotovina / Ček / Kartica / Virman)."""
         import datetime
         from pregled_uplata_pdf import build_pregled_uplata_pdf
 
-        if nacin not in ("Gotovina", "Ček", "Kartica"):
+        if nacin not in ("Gotovina", "Ček", "Kartica", "Virman"):
             raise HTTPException(status_code=400, detail="Nepoznat način plaćanja")
         d = None
         if datum:
@@ -4005,7 +4139,7 @@ def create_app(static_dir: str) -> FastAPI:
             agencija=dict(ag._mapping) if ag else None,
             logo_data_url=logo_data_url,
         )
-        ime_fajla = {"Gotovina": "Gotovina", "Ček": "Cek", "Kartica": "Kartica"}[nacin]
+        ime_fajla = {"Gotovina": "Gotovina", "Ček": "Cek", "Kartica": "Kartica", "Virman": "Virman"}[nacin]
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -4208,7 +4342,9 @@ def create_app(static_dir: str) -> FastAPI:
             brojnum = int(broj)
         except ValueError:
             brojnum = None
-        sql = ("SELECT *, (SELECT COUNT(*) FROM cekovi c WHERE c.uplata_kljuc = uplate.kljuc) AS broj_cekova "
+        sql = ("SELECT *, (SELECT COUNT(*) FROM cekovi c WHERE c.uplata_kljuc = uplate.kljuc) AS broj_cekova, "
+               "EXISTS (SELECT 1 FROM avansni_racuni ar WHERE ar.napomena = 'Uplata ' || uplate.kljuc::text "
+               "AND ar.status_efaktura = '1') AS avans_sef_poslato "
                "FROM uplate WHERE COALESCE(faktura, '') = :broj")
         bind = {"broj": broj}
         if brojnum is not None:
@@ -4900,6 +5036,185 @@ def create_app(static_dir: str) -> FastAPI:
             "invoice_http_status": invoice_status or None,
             "invoice_odgovor": invoice_tekst,
         }
+
+    def _avans_priprema(kljuc: int) -> dict:
+        """Čita uplatu, agenciju, subagenta i ugovor i računa iznose. Ne upisuje i ne šalje ništa."""
+        from avansni_racuni_api import avans_vec_poslat
+
+        with engine.connect() as conn:
+            u = conn.execute(text("SELECT * FROM uplate WHERE kljuc = :k"), {"k": kljuc}).mappings().first()
+            if not u:
+                raise HTTPException(status_code=404, detail="Uplata nije pronađena")
+            if avans_vec_poslat(conn, kljuc):
+                raise HTTPException(status_code=409, detail="Avans za ovu uplatu je već poslat na SEF")
+            ag = conn.execute(text(
+                "SELECT naziv, poslovno_ime, pib, mb, ulica, broj, mesto, email1, tekuci_racun1, "
+                "api_kljuc_efakture FROM agencija ORDER BY id LIMIT 1"
+            )).mappings().first()
+            sub = conn.execute(text(
+                "SELECT naziv, punnaziv, pib, matbroj, adresa, mesto FROM subagenti "
+                "WHERE UPPER(TRIM(naziv)) = UPPER(TRIM(:n)) ORDER BY id LIMIT 1"
+            ), {"n": u["subagent"] or ""}).mappings().first()
+        if not (u["subagent"] or "").strip():
+            raise HTTPException(status_code=422, detail="Uplata nema subagenta")
+        if not sub:
+            raise HTTPException(status_code=422, detail="Subagent uplate nije pronađen u šifarniku")
+        if not ag or not (ag["pib"] or "").strip():
+            raise HTTPException(status_code=422, detail="PIB agencije nije podešen (Osnovni podaci)")
+        if not (ag["api_kljuc_efakture"] or "").strip():
+            raise HTTPException(status_code=422, detail="API ključ eFakture nije podešen (Osnovni podaci)")
+
+        broj_ugovora_bez_godine = str((u["faktura"] or "").strip() or u["id"])
+        with engine.connect() as conn:
+            ar = conn.execute(text(
+                "SELECT a.*, to_char(a.datumod, 'DD.MM.YYYY') AS od, to_char(a.datumdo, 'DD.MM.YYYY') AS do "
+                "FROM aranzman a WHERE split_part(a.kljuc, '/', 1) = :b ORDER BY a.id DESC LIMIT 1"
+            ), {"b": broj_ugovora_bez_godine}).mappings().first()
+        if not ar:
+            raise HTTPException(status_code=404, detail="Ugovor za uplatu nije pronađen")
+
+        # cena ugovora u EUR i preostalo — isto kao u ugovor_detail
+        uplate_ug = _uplate_za_ugovor(ar["kljuc"])
+        with engine.connect() as conn:
+            deur = conn.execute(text("SELECT COALESCE(SUM(eur), 0) FROM dodatne WHERE ugovor = :k"),
+                                {"k": ar["kljuc"]}).scalar_one()
+        naplata_eur = calc_ugovor_values(dict(ar), dodatni_za_ugovor(ar["kljuc"]))["naplata"]
+        cena_eur = round(naplata_eur - float(ar.get("cenadod") or 0) + float(deur or 0), 2)
+        kurs = get_eur_middle()
+        if not kurs:
+            raise HTTPException(status_code=422, detail="Srednji kurs EUR nije dostupan")
+        # uplate se svode na EUR po kursu datuma uplate (suma_eur), pa tek preostali EUR saldo ide u RSD
+        uplaceno_eur = round(sum(float(r["suma_eur"]) for r in uplate_ug if r.get("suma_eur") is not None), 2)
+        saldo_eur_uplate = round(cena_eur - uplaceno_eur, 2)
+
+        danas = _belgrade_now()
+        return {
+            "kljuc": kljuc,
+            "u": u,
+            "ag": ag,
+            "sub": sub,
+            "ar": ar,
+            "saldo_rsd": round(saldo_eur_uplate * kurs, 2),
+            "iznos_din": round(float(u["din"] or 0), 2),
+            "danas": danas,
+            "datum_uplate": u["danas"] or danas,
+            "godina": ar["datumod"].year if ar["datumod"] else danas.year,
+            "od": ar.get("od") or "",
+            "do": ar.get("do") or "",
+            "nosilac": (ar.get("putnik") or u["ime"] or "").strip(),
+        }
+
+    def _avans_xml(p: dict, faktura: str) -> str:
+        """UBL 2.1 XML fakture avansa za pripremljene podatke i dati broj."""
+        from avansni_racuni_api import build_ubl_avans_xml
+
+        u, ag, sub, ar = p["u"], p["ag"], p["sub"], p["ar"]
+        return build_ubl_avans_xml(
+            faktura=faktura,
+            danas=p["danas"].date(),
+            datum=p["datum_uplate"].date(),
+            ugovor_racun=ar["kljuc"],
+            pib=(ag["pib"] or "").strip(),
+            poslovno_ime=(ag["poslovno_ime"] or ag["naziv"] or "").strip(),
+            mb=(ag["mb"] or "").strip(),
+            adresa=f"{ag['ulica'] or ''} {ag['broj'] or ''}".strip(),
+            mesto=(ag["mesto"] or "").strip(),
+            email=(ag["email1"] or "").strip(),
+            pib_kupca=(sub["pib"] or "").strip(),
+            poslovno_ime_kupca=(sub["punnaziv"] or sub["naziv"] or "").strip(),
+            mb_kupca=(sub["matbroj"] or "").strip(),
+            adresa_kupca=(sub["adresa"] or "").strip(),
+            mesto_kupca=(sub["mesto"] or "").strip(),
+            jbkjs="",
+            racun=(ag["tekuci_racun1"] or "").strip(),
+            iznos=f"{p['iznos_din']:.2f}",
+            artikal=f"{ar.get('destinacija') or ''} / {ar.get('mesto') or ''} / {p['od']} - {p['do']} / {p['nosilac']} / {ar['kljuc']}",
+        )
+
+    @api.get("/uplate/{kljuc}/avans-sef/pregled")
+    def uplata_avans_sef_pregled(kljuc: int, _: dict = Depends(get_current_user)):
+        """Pregled XML-a koji se šalje na SEF — samo čitanje, bez upisa i bez slanja.
+        Broj fakture je postojeći neposlati (ako postoji) ili sledeći slobodan n/YY."""
+        from avansni_racuni_api import SEF_URL, nepostlat_avans, sledeci_broj_avansa
+
+        p = _avans_priprema(kljuc)
+        with engine.connect() as conn:
+            postojeci = nepostlat_avans(conn, kljuc)
+            faktura = postojeci.faktura if postojeci else sledeci_broj_avansa(conn, p["godina"])
+        return {"faktura": faktura, "xml": _avans_xml(p, faktura),
+                "url": f"{SEF_URL}?requestId={faktura}&sendToCir=No"}
+
+    @api.post("/uplate/{kljuc}/avans-sef")
+    def uplata_avans_sef(kljuc: int, current_user: dict = Depends(get_current_user)):
+        """Slanje avansa na SEF za uplatu. Broj avansa `n/YY` (YY = godina datumod aranžmana) se
+        dodeljuje u transakciji i ostaje isti pri ponovnom pokušaju; jedinstveni indeks sprečava duplikate."""
+        import httpx
+        from avansni_racuni_api import (GRESKA_DUPLIKAT, GRESKA_FIRMA_NIJE_NA_SEF, napomena_uplate,
+                                        parsiraj_odgovor_sef, posalji_na_sef, sledeci_broj_avansa,
+                                        upisi_avans, zakljucaj_avanse, nepostlat_avans, zapisi_odbijanje,
+                                        zapisi_uspeh)
+
+        p = _avans_priprema(kljuc)
+        u, ag, sub, ar = p["u"], p["ag"], p["sub"], p["ar"]
+        saldo_rsd, iznos_din, danas = p["saldo_rsd"], p["iznos_din"], p["danas"]
+        datum_uplate, godina, od, do, nosilac = p["datum_uplate"], p["godina"], p["od"], p["do"], p["nosilac"]
+
+        # upis reda (ili ponovno korišćenje neposlatog) u zaključanoj transakciji
+        with engine.begin() as conn:
+            zakljucaj_avanse(conn)
+            postojeci = nepostlat_avans(conn, kljuc)
+            if postojeci:
+                avans_id, faktura = postojeci.id, postojeci.faktura
+            else:
+                faktura = sledeci_broj_avansa(conn, godina)
+                avans_id = upisi_avans(conn, {
+                    "profakt": ar["kljuc"],
+                    "ugovor": ar["kljuc"],
+                    "nosilac": nosilac,
+                    "destinacija": (ar.get("destinacija") or "").strip(),
+                    "period": f"{od} - {do}".strip(" -"),
+                    "zaduzenje": iznos_din,
+                    "saldo": saldo_rsd,
+                    "pib": (sub["pib"] or "").strip(),
+                    "uplaceno": iznos_din,
+                    "datumf": danas.date(),
+                    "datump": datum_uplate.date(),
+                    "faktura": faktura,
+                    "odobrenje": "",
+                    "subagent": (u["subagent"] or "").strip(),
+                    "adresa": (sub["adresa"] or "").strip(),
+                    "mesto": (sub["mesto"] or "").strip(),
+                    "firma_registracija": 0,
+                    "saputnik": "",
+                    "napomena": napomena_uplate(kljuc),
+                    "jbkjs": 0,
+                    "racun": (ag["tekuci_racun1"] or "").strip(),
+                })
+
+        xml = _avans_xml(p, faktura)
+
+        try:
+            status_http, tekst = posalji_na_sef(ag["api_kljuc_efakture"].strip(), faktura, xml)
+        except httpx.HTTPError as exc:
+            return {"uspeh": False, "avans_id": avans_id, "faktura": faktura,
+                    "poruka": f"Greška veze sa SEF-om: {exc}", "odgovor": None, "http_status": None}
+
+        rez = parsiraj_odgovor_sef(tekst)
+        if rez["greska"]:
+            zapisi_odbijanje(engine, avans_id, rez["greska"])
+            if rez["greska"] == GRESKA_FIRMA_NIJE_NA_SEF:
+                poruka = f"Firma {sub['naziv']} nije registrovana na SEF."
+            elif rez["greska"] == GRESKA_DUPLIKAT:
+                poruka = f"Zahtev za dokument {faktura} je već prosleđen."
+            else:
+                poruka = f"Greška prilikom slanja: {rez['greska']}"
+            return {"uspeh": False, "avans_id": avans_id, "faktura": faktura, "poruka": poruka,
+                    "odgovor": tekst, "http_status": status_http}
+
+        zapisi_uspeh(engine, avans_id, rez["ids"])
+        return {"uspeh": True, "avans_id": avans_id, "faktura": faktura,
+                "poruka": f"Avans {faktura} je uspešno poslat na SEF", "odgovor": tekst,
+                "http_status": status_http}
 
     @api.get("/uplate/{kljuc}/priznanica")
     def uplata_priznanica(kljuc: int, _: dict = Depends(get_current_user)):

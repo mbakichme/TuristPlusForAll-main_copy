@@ -269,13 +269,13 @@ export default function DashboardPage() {
       <Card className="border-rose-200 bg-rose-50/50">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base flex items-center gap-2 text-rose-800">
-            <CalendarCheck className="w-4 h-4" /> Istekle predrezervacije
+            <CalendarCheck className="w-4 h-4" /> Istekli timelimit
           </CardTitle>
           <span className="text-xs text-rose-800/80 font-medium">{istekle.length}</span>
         </CardHeader>
         <CardContent>
           {istekle.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nema predrezervacija sa isteklim rokom.</p>
+            <p className="text-sm text-muted-foreground">Nema predrezervacija ni rezervacija sa isteklim rokom.</p>
           ) : (
             <div className="rounded-md border border-rose-200 bg-card max-h-96 overflow-auto">
               <Table className="text-xs">

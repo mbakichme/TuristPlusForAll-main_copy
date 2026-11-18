@@ -27,9 +27,10 @@ def otvori_slobodan(page, izabrani: str):
     page.goto(APP + "/agencija/grafik", wait_until="domcontentloaded")
     page.get_by_role("button", name="Izaberi mesto", exact=True).click()
     page.locator("[cmdk-item]").first.click()
-    expect(page.get_by_role("button", name="Izaberi grupu perioda", exact=True)).to_be_enabled(timeout=15000)
-    page.get_by_role("button", name="Izaberi grupu perioda", exact=True).click()
-    page.locator("[cmdk-item]").nth(1).click()  # nth(0) = prazno
+    expect(page.get_by_role("button", name="Izaberi grupe perioda", exact=True)).to_be_enabled(timeout=15000)
+    page.get_by_role("button", name="Izaberi grupe perioda", exact=True).click()
+    page.locator("label:has([role=checkbox])").first.click()  # prva grupa mesta
+    page.keyboard.press("Escape")
     expect(page.get_by_role("button", name="Izaberi smeštaj", exact=True)).to_be_enabled(timeout=15000)
     page.get_by_role("button", name="Izaberi smeštaj", exact=True).click()
     page.locator("[cmdk-item]").filter(has_text="Prikaži sve").first.click()

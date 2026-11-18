@@ -201,12 +201,12 @@ def izracun_ponude(*, lanac: list, red_id: int, struktura: str, koef: Decimal | 
     }
 
 
-def varijante_cene(conn, smestaj_id: int, soba_id: int, datumod, datumdo,
-                   adl: int = 0, chd: int = 0, inf: int = 0) -> dict:
-    """Cene izabrane sobe i njenih virtuelnih varijanti (v{broj}, v{broj}-n) iz cenovnika
-    koji važi za datum početka boravka. Za svaku varijantu dve ponude: sa prevozom
-    (autobuski) i bez prevoza (sopstveni), sa umanjenjem i popustom predviđenim za termin.
-    Ne menja bazu."""
+def varijante_cene(conn, smestaj_id: int, soba_id: int, datumod, datumdo) -> dict:
+    """Moguće opcije iz cenovnika za izabranu sobu (broj sobe) i njene virtuelne varijante (v{broj}, v{broj}-n)
+    za datum početka boravka. Cena svake opcije računa se po STANDARDNOM sastavu putnika njene strukture
+    (prvi red u koeficijenti_prodaje sa koeficijentom > 0), a ne po broju putnika u rezervaciji.
+    Varijante bez ijedne dostupne ponude (nema koeficijenta za strukturu) se ne prikazuju.
+    Za svaku varijantu dve ponude: sa prevozom (autobuski) i bez prevoza (sopstveni). Ne menja bazu."""
     cid = conn.execute(text("""
         SELECT c.id FROM cenovnici c
         JOIN cenovnik_opcije o ON o.cenovnik_id = c.id
@@ -224,30 +224,29 @@ def varijante_cene(conn, smestaj_id: int, soba_id: int, datumod, datumdo,
     izabrane.sort(key=lambda s: (bool(s.get("virtuelna")), str(s.get("broj_sobe"))))
     if not izabrane:
         return {"cenovnik_id": cid, "naziv": cen["naziv"], "periodi": lanac, "varijante": []}
-    ids = [s["id"] for s in izabrane]
+    ids = [s["id"] for s in izabrane if s.get("id") is not None]
     danas = datetime.now(ZoneInfo("Europe/Belgrade")).date()
 
-    # koeficijenti za putnike — isti redosled kao u pretrazi (prvi red po strukturi)
-    koef_map: dict = {}
+    # standardni sastav putnika po strukturi (isti redosled kao u pretrazi: prvi red sa koeficijentom > 0)
+    std_map: dict = {}
     for r in conn.execute(text("""
-        SELECT struktura, koeficijent FROM koeficijenti_prodaje
-        WHERE adl = :a AND chd = :c AND inf = :i
-        ORDER BY (koeficijent > 0) DESC, rucno, id
-    """), {"a": adl, "c": chd, "i": inf}):
-        koef_map.setdefault((r.struktura or "").strip(), Decimal(str(r.koeficijent or 0)))
+        SELECT struktura, adl, chd, inf, koeficijent FROM koeficijenti_prodaje
+        WHERE koeficijent > 0
+        ORDER BY rucno, id
+    """)):
+        std_map.setdefault((r.struktura or "").strip(), (r.adl, r.chd, r.inf, Decimal(str(r.koeficijent))))
     # izuzetak za 1 osobu: početak boravka u periodu parametara obračuna
     izuz_koef = None
-    if adl == 1 and chd == 0 and inf == 0:
-        par = conn.execute(text("""
-            SELECT datumod1, datumdo1, koeficijent1, datumod2, datumdo2, koeficijent2
-            FROM parametri_obracuna WHERE id = 1
-        """)).mappings().first()
-        if par:
-            for n in ("1", "2"):
-                od_, do_, k_ = par[f"datumod{n}"], par[f"datumdo{n}"], par[f"koeficijent{n}"]
-                if od_ and do_ and k_ is not None and od_ <= datumod <= do_:
-                    izuz_koef = Decimal(str(k_))
-                    break
+    par = conn.execute(text("""
+        SELECT datumod1, datumdo1, koeficijent1, datumod2, datumdo2, koeficijent2
+        FROM parametri_obracuna WHERE id = 1
+    """)).mappings().first()
+    if par:
+        for n in ("1", "2"):
+            od_, do_, k_ = par[f"datumod{n}"], par[f"datumdo{n}"], par[f"koeficijent{n}"]
+            if od_ and do_ and k_ is not None and od_ <= datumod <= do_:
+                izuz_koef = Decimal(str(k_))
+                break
 
     cene = {(r.soba_id, r.period_id): Decimal(str(r.cena)) for r in conn.execute(text("""
         SELECT soba_id, period_id, cena FROM cenovnik_cene
@@ -263,12 +262,15 @@ def varijante_cene(conn, smestaj_id: int, soba_id: int, datumod, datumdo,
     varijante = []
     for s in izabrane:
         struktura = (s.get("tip") or "").strip()
+        adl, chd, inf, koef = std_map.get(struktura, (0, 0, 0, None))
+        izuz = izuz_koef if (adl == 1 and chd == 0 and inf == 0) else None
         zajednicko = dict(lanac=lanac, red_id=s["id"], struktura=struktura,
-                          koef=koef_map.get(struktura), izuz_koef=izuz_koef,
+                          koef=koef, izuz_koef=izuz,
                           cene=cene, opcije=opcije, popusti=popusti,
                           adl=adl, chd=chd, inf=inf, danas=danas)
         varijante.append({
             "soba_id": s["id"],
+            "izvor_soba_id": s.get("izvor_soba_id"),
             "broj_sobe": s.get("broj_sobe"),
             "struktura": s.get("tip"),
             "opis": s.get("opis") or "",
@@ -278,6 +280,8 @@ def varijante_cene(conn, smestaj_id: int, soba_id: int, datumod, datumdo,
                 "bez_prevoza": izracun_ponude(**zajednicko, sopstveni=True),
             },
         })
+    varijante = [v for v in varijante
+                 if v["ponude"]["sa_prevozom"]["dostupno"] or v["ponude"]["bez_prevoza"]["dostupno"]]
     return {"cenovnik_id": cid, "naziv": cen["naziv"], "periodi": lanac, "varijante": varijante}
 
 

@@ -40,16 +40,17 @@ class PredrezervacijeIstekleTests(unittest.TestCase):
         self.assertTrue(all(r["tiprezervacije"].strip().upper() != "STORNO" for r in rows))
         self.assertTrue(all(r["timelimit"] for r in rows))
 
-    def test_given_rows_then_no_delimicno_placanje(self):
+    def test_given_rows_then_delimicno_placanje_is_included(self):
+        # 'delimicno' se više ne isključuje: endpoint mora vratiti sve ne-storno ugovore sa isteklim timelimitom
         rows = self.client.get("/predrezervacije-istekle").json()["rows"]
-        kljucevi = [r["kljuc"] for r in rows]
+        got = {r["kljuc"] for r in rows}
         with self.engine.connect() as c:
-            if kljucevi:
-                n = c.execute(text("SELECT COUNT(*) FROM aranzman WHERE kljuc = ANY(:k) AND TRIM(COALESCE(nacin_placanja,'')) = 'delimicno'"),
-                              {"k": kljucevi}).scalar()
-            else:
-                n = 0
-        self.assertEqual(n, 0)
+            expected = {r[0] for r in c.execute(text("""
+                SELECT DISTINCT kljuc FROM aranzman
+                WHERE timelimit <= now() AND UPPER(TRIM(COALESCE(tiprezervacije,''))) <> 'STORNO'
+                  AND kljuc IS NOT NULL AND kljuc <> ''
+            """)).fetchall()}
+        self.assertEqual(got, expected)
 
     def test_given_rows_then_sorted_by_timelimit_ascending(self):
         rows = self.client.get("/predrezervacije-istekle").json()["rows"]

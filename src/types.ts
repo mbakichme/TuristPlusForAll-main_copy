@@ -335,6 +335,8 @@ export interface UplataRow {
   tip_kartice: string | null;
   broj_kartice: string | null;
   broj_odobrenja: string | null;
+  subagent?: string | null;
+  avans_sef_poslato?: boolean;
   broj_cekova?: number;
   fiskal_poslato?: boolean;
   fiskal_odgovor?: string | null;
