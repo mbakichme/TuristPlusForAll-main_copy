@@ -5,6 +5,7 @@ Pokretanje:
 """
 import os
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 import app2_sync as s
@@ -28,6 +29,38 @@ class BezKonfiguracije(unittest.TestCase):
             with mock.patch.object(s, "sinhronizuj_kljuc") as kljuc:
                 s.sinhronizuj_posle_izmene(mock.Mock(), "1/2026")
                 kljuc.assert_not_called()
+
+
+class LokalnoSnimanje(unittest.TestCase):
+    """Kopiranje iz App1 samo kad je lokalno snimanje uključeno i rezervacija kreirana posle."""
+
+    def _engine(self, scalar):
+        engine = mock.MagicMock()
+        conn = engine.connect.return_value.__enter__.return_value
+        conn.execute.return_value.mappings.return_value.all.return_value = [
+            {"id": 1, "kljuc": "1/2026", "subagent_id": 7}
+        ]
+        conn.execute.return_value.scalar.return_value = scalar
+        return engine
+
+    def test_iskljuceno_ne_kopira(self):
+        engine = self._engine(scalar=1)
+        with mock.patch.object(s, "_app2", return_value=mock.Mock()), \
+             mock.patch.object(s, "_lokalno_od", return_value=None):
+            self.assertEqual(s.sinhronizuj_kljuc(engine, "1/2026"), "lokalno_iskljuceno")
+
+    def test_kreirano_pre_aktiviranja_ne_kopira(self):
+        engine = self._engine(scalar=None)
+        with mock.patch.object(s, "_app2", return_value=mock.Mock()), \
+             mock.patch.object(s, "_lokalno_od", return_value=datetime.now(timezone.utc)):
+            self.assertEqual(s.sinhronizuj_kljuc(engine, "1/2026"), "kreirano_pre_aktiviranja")
+
+    def test_puno_osvezavanje_iskljuceno_subagent_preskocen(self):
+        engine = mock.MagicMock()
+        with mock.patch.object(s, "_lokalno_od", return_value=None):
+            self.assertEqual(s._sinhronizuj_subagenta(engine, mock.Mock(), "oktopod", 7),
+                             ("lokalno_iskljuceno", 0))
+        engine.connect.assert_not_called()
 
 
 class BestEffort(unittest.TestCase):

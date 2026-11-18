@@ -18,8 +18,10 @@ CLI za puno osvežavanje:
   uv run python -m app2_sync
 """
 import hmac
+import json
 import logging
 import os
+from pathlib import Path
 
 from fastapi import HTTPException, Request
 from sqlalchemy import create_engine, text
@@ -48,6 +50,22 @@ def _app2() -> Engine | None:
 
 def _instanca() -> str:
     return (os.environ.get("ORGANIZER_CODE") or "").strip().lower()
+
+
+# Kopira se samo rezervacija kreirana posle aktiviranja lokalnog snimanja (App2 flag).
+# Vreme kreiranja je najraniji događaj 'kreirana' u rezervacija_log za ugovor.
+KREIRANE_POSLE_SQL = (
+    "SELECT kljuc FROM rezervacija_log WHERE dogadjaj = 'kreirana' "
+    "GROUP BY kljuc HAVING min(created_at) >= CAST(:od AS timestamptz)"
+)
+
+
+def _lokalno_od(app2: Engine, instanca: str, subagent_id: int):
+    """Trenutak aktiviranja lokalnog snimanja za tenant (App2). None = isključeno ili nije povezan."""
+    with app2.connect() as conn:
+        return conn.execute(text(
+            "SELECT app1_lokalno_snimanje_od(:i, :s)"
+        ), {"i": instanca, "s": subagent_id}).scalar()
 
 
 def kolone_za_upis(row: dict) -> dict:
@@ -87,7 +105,8 @@ def _upsert(conn, tabela: str, red: dict, tenant_id: str, instanca: str, kljuc_k
 
 def sinhronizuj_kljuc(engine: Engine, kljuc: str) -> str:
     """Kopira sve redove jednog ugovora u App2. Vraća status:
-    'synced', 'nema_reda', 'bez_subagenta', 'tenant_nije_povezan', 'app2_nedostupna'.
+    'synced', 'nema_reda', 'bez_subagenta', 'tenant_nije_povezan', 'app2_nedostupna',
+    'lokalno_iskljuceno', 'kreirano_pre_aktiviranja'.
     Baca izuzetak samo za greške upisa u App2 (poziv hvata sinhronizuj_posle_izmene)."""
     app2 = _app2()
     if app2 is None:
@@ -102,6 +121,15 @@ def sinhronizuj_kljuc(engine: Engine, kljuc: str) -> str:
     subagent_id = _resolve_subagent_id(engine, redovi[0])
     if subagent_id is None:
         return "bez_subagenta"
+    od = _lokalno_od(app2, instanca, subagent_id)
+    if od is None:
+        return "lokalno_iskljuceno"
+    with engine.connect() as conn:
+        kreirana_posle = conn.execute(text(
+            f"SELECT 1 FROM ({KREIRANE_POSLE_SQL}) k WHERE k.kljuc = :k"
+        ), {"k": kljuc, "od": od}).scalar()
+    if not kreirana_posle:
+        return "kreirano_pre_aktiviranja"
 
     with engine.connect() as conn:
         dopune = [dict(r) for r in conn.execute(text(
@@ -182,22 +210,28 @@ def _backfill_subagent_id(engine: Engine) -> None:
 
 
 def _sinhronizuj_subagenta(engine: Engine, app2: Engine, instanca: str, subagent_id: int) -> tuple[str, int]:
-    """Svi ugovori jednog subagenta u tenant povezan sa (instanca, subagent_id).
-    Vraća (status, broj ugovora)."""
+    """Ugovori jednog subagenta u tenant povezan sa (instanca, subagent_id), samo oni kreirani
+    posle aktiviranja lokalnog snimanja. Vraća (status, broj ugovora)."""
+    od = _lokalno_od(app2, instanca, subagent_id)
+    if od is None:
+        return "lokalno_iskljuceno", 0
+    params = {"s": subagent_id, "od": od}
     with engine.connect() as conn:
         redovi = [dict(r) for r in conn.execute(text(
-            "SELECT * FROM aranzman WHERE subagent_id = :s ORDER BY id"
-        ), {"s": subagent_id}).mappings().all()]
+            "SELECT * FROM aranzman WHERE subagent_id = :s AND kljuc IN (" + KREIRANE_POSLE_SQL + ") "
+            "ORDER BY id"
+        ), params).mappings().all()]
         if not redovi:
             return "nema_reda", 0
         dopune = [dict(r) for r in conn.execute(text(
             "SELECT d.* FROM aranzman_dopuna d JOIN aranzman a ON a.id = d.aranzman_id "
-            "WHERE a.subagent_id = :s ORDER BY d.id"
-        ), {"s": subagent_id}).mappings().all()]
+            "WHERE a.subagent_id = :s AND a.kljuc IN (" + KREIRANE_POSLE_SQL + ") ORDER BY d.id"
+        ), params).mappings().all()]
         log_redovi = [dict(r) for r in conn.execute(text(
             "SELECT * FROM rezervacija_log WHERE kljuc IN "
-            "(SELECT kljuc FROM aranzman WHERE subagent_id = :s) ORDER BY id"
-        ), {"s": subagent_id}).mappings().all()]
+            "(SELECT kljuc FROM aranzman WHERE subagent_id = :s) "
+            "AND kljuc IN (" + KREIRANE_POSLE_SQL + ") ORDER BY id"
+        ), params).mappings().all()]
 
     with app2.begin() as conn:
         tenant_id = conn.execute(text(
@@ -265,6 +299,18 @@ def register_app2_sync(api, engine) -> None:
         if _app2() is None:
             raise HTTPException(status_code=503, detail="APP2_SYNC_DATABASE_URL nije podešen")
         return {"instanca": _instanca(), "rezultat": sinhronizuj_sve(engine)}
+
+    @api.get("/sync/meni/knjigovodstvo")
+    def sync_meni_knjigovodstvo(request: Request):
+        """Stavke menija Knjigovodstva za App2 levi meni (X-Sync-Key, isti ključ kao /sync/rezervacije)."""
+        ocekivano = (os.environ.get(APP2_SYNC_KEY_ENV) or "").strip()
+        if not ocekivano:
+            raise HTTPException(status_code=503, detail="Sinhronizacija nije podešena")
+        primljen = request.headers.get("X-Sync-Key", "")
+        if not hmac.compare_digest(primljen.encode(), ocekivano.encode()):
+            raise HTTPException(status_code=401, detail="Nevalidan ključ")
+        putanja = Path(__file__).parent / "src" / "config" / "menuKnjigovodstvo.json"
+        return {"sekcija": "knjigovodstvo", "stavke": json.loads(putanja.read_text(encoding="utf-8"))}
 
     @api.get("/sync/rezervacije")
     def sync_rezervacije(request: Request):
