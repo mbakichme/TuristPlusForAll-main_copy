@@ -21,7 +21,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Loader2, ChartGantt, Printer, ArrowLeft, ExternalLink, ArrowRightLeft, CalendarDays, CalendarCheck2, ClipboardList, Zap, BedDouble } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Loader2, ChartGantt, Printer, ArrowLeft, ExternalLink, ArrowRightLeft, CalendarDays, CalendarCheck2, ClipboardList, Zap, BedDouble, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -51,6 +52,59 @@ interface GrafikData {
   sobe: GrafikSoba[];
   ugovori: GrafikUgovor[];
   cenovnik: GrafikCenovnik | null;
+}
+/** Jedna sekcija grafika = smeštaj u jednoj grupi perioda */
+interface PrikazGrafika { sec: GrafikData; grupaId: number; grupaNaziv: string; }
+/** Red iz /subagenti (samo polja potrebna za izbor) */
+interface SubagentRed { naziv: string; mesto: string | null; provizija: number | null; }
+
+/** Izbor više grupa perioda (Popover + checkbox) */
+function GrupeIzbor({ opcije, izabrane, onChange, disabled, placeholder, label }: {
+  opcije: { value: string; label: string }[];
+  izabrane: string[];
+  onChange: (v: string[]) => void;
+  disabled?: boolean;
+  placeholder: string;
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const tekst = opcije.filter((o) => izabrane.includes(o.value)).map((o) => o.label).join(", ");
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" role="combobox" aria-label={label} disabled={disabled}
+          className="w-64 h-9 justify-between font-normal text-sm">
+          <span className={cn("truncate", !tekst && "text-muted-foreground")}>{tekst || placeholder}</span>
+          <ChevronDown className="size-3.5 opacity-50 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-2 bg-card" align="start">
+        <div className="px-1 pt-0.5 pb-1.5 text-xs font-medium text-muted-foreground">{label}</div>
+        {opcije.length > 0 && (
+          <label className="flex items-center gap-2 rounded px-2 py-1.5 text-sm font-medium hover:bg-muted cursor-pointer border-b mb-1">
+            <Checkbox
+              checked={izabrane.length === opcije.length}
+              onCheckedChange={(c) => onChange(c ? opcije.map((o) => o.value) : [])}
+            />
+            Prikaži sve
+          </label>
+        )}
+        {opcije.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">Nema grupa za mesto</div>}
+        {opcije.map((o) => {
+          const on = izabrane.includes(o.value);
+          return (
+            <label key={o.value} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted cursor-pointer">
+              <Checkbox
+                checked={on}
+                onCheckedChange={(c) => onChange(c ? [...izabrane, o.value] : izabrane.filter((x) => x !== o.value))}
+              />
+              {o.label}
+            </label>
+          );
+        })}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 /** DD.MM.YYYY → Date */
@@ -688,10 +742,10 @@ export default function GrafikPage() {
   const [grupe, setGrupe] = useState<PeriodGrupa[]>([]);
   const [smestaji, setSmestaji] = useState<Smestaj[]>([]);
   const [mestoId, setMestoId] = useState("");
-  const [grupaId, setGrupaId] = useState("");
+  const [grupaIds, setGrupaIds] = useState<string[]>([]);
   const [smestajId, setSmestajId] = useState("");
-  const [data, setData] = useState<GrafikData | null>(null);
-  const [sekcije, setSekcije] = useState<GrafikData[]>([]);
+  // Sekcije za sve izabrane grupe; jedna sekcija = (smeštaj × grupa perioda)
+  const [prikaz, setPrikaz] = useState<PrikazGrafika[]>([]);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [ugovorOpen, setUgovorOpen] = useState(false);
@@ -710,7 +764,8 @@ export default function GrafikPage() {
   const [slotSubagent, setSlotSubagent] = useState(""); // naziv subagenta (kao aranzman.subagent)
   const [slotPlacanje, setSlotPlacanje] = useState(""); // "" | delimicno | u_celosti → bira popust sobe
   const [slotPrevoz, setSlotPrevoz] = useState("autobuski"); // autobuski | sopstveni → umanjenje cene
-  const [subagentiIzbor, setSubagentiIzbor] = useState<{ naziv: string }[]>([]);
+  const [subagentiIzbor, setSubagentiIzbor] = useState<SubagentRed[]>([]);
+  const [subagentiInfo, setSubagentiInfo] = useState<Record<string, SubagentRed>>({});
   const [subagentiPretraga, setSubagentiPretraga] = useState("");
   const [brzaOtvoren, setBrzaOtvoren] = useState(false);
   const [brzaTip, setBrzaTip] = useState("Predrezervacija"); // "Predrezervacija" | "BLOK"
@@ -721,7 +776,7 @@ export default function GrafikPage() {
   const [brzaTelefon, setBrzaTelefon] = useState("");
   const [brzaTlOtvoren, setBrzaTlOtvoren] = useState(false);
   const [brzaTlDatum, setBrzaTlDatum] = useState<Date>();
-  const [brzaTlSat, setBrzaTlSat] = useState("12");
+  const [brzaTlSat, setBrzaTlSat] = useState("20");
   const [brzaSeCuva, setBrzaSeCuva] = useState(false);
 
   useEffect(() => {
@@ -740,12 +795,37 @@ export default function GrafikPage() {
     let aktivan = true;
     const t = setTimeout(() => {
       const params = new URLSearchParams({ search: subagentiPretraga.trim(), page_size: "50", sort: "naziv", dir: "asc" });
-      apiFetch<{ rows: { naziv: string }[] }>(`/subagenti?${params}`)
-        .then((d) => { if (aktivan) setSubagentiIzbor(d.rows.filter((r) => r.naziv && r.naziv.trim())); })
+      apiFetch<{ rows: SubagentRed[] }>(`/subagenti?${params}`)
+        .then((d) => {
+          if (!aktivan) return;
+          const redovi = d.rows.filter((r) => r.naziv && r.naziv.trim());
+          setSubagentiIzbor(redovi);
+          // Zapamti mesto/proviziju i za izabranog subagenta koji nije u trenutnoj listi
+          setSubagentiInfo((prev) => {
+            const next = { ...prev };
+            for (const r of redovi) next[r.naziv.trim()] = r;
+            return next;
+          });
+        })
         .catch(() => { if (aktivan) setSubagentiIzbor([]); });
     }, 250);
     return () => { aktivan = false; clearTimeout(t); };
   }, [subagentiPretraga]);
+
+  // Subagent u popupu: „Naziv (MESTO) - 10%“ (mesto i provizija iz tabele subagenti)
+  const subagentLabela = (naziv: string) => {
+    const r = subagentiInfo[naziv.trim()];
+    if (!r) return naziv;
+    return `${naziv}${r.mesto?.trim() ? ` (${r.mesto.trim()})` : ""}${r.provizija != null ? ` - ${r.provizija}%` : ""}`;
+  };
+  const subagentOpcije = useMemo(() => {
+    const opc = subagentiIzbor.map((s) => ({ value: s.naziv, label: subagentLabela(s.naziv) }));
+    if (slotSubagent && !opc.some((o) => o.value === slotSubagent)) {
+      opc.unshift({ value: slotSubagent, label: subagentLabela(slotSubagent) });
+    }
+    return opc;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subagentiIzbor, subagentiInfo, slotSubagent]);
 
   // Obračun za izabrani termin: maks. ADL izabrane strukture (kao u Rezervacijama) →
   // /slobodne-sobe (osnovna već umanjena za sopstveni prevoz) → popust čiji je tip plaćanja izabran.
@@ -826,7 +906,7 @@ export default function GrafikPage() {
     const g = (ss?.grupa_datuma ? String(ss.grupa_datuma) : "")
       || (searchParams.get("grupa") ?? "").trim()
       || (mm?.grupa_datuma ? String(mm.grupa_datuma) : "");
-    if (g) setGrupaId(g);
+    if (g) setGrupaIds([g]);
     if (ss) setSmestajId(String(ss.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialLoading]);
@@ -835,17 +915,17 @@ export default function GrafikPage() {
   function onMestoChange(v: string) {
     setMestoId(v);
     setSmestajId("sve");
-    setData(null);
-    setSekcije([]);
+    setPrikaz([]);
     const m = mesta.find((x) => String(x.id) === v);
-    setGrupaId(m?.grupa_datuma ? String(m.grupa_datuma) : "");
+    // Podrazumevano su izabrane sve grupe mesta
+    const sve = (m?.grupe?.length ? m.grupe : (m?.grupa_datuma ? [m.grupa_datuma] : [])).slice().sort((a, b) => a - b);
+    setGrupaIds(sve.map(String));
   }
 
-  function onGrupaChange(v: string) {
-    setGrupaId(v);
-    setSmestajId("sve"); // promena grupe takođe otvara sve smeštaje te grupe
-    setData(null);
-    setSekcije([]);
+  function onGrupeChange(v: string[]) {
+    setGrupaIds(v);
+    setSmestajId("sve"); // promena grupa takođe otvara sve smeštaje izabranih grupa
+    setPrikaz([]);
   }
 
   function openUgovor(kljuc: string) {
@@ -877,7 +957,7 @@ export default function GrafikPage() {
     setBrzaIme("");
     setBrzaTelefon("");
     setBrzaTlDatum(undefined);
-    setBrzaTlSat("12");
+    setBrzaTlSat("20");
     setBrzaTlOtvoren(false);
     setBrzaOtvoren(false);
     setSlotOtvoren(true);
@@ -997,45 +1077,62 @@ export default function GrafikPage() {
     }
   }
 
-  // Smeštaji vezani za izabrano MESTO i grupu perioda (ista vila u drugom mestu ne ulazi)
+  // Smeštaji vezani za izabrano MESTO i izabrane grupe perioda (ista vila u drugom mestu ne ulazi)
   const smestajiGrupe = useMemo(
-    () => smestaji.filter((s) => grupaId && s.grupa_datuma === Number(grupaId)
+    () => smestaji.filter((s) => grupaIds.length > 0 && grupaIds.includes(String(s.grupa_datuma))
       && (!mestoId || String(s.mesto) === mestoId)),
-    [smestaji, grupaId, mestoId]
+    [smestaji, grupaIds, mestoId]
   );
 
-  // Auto-učitavanje grafika na izbor smeštaja ("sve" → sekcije po svim smeštajima grupe;
-  // refreshKey → osvežavanje posle promene smeštaja)
+  // Auto-učitavanje grafika: "sve" → sekcije po smeštajima mesta u SVAKOJ izabranoj grupi;
+  // pojedinačan smeštaj → njegova sekcija u grupi kojoj pripada. refreshKey → osvežavanje posle promene.
   useEffect(() => {
-    if (!grupaId || !smestajId) { setData(null); setSekcije([]); return; }
+    if (!mestoId || grupaIds.length === 0 || !smestajId) { setPrikaz([]); return; }
     let cancelled = false;
     setLoading(true);
-    apiFetch<GrafikData | { sve: boolean; sekcije: GrafikData[] }>(
-      `/grafik?smestaj_id=${smestajId}&grupa_id=${grupaId}&mesto_id=${mestoId}`
-    )
-      .then((d) => {
+    const grupaNaziv = (gid: number) => grupe.find((g) => g.id === gid)?.naziv ?? "";
+    const zahtevi: Promise<PrikazGrafika[]>[] = [];
+    if (smestajId === "sve") {
+      for (const g of grupaIds.map(Number)) {
+        zahtevi.push(
+          apiFetch<{ sve: boolean; sekcije: GrafikData[] }>(
+            `/grafik?smestaj_id=sve&grupa_id=${g}&mesto_id=${mestoId}`
+          ).then((d) => (d.sekcije || []).map((sec) => ({ sec, grupaId: g, grupaNaziv: grupaNaziv(g) })))
+        );
+      }
+    } else {
+      const s = smestaji.find((x) => String(x.id) === smestajId);
+      const g = s?.grupa_datuma ?? null;
+      if (s && g) {
+        zahtevi.push(
+          apiFetch<GrafikData>(`/grafik?smestaj_id=${smestajId}&grupa_id=${g}&mesto_id=${mestoId}`)
+            .then((sec) => [{ sec, grupaId: g, grupaNaziv: grupaNaziv(g) }])
+        );
+      }
+    }
+    Promise.all(zahtevi)
+      .then((delovi) => {
         if (cancelled) return;
-        if ("sekcije" in d) { setSekcije(d.sekcije || []); setData(null); }
-        else { setData(d); setSekcije([]); }
+        // Jedna sekcija po nazivu, pa po grupi (isti smeštaj jedan ispod drugog)
+        const sortirano = delovi.flat().sort((a, b) =>
+          (a.sec.smestaj.naziv || "").localeCompare(b.sec.smestaj.naziv || "", "sr")
+          || a.grupaId - b.grupaId);
+        setPrikaz(sortirano);
       })
-      .catch(() => { if (!cancelled) { toast.error("Greška pri učitavanju grafika"); setData(null); setSekcije([]); } })
+      .catch(() => { if (!cancelled) { toast.error("Greška pri učitavanju grafika"); setPrikaz([]); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [grupaId, smestajId, mestoId, refreshKey]);
+  }, [grupaIds, smestajId, mestoId, refreshKey]);
 
   function handlePromenaSuccess() {
     setRefreshKey((k) => k + 1); // osveži trenutni grafik
   }
 
-  // "Prikaži sve" → sekcije po svim smeštajima grupe; inače jedna sekcija (izabrani smeštaj)
-  const jeSve = smestajId === "sve";
-  const allSekcije = useMemo(
-    () => (jeSve ? sekcije : data ? [data] : []),
-    [jeSve, sekcije, data]
-  );
+  // "Prikaži sve" → sekcije po svim smeštajima izabranih grupa; inače jedna sekcija (izabrani smeštaj)
+  const allSekcije = useMemo(() => prikaz.map((p) => p.sec), [prikaz]);
   const vidljiveSekcije = useMemo(
-    () => allSekcije.filter((s) => s.sobe.length > 0),
-    [allSekcije]
+    () => prikaz.filter((p) => p.sec.sobe.length > 0),
+    [prikaz]
   );
 
   // soba/tip ugovora iz trenutnog grafika (za popup; traži po svim sekcijama kod "Prikaži sve")
@@ -1049,7 +1146,7 @@ export default function GrafikPage() {
     return { soba: s || (ugovorDetail.apartman || "").trim(), tip: room?.tip || "" };
   }, [ugovorDetail, allSekcije]);
 
-  const hasSelection = !!(mestoId && grupaId && smestajId);
+  const hasSelection = !!(mestoId && grupaIds.length > 0 && smestajId);
 
   return (
     <div className="p-6 space-y-4">
@@ -1080,10 +1177,11 @@ export default function GrafikPage() {
           />
         </div>
         <div>
-          <PretraznaSelect
-            className="w-64" ariaLabel="Izaberi grupu perioda" label="Izaberi grupu perioda"
-            placeholder={mestoId ? "Izaberi grupu perioda" : "Prvo izaberi mesto"}
-            value={grupaId} onChange={onGrupaChange}
+          <GrupeIzbor
+            label="Izaberi grupe perioda"
+            placeholder={mestoId ? "Izaberi grupe perioda" : "Prvo izaberi mesto"}
+            izabrane={grupaIds}
+            onChange={onGrupeChange}
             disabled={!mestoId || initialLoading}
             opcije={grupe
               .filter((g) => mesta.find((m) => String(m.id) === mestoId)?.grupe?.includes(g.id))
@@ -1095,9 +1193,9 @@ export default function GrafikPage() {
         <div>
           <PretraznaSelect
             className="w-64" ariaLabel="Izaberi smeštaj" label="Izaberi smeštaj"
-            placeholder={grupaId ? "Izaberi smeštaj" : "Prvo izaberi grupu"}
+            placeholder={grupaIds.length > 0 ? "Izaberi smeštaj" : "Prvo izaberi grupu"}
             value={smestajId} onChange={setSmestajId}
-            disabled={!grupaId || initialLoading}
+            disabled={grupaIds.length === 0 || initialLoading}
             opcije={[
               { value: "sve", label: "Prikaži sve" },
               ...smestajiGrupe.map((s) => ({ value: String(s.id), label: s.naziv })),
@@ -1126,20 +1224,21 @@ export default function GrafikPage() {
                 Izabrani smeštaj nema definisane sobe
               </div>
             )}
-            {vidljiveSekcije.map((sec, si) => (
-              <Fragment key={`s-${sec.smestaj.id}`}>
+            {vidljiveSekcije.map((p, si) => (
+              <Fragment key={`s-${p.grupaId}-${p.sec.smestaj.id}`}>
                 {si > 0 && <div className="border-t-2 border-t-border" />}
-                {jeSve && (
-                  <div className="flex items-baseline justify-between border-b bg-muted/50 px-3 py-2">
-                    <h3 className="text-sm font-semibold tracking-wide">{sec.smestaj.naziv}</h3>
-                    <span className="text-xs text-muted-foreground">
-                      {sec.sobe.length} {sec.sobe.length === 1 ? "soba" : "sobe"}
-                    </span>
-                  </div>
-                )}
+                <div className="flex items-baseline justify-between border-b bg-muted/50 px-3 py-2">
+                  <h3 className="text-sm font-semibold tracking-wide">
+                    {p.sec.smestaj.naziv}
+                    {p.grupaNaziv && <span className="font-normal text-muted-foreground"> — {p.grupaNaziv}</span>}
+                  </h3>
+                  <span className="text-xs text-muted-foreground">
+                    {p.sec.sobe.length} {p.sec.sobe.length === 1 ? "soba" : "sobe"}
+                  </span>
+                </div>
                 <GrafikTabela
-                  sec={sec}
-                  onRez={(s, soba, p) => otvoriSlot(s, soba, p)}
+                  sec={p.sec}
+                  onRez={(s, soba, per) => otvoriSlot(s, soba, per)}
                   onUgovor={openUgovor}
                 />
               </Fragment>
@@ -1262,7 +1361,7 @@ export default function GrafikPage() {
               ariaLabel="Izaberi subagenta" placeholder="Bez subagenta" label="Izaberi subagenta"
               value={slotSubagent} onChange={setSlotSubagent} prazno
               onPretraga={setSubagentiPretraga}
-              opcije={subagentiIzbor.map((s) => ({ value: s.naziv, label: s.naziv }))}
+              opcije={subagentOpcije}
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -1434,7 +1533,7 @@ export default function GrafikPage() {
                 ariaLabel="Izaberi subagenta — brza" placeholder="Bez subagenta" label="Izaberi subagenta"
                 value={slotSubagent} onChange={setSlotSubagent} prazno
                 onPretraga={setSubagentiPretraga}
-                opcije={subagentiIzbor.map((s) => ({ value: s.naziv, label: s.naziv }))}
+                opcije={subagentOpcije}
               />
             </div>
             <div className="space-y-1.5">

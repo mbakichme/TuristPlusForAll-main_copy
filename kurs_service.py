@@ -1,8 +1,9 @@
 """Srednji EUR kurs: baza je jedini izvor uspešno sačuvanih rezultata."""
 
 import math
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy import text
@@ -10,6 +11,7 @@ from sqlalchemy import text
 
 # Dvodelni PG ključ odvaja kurs od drugih advisory lock korisnika.
 _LOCK_NAMESPACE = 0x4B555253
+_BELGRADE = ZoneInfo("Europe/Belgrade")
 _SELECT = text("SELECT iznos, datum_kursa FROM kurs WHERE datum = :datum")
 _INSERT = text("""
     INSERT INTO kurs (iznos, datum, datum_kursa)
@@ -30,6 +32,10 @@ def ensure_kurs_table(conn):
             datum_kursa DATE NOT NULL
         )
     """))
+
+
+def _belgrade_today() -> date:
+    return datetime.now(_BELGRADE).date()
 
 
 def _iso_date(value):
@@ -99,6 +105,10 @@ def get_eur_rate(engine, iso_date: str) -> tuple[float | None, str | None]:
             actual = _iso_date(payload.get("date_from") or payload.get("date"))
             if actual > requested:
                 raise ValueError("API je vratio kurs budućeg datuma")
+
+            # Tekući dan još nije objavljen: vraćamo raniji kurs, ali ga ne čuvamo kao konačan za taj datum.
+            if actual < requested and requested >= _belgrade_today():
+                return float(amount), actual
 
             # SQLite DBAPI ne vezuje Decimal direktno; PG zadržava punu preciznost.
             stored_amount = str(amount) if conn.dialect.name == "sqlite" else amount

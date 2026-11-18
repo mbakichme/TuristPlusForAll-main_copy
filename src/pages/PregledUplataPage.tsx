@@ -99,7 +99,7 @@ export default function PregledUplataPage() {
   // ─── PDF: pregled po načinu plaćanja ──────────────────────────────────────
   const [downloadingNacin, setDownloadingNacin] = useState<string | null>(null);
 
-  async function downloadPregledPdf(nacin: "Gotovina" | "Ček" | "Kartica") {
+  async function downloadPregledPdf(nacin: "Gotovina" | "Ček" | "Kartica" | "Virman") {
     if (downloadingNacin) return;
     setDownloadingNacin(nacin);
     try {
@@ -195,7 +195,7 @@ export default function PregledUplataPage() {
               </Button>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {(["Gotovina", "Ček", "Kartica"] as const).map((n) => (
+              {(["Gotovina", "Ček", "Kartica", "Virman"] as const).map((n) => (
                 <Button
                   key={n}
                   variant="outline"

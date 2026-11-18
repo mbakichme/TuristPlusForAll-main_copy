@@ -46,10 +46,9 @@ def register_dashboard(api, engine, get_current_user) -> None:
 
     @api.get("/predrezervacije-istekle")
     def predrezervacije_istekle(current_user: dict = Depends(get_current_user)):
-        """Predrezervacije kojima je istekao timelimit (ista definicija kao kategorija
-        'predrezervacija_istekla' u Grafiku: tip PREDREZERVACIJA / LAST MINUTE, timelimit <= sada).
-        Storno se ne uzima; ugovori sa nacin_placanja = 'delimicno' (Tip plaćanja: delimično)
-        se ne prikazuju. Jedan red po ugovoru."""
+        """Predrezervacije i rezervacije kojima je istekao timelimit (timelimit <= sada).
+        Tip: sve osim STORNO (PREDREZERVACIJA, LAST MINUTE, rezervacije). Ugovori sa
+        nacin_placanja = 'delimicno' se prikazuju. Jedan red po ugovoru."""
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT DISTINCT ON (a.kljuc)
@@ -64,10 +63,9 @@ def register_dashboard(api, engine, get_current_user) -> None:
                        a.timelimit AS timelimit_ts,
                        a.obradio
                 FROM aranzman a
-                WHERE UPPER(TRIM(COALESCE(a.tiprezervacije, ''))) IN ('PREDREZERVACIJA', 'LAST MINUTE')
+                WHERE UPPER(TRIM(COALESCE(a.tiprezervacije, ''))) <> 'STORNO'
                   AND a.timelimit IS NOT NULL
                   AND a.timelimit <= :sada
-                  AND COALESCE(TRIM(a.nacin_placanja), '') <> 'delimicno'
                   AND a.kljuc IS NOT NULL AND a.kljuc <> ''
                 ORDER BY a.kljuc, a.id
             """), {"sada": datetime.now(BELGRADE).replace(tzinfo=None)}).mappings().fetchall()
