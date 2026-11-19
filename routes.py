@@ -4798,16 +4798,12 @@ def create_app(static_dir: str) -> FastAPI:
     class PrebacivanjeUplate(BaseModel):
         ugovor: str
 
-    @api.post("/uplate/{kljuc}/prebaci")
-    def prebaci_uplatu(kljuc: int, body: PrebacivanjeUplate, current_user: dict = Depends(get_current_user)):
+    def _prebaci_uplatu(kljuc: int, ugovor_in: str, identitet, proveri_cilj=None) -> str:
         """Povraćaj: prebacuje uplatu sa trenutnog ugovora na drugi ugovor.
+        identitet(conn) -> (user_id, obradio); proveri_cilj(kljuc_ugovora) baca 404 ako odredište nije dozvoljeno.
         uplate.id / uplate.faktura → novi ugovor; napomene interne oba ugovora se dopunjuju;
-        datum prebacivanja = danas."""
-        try:
-            user_id = int(current_user["sub"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
-        ugovor = (body.ugovor or "").strip().strip("/")
+        datum prebacivanja = danas. Vraća ključ novog ugovora."""
+        ugovor = (ugovor_in or "").strip().strip("/")
         if not ugovor:
             raise HTTPException(status_code=400, detail="Izaberite ugovor na koji se uplata prebacuje")
         with engine.begin() as conn:
@@ -4843,6 +4839,8 @@ def create_app(static_dir: str) -> FastAPI:
             ), {"b": broj_stari}).fetchone()
             if not stari_ar:
                 raise HTTPException(status_code=404, detail="Polazni ugovor nije pronađen")
+            if proveri_cilj:
+                proveri_cilj(nov.kljuc)
 
             iznos = float(stari.din or 0)
             iznos_txt = f"{iznos:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -4866,10 +4864,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "WHERE kljuc = :k"
             ), {"nid": nid, "nb": broj_novi, "sb": broj_stari, "dp": sada, "k": kljuc})
 
-            obradio_row = conn.execute(text(
-                "SELECT first_name, last_name FROM users WHERE id = :id"
-            ), {"id": user_id}).fetchone()
-            obradio = f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip() if obradio_row else ""
+            user_id, obradio = identitet(conn)
             conn.execute(text(
                 "INSERT INTO prebacivanje (datum, uplata_kljuc, iznos, stari_ugovor, novi_ugovor, operater_id, operater) "
                 "VALUES (:dp, :uk, :iznos, :stari, :novi, :uid, :op)"
@@ -4883,7 +4878,17 @@ def create_app(static_dir: str) -> FastAPI:
                 {"polje": "Prebačena sa ugovora", "stara": None, "nova": stari_ar.kljuc},
                 {"polje": "Iznos (DIN)", "stara": None, "nova": norm_vrednost(iznos)},
             ])
-        return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov.kljuc}
+        return nov.kljuc
+
+    @api.post("/uplate/{kljuc}/prebaci")
+    def prebaci_uplatu(kljuc: int, body: PrebacivanjeUplate, current_user: dict = Depends(get_current_user)):
+        """Povraćaj: prebacuje uplatu sa trenutnog ugovora na drugi ugovor (vidi _prebaci_uplatu)."""
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+        nov = _prebaci_uplatu(kljuc, body.ugovor, _korisnik_identitet(user_id))
+        return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov}
 
     register_zabrana(api, engine, get_current_user, lambda: get_eur_middle(),
                      lambda r: calc_ugovor_values(r, dodatni_za_ugovor(r.get("kljuc"))))
@@ -4910,8 +4915,8 @@ def create_app(static_dir: str) -> FastAPI:
             out.append(d)
         return {"rows": out, "total": len(out)}
 
-    @api.post("/uplate", status_code=201)
-    def create_uplata(body: UplataCreate, current_user: dict = Depends(get_current_user)):
+    def _uplata_validiraj(body: UplataCreate) -> dict:
+        """Provera polja uplate i kursa (kurs mora postojati PRE unosa). Vraća očišćene vrednosti."""
         ugovor = (body.ugovor or "").strip().strip("/")
         ime = (body.ime or "").strip()
         adresa = (body.adresa or "").strip()
@@ -4938,11 +4943,81 @@ def create_app(static_dir: str) -> FastAPI:
         if abs(din - round(din, 2)) > 1e-9:
             raise HTTPException(status_code=400, detail="Iznos može imati najviše 2 decimale")
 
-        # kurs mora postojati PRE samog unosa uplate
         kurs = get_eur_middle()
         if not kurs or not math.isfinite(float(kurs)) or float(kurs) <= 0:
             raise HTTPException(status_code=503, detail="Kurs EUR nije dostupan — uplata nije uneta")
+        return {"ugovor": ugovor, "ime": ime, "adresa": adresa, "nacin": nacin,
+                "svrha": svrha, "din": din, "kurs": float(kurs)}
 
+    def _uplata_upisi(conn, arow, v: dict, danas_unosa: datetime, obradio: str,
+                      poslovnica, user_id) -> int:
+        """Upis nove uplate na ugovor arow + zapis u istoriju. Vraća ključ nove uplate."""
+        broj_ugovora = (arow.kljuc or "").split("/")[0].strip()
+        try:
+            ugovor_id = int(broj_ugovora)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
+
+        din = v["din"]
+        uevro = round(din / v["kurs"], 2)
+        # kartica i čekovi se dodaju posle unosa uplate (PUT /uplate/{kljuc}/kartica i /cekovi)
+        kartica = {"broj_potvrde": None, "tip_kartice": None, "broj_kartice": None, "broj_odobrenja": None}
+
+        new_kljuc = conn.execute(text("""
+            INSERT INTO uplate
+                (id, danas, ime, adresa, nacin, din, evro, uevro, svrha,
+                 obradio, vrsta, faktura, destinacija, mesto, subagent,
+                 organizator, poslovnica,
+                 broj_potvrde, tip_kartice, broj_kartice, broj_odobrenja)
+            VALUES
+                (:id, :danas, :ime, :adresa, :nacin, :din, :evro, :uevro, :svrha,
+                 :obradio, :vrsta, :faktura, :destinacija, :mesto, :subagent,
+                 :organizator, :poslovnica,
+                 :broj_potvrde, :tip_kartice, :broj_kartice, :broj_odobrenja)
+            RETURNING kljuc
+        """), {
+            "id": ugovor_id,
+            "danas": danas_unosa,
+            "ime": v["ime"],
+            "adresa": v["adresa"],
+            "nacin": v["nacin"],
+            "din": din,
+            "evro": 0,
+            "uevro": uevro,
+            "svrha": v["svrha"],
+            "obradio": obradio,
+            "vrsta": "UPLATA",
+            "faktura": broj_ugovora,
+            "destinacija": arow.destinacija,
+            "mesto": arow.mesto,
+            "subagent": arow.subagent,
+            "organizator": arow.organizator,
+            "poslovnica": poslovnica,
+            **kartica,
+        }).scalar_one()
+
+        # broj dokumenta = ključ nove uplate kao string (VARCHAR(10) ograničenje)
+        broj_dokumenta = str(new_kljuc)
+        if len(broj_dokumenta) > 10:
+            raise HTTPException(
+                status_code=500,
+                detail="Broj uplate premašuje dozvoljenih 10 znakova",
+            )
+        conn.execute(text("UPDATE uplate SET broj = :b WHERE kljuc = :k"),
+                     {"b": broj_dokumenta, "k": new_kljuc})
+        zabelezi(conn, arow.kljuc, OBLAST_UPLATA, "uplata_dodata", user_id, obradio, [
+            {"polje": "Uplata (broj)", "stara": None, "nova": broj_dokumenta},
+            {"polje": "Platilac", "stara": None, "nova": v["ime"]},
+            {"polje": "Iznos (DIN)", "stara": None, "nova": norm_vrednost(din)},
+            {"polje": "Način plaćanja", "stara": None, "nova": v["nacin"]},
+            {"polje": "Svrha", "stara": None, "nova": v["svrha"]},
+        ])
+        return int(new_kljuc)
+
+    @api.post("/uplate", status_code=201)
+    def create_uplata(body: UplataCreate, current_user: dict = Depends(get_current_user)):
+        v = _uplata_validiraj(body)
+        ugovor = v["ugovor"]
         try:
             user_id = int(current_user["sub"])
         except (KeyError, TypeError, ValueError):
@@ -4989,81 +5064,19 @@ def create_app(static_dir: str) -> FastAPI:
             if not arow:
                 raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
 
-            broj_ugovora = (arow.kljuc or "").split("/")[0].strip()
-            try:
-                ugovor_id = int(broj_ugovora)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
-
             obradio = f"{(urow.first_name or '').strip()} {(urow.last_name or '').strip()}".strip()
-            uevro = round(din / float(kurs), 2)
-            # kartica i čekovi se dodaju posle unosa uplate (PUT /uplate/{kljuc}/kartica i /cekovi)
-            kartica = {"broj_potvrde": None, "tip_kartice": None, "broj_kartice": None, "broj_odobrenja": None}
+            new_kljuc = _uplata_upisi(conn, arow, v, danas_unosa, obradio,
+                                      urow.poslovnica_naziv or arow.poslovnica, user_id)
 
-            new_kljuc = conn.execute(text("""
-                INSERT INTO uplate
-                    (id, danas, ime, adresa, nacin, din, evro, uevro, svrha,
-                     obradio, vrsta, faktura, destinacija, mesto, subagent,
-                     organizator, poslovnica,
-                     broj_potvrde, tip_kartice, broj_kartice, broj_odobrenja)
-                VALUES
-                    (:id, :danas, :ime, :adresa, :nacin, :din, :evro, :uevro, :svrha,
-                     :obradio, :vrsta, :faktura, :destinacija, :mesto, :subagent,
-                     :organizator, :poslovnica,
-                     :broj_potvrde, :tip_kartice, :broj_kartice, :broj_odobrenja)
-                RETURNING kljuc
-            """), {
-                "id": ugovor_id,
-                "danas": danas_unosa,
-                "ime": ime,
-                "adresa": adresa,
-                "nacin": nacin,
-                "din": din,
-                "evro": 0,
-                "uevro": uevro,
-                "svrha": svrha,
-                "obradio": obradio,
-                "vrsta": "UPLATA",
-                "faktura": broj_ugovora,
-                "destinacija": arow.destinacija,
-                "mesto": arow.mesto,
-                "subagent": arow.subagent,
-                "organizator": arow.organizator,
-                "poslovnica": urow.poslovnica_naziv or arow.poslovnica,
-                **kartica,
-            }).scalar_one()
+        return {"kljuc": new_kljuc, "message": "Uplata je uspešno uneta"}
 
-            # broj dokumenta = ključ nove uplate kao string (VARCHAR(10) ograničenje)
-            broj_dokumenta = str(new_kljuc)
-            if len(broj_dokumenta) > 10:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Broj uplate premašuje dozvoljenih 10 znakova",
-                )
-            conn.execute(text("UPDATE uplate SET broj = :b WHERE kljuc = :k"),
-                         {"b": broj_dokumenta, "k": new_kljuc})
-            zabelezi(conn, arow.kljuc, OBLAST_UPLATA, "uplata_dodata", user_id, obradio, [
-                {"polje": "Uplata (broj)", "stara": None, "nova": broj_dokumenta},
-                {"polje": "Platilac", "stara": None, "nova": ime},
-                {"polje": "Iznos (DIN)", "stara": None, "nova": norm_vrednost(din)},
-                {"polje": "Način plaćanja", "stara": None, "nova": nacin},
-                {"polje": "Svrha", "stara": None, "nova": svrha},
-            ])
-
-        return {"kljuc": int(new_kljuc), "message": "Uplata je uspešno uneta"}
-
-    @api.post("/uplate/{kljuc}/fiskal")
-    def uplata_fiskal(kljuc: int, current_user: dict = Depends(get_current_user)):
-        """Fiskalizacija već sačuvane uplate. Uspešno poslata uplata se ne šalje ponovo."""
+    def _fiskal_uplate(kljuc: int, ucitaj_korisnika) -> dict:
+        """Fiskalizacija sačuvane uplate. ucitaj_korisnika(conn) -> dict(username, first_name, last_name,
+        poslovnica_naziv) ili None (401). Uspešno poslata uplata se ne šalje ponovo."""
         import httpx
         import time
         from fiskal import (FISKAL_INVOICE_PAUSA_SEC, build_fiskal_params, dohvati_invoice, invoice_odbijen, je_uspeh,
                             parsiraj_invoice, posalji_fiskal)
-
-        try:
-            user_id = int(current_user["sub"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
 
         with engine.connect() as conn:
             u = conn.execute(text("SELECT * FROM uplate WHERE kljuc = :k"), {"k": kljuc}).mappings().first()
@@ -5071,10 +5084,7 @@ def create_app(static_dir: str) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Uplata nije pronađena")
             if u["fiskal_poslato"]:
                 raise HTTPException(status_code=409, detail="Uplata je već fiskalizovana")
-            urow = conn.execute(text(
-                "SELECT u.username, u.first_name, u.last_name, p.naziv AS poslovnica_naziv FROM users u "
-                "LEFT JOIN poslovnice p ON p.id = u.poslovnica_id WHERE u.id = :id"
-            ), {"id": user_id}).mappings().first()
+            urow = ucitaj_korisnika(conn)
             if not urow:
                 raise HTTPException(status_code=401, detail="Neautorizovan pristup")
             ag = conn.execute(text(
@@ -5153,6 +5163,30 @@ def create_app(static_dir: str) -> FastAPI:
             "invoice_http_status": invoice_status or None,
             "invoice_odgovor": invoice_tekst,
         }
+
+    @api.post("/uplate/{kljuc}/fiskal")
+    def uplata_fiskal(kljuc: int, current_user: dict = Depends(get_current_user)):
+        """Fiskalizacija već sačuvane uplate. Uspešno poslata uplata se ne šalje ponovo."""
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+
+        def _korisnik(conn):
+            return conn.execute(text(
+                "SELECT u.username, u.first_name, u.last_name, p.naziv AS poslovnica_naziv FROM users u "
+                "LEFT JOIN poslovnice p ON p.id = u.poslovnica_id WHERE u.id = :id"
+            ), {"id": user_id}).mappings().first()
+
+        return _fiskal_uplate(kljuc, _korisnik)
+
+    @api.post("/sync/prodaja/uplate/{kljuc}/fiskal")
+    def sync_fiskal_uplate(kljuc: int, request: Request):
+        """Fiskalizacija uplate sopstvenog ugovora; kasir je naziv subagenta."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return _fiskal_uplate(kljuc, lambda conn: {"username": naziv, "first_name": naziv,
+                                                   "last_name": "", "poslovnica_naziv": None})
 
     def _avans_priprema(kljuc: int) -> dict:
         """Čita uplatu, agenciju, subagenta i ugovor i računa iznose. Ne upisuje i ne šalje ništa."""
@@ -5261,8 +5295,14 @@ def create_app(static_dir: str) -> FastAPI:
         return {"faktura": faktura, "xml": _avans_xml(p, faktura),
                 "url": f"{SEF_URL}?requestId={faktura}&sendToCir=No"}
 
-    @api.post("/uplate/{kljuc}/avans-sef")
-    def uplata_avans_sef(kljuc: int, current_user: dict = Depends(get_current_user)):
+    @api.get("/sync/prodaja/uplate/{kljuc}/avans-sef/pregled")
+    def sync_avans_sef_pregled(kljuc: int, request: Request):
+        """Pregled XML-a avansa za uplatu sopstvenog ugovora (samo čitanje)."""
+        naziv = sync_subagent_iz_zahteva(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return uplata_avans_sef_pregled(kljuc)
+
+    def _avans_sef_slanje(kljuc: int) -> dict:
         """Slanje avansa na SEF za uplatu. Broj avansa `n/YY` (YY = godina datumod aranžmana) se
         dodeljuje u transakciji i ostaje isti pri ponovnom pokušaju; jedinstveni indeks sprečava duplikate."""
         import httpx
@@ -5333,8 +5373,19 @@ def create_app(static_dir: str) -> FastAPI:
                 "poruka": f"Avans {faktura} je uspešno poslat na SEF", "odgovor": tekst,
                 "http_status": status_http}
 
-    @api.get("/uplate/{kljuc}/priznanica")
-    def uplata_priznanica(kljuc: int, _: dict = Depends(get_current_user)):
+    @api.post("/uplate/{kljuc}/avans-sef")
+    def uplata_avans_sef(kljuc: int, current_user: dict = Depends(get_current_user)):
+        """Slanje avansa na SEF za uplatu (vidi _avans_sef_slanje)."""
+        return _avans_sef_slanje(kljuc)
+
+    @api.post("/sync/prodaja/uplate/{kljuc}/avans-sef")
+    def sync_avans_sef_uplate(kljuc: int, request: Request):
+        """Slanje avansa na SEF za uplatu sopstvenog ugovora."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return _avans_sef_slanje(kljuc)
+
+    def _priznanica_pdf(kljuc: int) -> bytes:
         """PDF priznanica o uplati — dva primerka na A4, isprekidana linija + makaze."""
         from priznanica_pdf import build_priznanica_pdf
 
@@ -5402,12 +5453,27 @@ def create_app(static_dir: str) -> FastAPI:
             logo_data_url=logo_data_url,
             preostalo_eur=preostalo_eur,
         )
+        return pdf_bytes
+
+    def _priznanica_odgovor(kljuc: int) -> Response:
         fname = f"Priznanica_{kljuc}.pdf"
         return Response(
-            content=pdf_bytes,
+            content=_priznanica_pdf(kljuc),
             media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{fname}"'},
         )
+
+    @api.get("/uplate/{kljuc}/priznanica")
+    def uplata_priznanica(kljuc: int, _: dict = Depends(get_current_user)):
+        """PDF priznanica o uplati — dva primerka na A4, isprekidana linija + makaze."""
+        return _priznanica_odgovor(kljuc)
+
+    @api.get("/sync/prodaja/uplate/{kljuc}/priznanica")
+    def sync_prodaja_priznanica(kljuc: int, request: Request):
+        """PDF priznanica za uplatu sopstvenog ugovora (isto kao /uplate/{kljuc}/priznanica)."""
+        naziv = sync_subagent_iz_zahteva(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return _priznanica_odgovor(kljuc)
 
     # ── Ugovor: promena smeštaja (soba + termin) ────────────────────────────
     @api.patch("/ugovori/{kljuc:path}/smestaj")
@@ -7391,6 +7457,33 @@ def create_app(static_dir: str) -> FastAPI:
         _sync_proveri_uplatu(kljuc, naziv)
         broj = _izmeni_cekove_uplate(kljuc, body, lambda conn: (None, f"{naziv} (subagent)"))
         return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": broj}
+
+    @api.post("/sync/prodaja/uplate", status_code=201)
+    def sync_create_uplata(body: UplataCreate, request: Request):
+        """Unos uplate iz App2 subagenta — samo na sopstveni ugovor (tačan ključ, npr. 33333/26).
+        Datum je uvek danas (polje datum se ignoriše)."""
+        naziv = _sync_naziv_pisca(request)
+        v = _uplata_validiraj(body)
+        kljuc_ugovora = _sync_proveri_vlasnistvo(v["ugovor"], naziv)
+        with engine.begin() as conn:
+            arow = conn.execute(text(
+                "SELECT kljuc, destinacija, mesto, subagent, organizator, poslovnica "
+                "FROM aranzman WHERE kljuc = :k"
+            ), {"k": kljuc_ugovora}).fetchone()
+            if not arow:
+                raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            new_kljuc = _uplata_upisi(conn, arow, v, _belgrade_now(), f"{naziv} (subagent)",
+                                      arow.poslovnica, None)
+        return {"kljuc": new_kljuc, "message": "Uplata je uspešno uneta"}
+
+    @api.post("/sync/prodaja/uplate/{kljuc}/prebaci")
+    def sync_prebaci_uplatu(kljuc: int, body: PrebacivanjeUplate, request: Request):
+        """Prebacivanje uplate iz App2 subagenta — i izvorna uplata i odredišni ugovor moraju biti sopstveni."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        nov = _prebaci_uplatu(kljuc, body.ugovor, lambda conn: (None, f"{naziv} (subagent)"),
+                              lambda k: _sync_proveri_vlasnistvo(k, naziv))
+        return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov}
 
     @api.get("/sync/prodaja/keptp")
     def sync_prodaja_keptp(request: Request, kljuc: str = Query(...)):
