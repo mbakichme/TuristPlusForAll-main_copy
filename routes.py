@@ -676,6 +676,11 @@ def init_db(engine):
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_aranzman_smestaj_id ON aranzman(smestaj_id)"
         ))
+        # App2 lista rezervacija: filtar po subagentu, sortiranje po datumu (sync_rezervacije)
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_aranzman_subagent_datumod "
+            "ON aranzman(subagent, datumod DESC, id DESC)"
+        ))
         # Način plaćanja rezervacije (delimicno | u_celosti | NULL = nije izabran) — bira popust sobe
         conn.execute(text(
             "ALTER TABLE aranzman ADD COLUMN IF NOT EXISTS nacin_placanja VARCHAR(20)"

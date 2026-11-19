@@ -331,21 +331,27 @@ def register_app2_sync(api, engine) -> None:
             offset = max(int(request.query_params.get("offset", 0)), 0)
         except ValueError:
             raise HTTPException(status_code=400, detail="limit i offset moraju biti brojevi")
+        # Jedan upit umesto tri: klijent -> naziv subagenta, ukupan broj i stranica.
         with engine.connect() as conn:
-            naziv = conn.execute(text(
-                "SELECT s.naziv FROM subagent_api_clients c "
-                "JOIN subagenti s ON s.id = c.subagent_id WHERE c.client_id = :cid"
-            ), {"cid": client_id}).scalar()
-            if not naziv:
-                raise HTTPException(status_code=404, detail="Nepoznat klijent")
-            ukupno = conn.execute(text(
-                "SELECT count(*) FROM aranzman WHERE subagent = :n"
-            ), {"n": naziv}).scalar()
-            redovi = conn.execute(text(
-                "SELECT id, kljuc, putnik, datumod, naziv, tiprezervacije, cenaaranz "
-                "FROM aranzman WHERE subagent = :n "
-                "ORDER BY datumod DESC NULLS LAST, id DESC LIMIT :l OFFSET :o"
-            ), {"n": naziv, "l": limit, "o": offset}).mappings().all()
+            red = conn.execute(text(
+                "WITH k AS ("
+                "  SELECT s.naziv FROM subagent_api_clients c "
+                "  JOIN subagenti s ON s.id = c.subagent_id WHERE c.client_id = :cid"
+                "), u AS ("
+                "  SELECT count(*) AS ukupno FROM aranzman a "
+                "  WHERE a.subagent = (SELECT naziv FROM k)"
+                "), r AS ("
+                "  SELECT a.id, a.kljuc, a.putnik, a.datumod, a.naziv, a.tiprezervacije, a.cenaaranz "
+                "  FROM aranzman a WHERE a.subagent = (SELECT naziv FROM k) "
+                "  ORDER BY a.datumod DESC NULLS LAST, a.id DESC LIMIT :l OFFSET :o"
+                ") "
+                "SELECT k.naziv, u.ukupno, r.* FROM k CROSS JOIN u "
+                "LEFT JOIN r ON true"
+            ), {"cid": client_id, "l": limit, "o": offset}).mappings().all()
+        if not red:
+            raise HTTPException(status_code=404, detail="Nepoznat klijent")
+        naziv, ukupno = red[0]["naziv"], red[0]["ukupno"]
+        redovi = [r for r in red if r["id"] is not None]
         return {
             "instanca": _instanca(),
             "subagent": naziv,
