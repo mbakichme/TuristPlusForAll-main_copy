@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Calendar } from "@/components/ui/calendar";
+import { useAuth } from "../context/AuthContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -44,6 +45,7 @@ import { PrebacivanjeUplatePopup } from "@/components/PrebacivanjeUplatePopup";
 
 // ── konstante ──────────────────────────────────────────────────────────────
 const TIP_REZERVACIJE = ["Klasična rezervacija", "Predrezervacija", "Last minute", "First minute", "U jesen o letu", "Napolje zima u mislima leto", "Sajam", "Rođendan"];
+const TIMELIMIT_SAT_PODRAZUMEVANO = "20";
 const SMER_OPCIJE = ["Polazak", "Povratak"];
 const NACIN_PLACANJA = ["Gotovina", "Kartica", "Ček", "Virman", "IPC", "Vaučer", "Ostalo"];
 const SVRHA_UPLATE = ["Total aranžman", "Deo aranžmana", "Prevoz", "Osiguranje", "Odloženo - Ček", "Povraćaj"];
@@ -72,6 +74,31 @@ interface FiskalPopup {
   faza: "cekanje" | "rezultat" | "greska";
   rezultat?: FiskalOdgovor;
   poruka?: string;
+}
+
+/** Stanje popup-a za slanje avansa na SEF */
+interface AvansPopup {
+  kljuc: number;
+  faza: "spremno" | "cekanje" | "rezultat" | "greska";
+  uspeh?: boolean;
+  poruka?: string;
+}
+
+/** Odgovor backend-a na GET /uplate/{kljuc}/avans-sef/pregled */
+interface AvansPregled {
+  faktura: string;
+  xml: string;
+  url: string;
+}
+
+/** Odgovor backend-a na POST /uplate/{kljuc}/avans-sef */
+interface AvansSefOdgovor {
+  uspeh: boolean;
+  avans_id: number | null;
+  faktura?: string | null;
+  poruka: string;
+  odgovor: string | null;
+  http_status?: number | null;
 }
 
 /** Crveni toast (gore desno) da podaci kartice nisu uneti; ostaje dok se ne zatvori ili ne sačuvaju podaci. */
@@ -146,6 +173,18 @@ const formatDatumRodjenja = (value: string) => {
   const digits = value.replace(/\D/g, "").slice(0, 8);
   return [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4)].filter(Boolean).join(".");
 };
+/** Navršene godine na datum putovanja: rodjen "dd.mm.yyyy", putovanje "yyyy-mm-dd" (iz boravak.datumOd). null ako nije validno. */
+const starostNaDatum = (rodjen: string, datumPutovanja: string): number | null => {
+  const r = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(rodjen);
+  const p = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datumPutovanja);
+  if (!r || !p) return null;
+  const [d, m, y] = [Number(r[1]), Number(r[2]), Number(r[3])];
+  const [py, pm, pd] = [Number(p[1]), Number(p[2]), Number(p[3])];
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  let godine = py - y;
+  if (pm < m || (pm === m && pd < d)) godine -= 1;
+  return godine >= 0 ? godine : null;
+};
 const prikazTimeLimita = (datum: Date | undefined, sat: string) =>
   datum ? `${String(datum.getDate()).padStart(2, "0")}.${String(datum.getMonth() + 1).padStart(2, "0")}.${datum.getFullYear()} ${sat}:00` : ""; // lokalni datum bez UTC konverzije
 const SATI = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
@@ -168,7 +207,7 @@ type PonudaCene = {
   popusti: PopustPonude[]; cena_konacna: number | null;
 };
 type VarijantaCene = {
-  soba_id: number; broj_sobe: string | null; struktura: string | null; opis: string; virtuelna: boolean;
+  soba_id: number; izvor_soba_id?: number | null; broj_sobe: string | null; struktura: string | null; opis: string; virtuelna: boolean;
   ponude: { sa_prevozom: PonudaCene | null; bez_prevoza: PonudaCene | null };
 };
 type VarijanteOdgovor = { cenovnik_id: number | null; naziv: string | null; periodi: unknown[]; varijante: VarijantaCene[] };
@@ -466,6 +505,12 @@ function UzrastIzbor({ value, onChange, disabled, label }: { value: string; onCh
     </div>
   );
 }
+/** Diskretan prikaz navršenih godina na datum putovanja (uz labelu „Datum rođenja“). */
+function StarostBadge({ rodjen, datumOd }: { rodjen: string; datumOd: string }) {
+  const godine = starostNaDatum(rodjen, datumOd);
+  if (godine == null) return null;
+  return <span className="ml-1 font-normal text-muted-foreground/70">{godine}</span>;
+}
 /** Kompaktni raspored tabova Aranžman i Obračun — niži inputi/selecti/datumi, manji razmaci (više polja na ekranu). */
 const KOMPAKT_TAB = "mt-3 space-y-3 [&_input]:h-8 [&_button[role=combobox]]:h-8 [&_button[aria-haspopup=dialog]]:h-8 [&_textarea]:min-h-0 [&_label]:leading-none";
 const KOMPAKT_HEADER = "px-4 pt-3 pb-2";
@@ -495,7 +540,7 @@ function SekcijaIkona({ ton, children }: { ton: Ton; children: ReactNode }) {
 
 function Fld({
   label, children, className, labelClassName,
-}: { label: string; children: ReactNode; className?: string; labelClassName?: string }) {
+}: { label: ReactNode; children: ReactNode; className?: string; labelClassName?: string }) {
   return (
     <div className={cn("space-y-1.5", className)}>
       <Label className={cn("text-xs text-muted-foreground", labelClassName)}>{label}</Label>
@@ -705,6 +750,7 @@ export default function RezervacijePage() {
   const [subagentOpcije, setSubagentOpcije] = useState<string[]>([]);
   // provizija izabranog subagenta (kolona subagenti.provizija) i globalni parametri obračuna
   const [subagentProvizija, setSubagentProvizija] = useState<number | null>(null);
+  const [subagentMesto, setSubagentMesto] = useState("");
   // adl (maks. broj ADL osoba) strukture iz koeficijenti_prodaje — određuje saputnike i količinu smeštaja (Grafik prefill)
   const [adlStrukture, setAdlStrukture] = useState<number | null>(null);
   // koeficijent strukture (kolona koeficijent, red sa max ADL) — količina smeštaja; cena iz Grafika je po osobi
@@ -724,7 +770,7 @@ export default function RezervacijePage() {
     return () => { aktivan = false; clearTimeout(t); };
   }, [subagentOtvoren, subagentPretraga]);
   const [timeLimitDatum, setTimeLimitDatum] = useState<Date>();
-  const [timeLimitSat, setTimeLimitSat] = useState("12");
+  const [timeLimitSat, setTimeLimitSat] = useState(TIMELIMIT_SAT_PODRAZUMEVANO);
   const [timeLimitOtvoren, setTimeLimitOtvoren] = useState(false);
   const [pretraga, setPretraga] = useState("");
   const [pretragaRezultati, setPretragaRezultati] = useState<UgovorRow[]>([]);
@@ -795,6 +841,10 @@ export default function RezervacijePage() {
   const [polasciGreska, setPolasciGreska] = useState(false);
   const [polasciOsvezi, setPolasciOsvezi] = useState(0);
   const [uplata, setUplata] = useState<Uplata>({ uplatilac: "nosilac", ...UPLATA_PODRAZUMEVANO, iznos: "" });
+  // datum uplate (samo računovodstvo menja; šalje se na backend kao uplate.danas)
+  const { user: prijavljen } = useAuth();
+  const jeRacunovodstvo = !!prijavljen && (prijavljen.is_superadmin || prijavljen.user_type_slug === "racunovodstvo");
+  const [uplataDatum, setUplataDatum] = useState<string>(() => datumToIso(new Date()));
   // popup kartice: uvek za postojeću uplatu (dugme "Kartica" u redu tabele)
   const [karticaPopup, setKarticaPopup] = useState<{ kljuc: number; vrednost: KarticaPodaci } | null>(null);
   const [karticaCuva, setKarticaCuva] = useState(false);
@@ -819,6 +869,8 @@ export default function RezervacijePage() {
   const [priznanicaKljuc, setPriznanicaKljuc] = useState<number | null>(null);
   // Fiskalizacija uplate: popup sa statusom zahteva i sirovim odgovorom servisa
   const [fiskalPopup, setFiskalPopup] = useState<FiskalPopup | null>(null);
+  // Avans na SEF: popup sa podacima uplate i dugmetom za slanje
+  const [avansPopup, setAvansPopup] = useState<AvansPopup | null>(null);
   const [istorija, setIstorija] = useState<IstorijaRed[] | null>(null);
   const [istorijaUcitava, setIstorijaUcitava] = useState(false);
   const [istorijaOtvorena, setIstorijaOtvorena] = useState(false);
@@ -853,7 +905,7 @@ export default function RezervacijePage() {
   const [sobe, setSobe] = useState<Soba[]>([]);
   const [destinacije, setDestinacije] = useState<Destinacija[]>([]);
   const [destinacijePrevoz, setDestinacijePrevoz] = useState<DestinacijaPrevoz[]>([]);
-  const [kurs, setKurs] = useState<{ kurs: number | null; datum: string } | null>(null);
+  const [kurs, setKurs] = useState<{ kurs: number | null; datum: string | null; danas: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -866,7 +918,7 @@ export default function RezervacijePage() {
       setMesta(m); setSmestaji(s); setSobe(sobeData); setDestinacije(d); setDestinacijePrevoz(dp);
       setReferenceSpremne(true);
     }).catch(() => { if (!cancelled) toast.error("Učitavanje podataka za rezervaciju nije uspelo"); });
-    apiFetch<{ kurs: number | null; datum: string }>("/kurs").then(setKurs).catch(() => {});
+    apiFetch<{ kurs: number | null; datum: string | null; danas: string }>("/kurs").then(setKurs).catch(() => {});
     apiFetch<string[]>("/tipovi-kartica").then(setTipoviKartica).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -1014,8 +1066,8 @@ export default function RezervacijePage() {
       setDestinacijaSacuvana(dpId ? null : (d.destinacija ?? "").trim() || null);
       setDestinacijaZaSve(dpId ? String(dpId) : (d.destinacija ?? "").trim() ? CUVAR : "");
       const tl = /^(\d{2})\.(\d{2})\.(\d{4}) (\d{2}):\d{2}$/.exec(d.timelimit ?? "");
-      setTimeLimitDatum(tl && tip === "Predrezervacija" ? new Date(+tl[3], +tl[2] - 1, +tl[1]) : undefined);
-      setTimeLimitSat(tl ? tl[4] : "12");
+      setTimeLimitDatum(tl ? new Date(+tl[3], +tl[2] - 1, +tl[1]) : undefined);
+      setTimeLimitSat(tl ? tl[4] : TIMELIMIT_SAT_PODRAZUMEVANO);
       setPrevozDetaljiOtvoreni({});
       const nosilacOw = !!d.prevozow;
       const nosilacSp = !nosilacOw && !d.prevozrt && !!d.prevozsp;
@@ -1065,7 +1117,7 @@ export default function RezervacijePage() {
         provizijaPrevoz: d.procenatpr && d.procenatpr > 0 ? brojUString(round2(d.procenatpr * kolPrevozUcitan)) : "",
       });
       setPrevozRedovi({ nosilac: { mestoUlaska: d.ulazak ?? "", mestoIzlaska: d.mesto_izlaska ?? d.ulazak ?? "", mestoSedenja: d.mesto_sedenja ?? "", placeno: !!d.placeno_prevoz, zelja: !!d.zelja_prevoz }, ...Object.fromEntries(dodati.map((p, i) => [p.uid, { mestoUlaska: dopuna[i].ulazak ?? "", mestoIzlaska: dopuna[i].mesto_izlaska ?? dopuna[i].ulazak ?? "", mestoSedenja: dopuna[i].mesto_sedenja ?? "", placeno: !!dopuna[i].placeno_prevoz, zelja: !!dopuna[i].zelja_prevoz }])) });
-      setUplata({ uplatilac: "nosilac", ...UPLATA_PODRAZUMEVANO, iznos: "" });
+      setUplata({ uplatilac: (d.subagent ?? "").trim() ? "subagent" : "nosilac", ...UPLATA_PODRAZUMEVANO, iznos: "" });
       setIzabraniUgovor(d.kljuc);
       setUcitanUgovor(d);
       setSobaUgovoraId(sobaId || null);
@@ -1211,15 +1263,10 @@ export default function RezervacijePage() {
   const aktivanIzbor = obracunIzbor && obracunIzbor.kljuc === kljucBoravka(boravak) ? obracunIzbor : null;
   const proveriObracun = () => {
     if (!izabranaSoba || !boravak.smestaj || boravak.smestaj === CUVAR || !boravak.datumOd || !boravak.datumDo) return;
-    // putnici kao u snimanju (_obracun_argumenti): nosilac + saputnici, višak količine = ADL
-    const uzrasti = [nosilac.uzrast, ...saputnici.filter((s) => s.ime.trim()).map((s) => s.uzrast)];
-    const kol = Math.round(Number(cene.kolSmestaj) || 0);
-    while (uzrasti.length < kol) uzrasti.push("ADL");
-    const broji = (u: string) => uzrasti.filter((x) => (x ?? "").trim() === u).length;
+    // cene po standardnom sastavu strukture iz cenovnika (ne po broju putnika u rezervaciji)
     const params = new URLSearchParams({
       smestaj_id: boravak.smestaj, soba_id: String(izabranaSoba.id),
       datumod: boravak.datumOd, datumdo: boravak.datumDo,
-      adl: String(broji("ADL")), chd: String(broji("CHD")), inf: String(broji("INF")),
     });
     setVarijanteOtvoren(true);
     setVarijante(null);
@@ -1393,11 +1440,22 @@ export default function RezervacijePage() {
 
   useEffect(() => {
     // ako je izabrani uplatilac obrisan, vrati se na nosioca
-    if (uplata.uplatilac !== "nosilac" && !putnici.some((p) => p.uid === uplata.uplatilac)) {
+    if (uplata.uplatilac !== "nosilac" && uplata.uplatilac !== "subagent"
+      && !putnici.some((p) => p.uid === uplata.uplatilac)) {
       setUplatilac("nosilac");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saputnici]);
+
+  // subagent izabran → podrazumevani uplatilac je subagent (ako je uplatilac još nosilac); uklonjen → nosilac
+  useEffect(() => {
+    if (!subagent.trim()) {
+      if (uplata.uplatilac === "subagent") setUplatilac("nosilac");
+      return;
+    }
+    setUplata((u) => (u.uplatilac === "nosilac" ? { ...u, uplatilac: "subagent" } : u));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subagent]);
 
   const setUplatilac = (v: string) => setUplata((u) => ({ ...u, uplatilac: v }));
   const updPrevoz = (uid: string, patch: Partial<PrevozRed>) =>
@@ -1467,16 +1525,21 @@ export default function RezervacijePage() {
       .catch(() => setParametriObr(null));
   }, []);
 
-  // Provizija subagenta: kolona subagenti.provizija za tačno izabran naziv
+  // Provizija i mesto subagenta: kolone subagenti.provizija / subagenti.mesto za tačno izabran naziv
   useEffect(() => {
     const naziv = subagent.trim();
-    if (!naziv) { setSubagentProvizija(null); return; }
+    if (!naziv) { setSubagentProvizija(null); setSubagentMesto(""); return; }
     let aktivan = true;
-    apiFetch<{ rows: { naziv: string; provizija: number | null }[] }>(
+    apiFetch<{ rows: { naziv: string; provizija: number | null; mesto: string | null }[] }>(
       `/subagenti?${new URLSearchParams({ search: naziv, page_size: "100" })}`
     )
-      .then((d) => { if (aktivan) setSubagentProvizija(d.rows.find((r) => (r.naziv ?? "").trim() === naziv)?.provizija ?? null); })
-      .catch(() => { if (aktivan) setSubagentProvizija(null); });
+      .then((d) => {
+        if (!aktivan) return;
+        const r = d.rows.find((x) => (x.naziv ?? "").trim() === naziv);
+        setSubagentProvizija(r?.provizija ?? null);
+        setSubagentMesto((r?.mesto ?? "").trim());
+      })
+      .catch(() => { if (aktivan) { setSubagentProvizija(null); setSubagentMesto(""); } });
     return () => { aktivan = false; };
   }, [subagent]);
 
@@ -1728,7 +1791,10 @@ export default function RezervacijePage() {
     if (!Number.isFinite(din) || din === 0) { toast.error("Iznos mora biti različit od nule"); return; }
     if (!uplata.nacin || !uplata.svrha) { toast.error("Izaberite način plaćanja i svrhu uplate"); return; }
     const platilac = uplata.uplatilac === "nosilac"
-      ? nosilac : saputnici.find((p) => p.uid === uplata.uplatilac);
+      ? nosilac
+      : uplata.uplatilac === "subagent"
+        ? { ime: subagent.trim(), adresa: "" }
+        : saputnici.find((p) => p.uid === uplata.uplatilac);
     if (!platilac?.ime.trim()) { toast.error("Ime uplatioca je obavezno"); return; }
     const ugovor = izabraniUgovor;
     uplataZakljucana.current = true;
@@ -1738,7 +1804,8 @@ export default function RezervacijePage() {
         method: "POST",
         body: JSON.stringify({ ugovor, ime: platilac.ime.trim(),
           adresa: (platilac.adresa ?? "").trim(),
-          nacin: uplata.nacin, din, svrha: uplata.svrha }),
+          nacin: uplata.nacin, din, svrha: uplata.svrha,
+          ...(jeRacunovodstvo && uplataDatum ? { datum: uplataDatum } : {}) }),
       });
       toast.success("Uplata je uspešno uneta", { description: `Broj uplate: ${result.kljuc} · Ugovor: ${ugovor}` });
       if (uplata.nacin.trim() === "Kartica" && ugovor === aktivniUgovor.current) {
@@ -1891,6 +1958,26 @@ export default function RezervacijePage() {
     }
   }
 
+  // otvaranje popup-a za avans (ništa se ne šalje dok korisnik ne klikne)
+  function otvoriAvansPopup(kljuc: number) {
+    setAvansPopup({ kljuc, faza: "spremno" });
+  }
+
+  // slanje avansa na SEF iz popup-a; posle odgovora osvežava listu uplata
+  async function posaljiAvansSef(kljuc: number) {
+    setAvansPopup((p) => (p && p.kljuc === kljuc ? { ...p, faza: "cekanje" } : p));
+    try {
+      const r = await apiFetch<AvansSefOdgovor>(`/uplate/${kljuc}/avans-sef`, { method: "POST" });
+      setAvansPopup((p) => (p && p.kljuc === kljuc
+        ? { kljuc, faza: "rezultat", uspeh: r.uspeh, poruka: r.poruka }
+        : p));
+      setUplateOsvezi((n) => n + 1);
+    } catch (err) {
+      const poruka = err instanceof Error ? err.message : "Greška pri slanju avansa";
+      setAvansPopup((p) => (p && p.kljuc === kljuc ? { kljuc, faza: "greska", poruka } : p));
+    }
+  }
+
   // priznanica za pojedinačnu uplatu (dva primerka na A4)
   async function preuzmiPriznanicu(kljuc: number) {
     if (priznanicaKljuc != null) return;
@@ -2034,6 +2121,10 @@ export default function RezervacijePage() {
     if (saputnikBezUzrasta !== -1) { toast.error(`Izaberite uzrast saputnika ${saputnikBezUzrasta + 1} (ADL / CHD / INF)`); return; }
     const saputnikBezPrevoza = saputnici.findIndex((s) => s.ime.trim() && !s.ow && !s.rt && !s.sp);
     if (saputnikBezPrevoza !== -1) { toast.error(`Štiklirajte prevoz saputnika ${saputnikBezPrevoza + 1} (RT, OW ili SP)`); return; }
+    // Obavezna je samo zajednička "Izbor destinacije" (pored Napomene prevoz); po osobama nije obavezna
+    const imaOwRt = nosilac.ow || nosilac.rt || saputnici.some((s) => s.ime.trim() && (s.ow || s.rt));
+    const destinacijaIzabrana = sopstveniZaSve || (destinacijaZaSve !== "" && (destinacijaZaSve !== CUVAR || !!destinacijaSacuvana));
+    if (imaOwRt && !destinacijaIzabrana) { toast.error("Izaberite destinaciju prevoza (Izbor destinacije)"); return; }
     if (!boravak.datumOd || !boravak.datumDo) { toast.error("Unesite datum od i datum do boravka"); return; }
     if (boravak.datumDo <= boravak.datumOd) { toast.error("Datum do mora biti posle Datuma od"); return; }
 
@@ -2066,7 +2157,7 @@ export default function RezervacijePage() {
     const payload = {
       tiprezervacije: tipRezervacije,
       subagent: subagent.trim(),
-      timelimit: tipRezervacije === "Predrezervacija" && timeLimitDatum
+      timelimit: timeLimitDatum
         ? `${datumToIso(timeLimitDatum)}T${timeLimitSat}:00:00`
         : null,
       nosilac: {
@@ -2236,17 +2327,6 @@ export default function RezervacijePage() {
   // Uplaćeno dolazi isključivo iz stvarnih uplata ugovora, uključujući storna.
   const uplacenoObracun = izabraniUgovor && !uplateUcitavaju && uplateRedovi !== null
     ? uplateSumaRSD : null;
-  // Vrednost aranžmana u RSD: EUR deo po kursu + zasebni RSD deo.
-  const vrednostAranzmanaRSD = ukupnoAranzmanEUR != null && !kurs?.kurs
-    ? null
-    : ukupnoAranzmanEUR != null || ukupnoAranzmanRSD != null
-      ? round2((ukupnoAranzmanEUR ?? 0) * (kurs?.kurs ?? 0) + (ukupnoAranzmanRSD ?? 0))
-      : null;
-  // Vrednost aranžmana already net of provizija; saldo = vrednost − uplaćeno.
-  const saldo = vrednostAranzmanaRSD !== null && uplacenoObracun !== null
-    ? round2(vrednostAranzmanaRSD - uplacenoObracun)
-    : null;
-
   // Uplate v EUR po istorijskom kursu svake uplate (isti zbir kao u tabu Uplate).
   const vrednostAranzmanaEUR = ukupnoAranzmanRSD && !kurs?.kurs
     ? null
@@ -2255,6 +2335,10 @@ export default function RezervacijePage() {
       : null;
   const saldoEUR = uplacenoObracun !== null && vrednostAranzmanaEUR !== null
     ? round2(vrednostAranzmanaEUR - uplateSumaEUR)
+    : null;
+  // Saldo u RSD = saldo u EUR (uplate po kursu dana uplate) × kurs za danas (preostali dug).
+  const saldo = saldoEUR !== null && kurs?.kurs
+    ? round2(saldoEUR * kurs.kurs)
     : null;
 
   const akcija = (naziv: string) => () => toast.info(`${naziv} je u pripremi`);
@@ -2345,7 +2429,7 @@ export default function RezervacijePage() {
           <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm" role="status">
             <Info className="w-4 h-4 text-primary shrink-0" />
             {kurs?.kurs != null ? (
-              <span>Kurs EUR <span className="text-muted-foreground">({kurs.datum})</span>: <span className="font-semibold tabular-nums">{kursFormat.format(kurs.kurs)} RSD</span></span>
+              <span>Kurs EUR <span className="text-muted-foreground">{kurs.danas}{kurs.datum && kurs.datum !== kurs.danas ? ` (važi od ${kurs.datum})` : ""}</span>: <span className="font-semibold tabular-nums">{kursFormat.format(kurs.kurs)} RSD</span></span>
             ) : (
               <span className="text-muted-foreground">Kurs trenutno nije dostupan.</span>
             )}
@@ -2396,7 +2480,7 @@ export default function RezervacijePage() {
         <DialogContent className="max-w-md gap-2 bg-card p-3 sm:p-4">
           <DialogHeader>
             <DialogTitle className="text-base">
-              Cene sobe {izabranaSoba?.broj_sobe ?? ""}
+              Cene za izabranu sobu u cenovniku
             </DialogTitle>
             <DialogDescription className="text-xs">
               {varijante?.naziv ?? "Cenovnik za izabrani smeštaj i termin"}
@@ -2493,8 +2577,11 @@ export default function RezervacijePage() {
                   const v = varijante.varijante.find((x) => x.soba_id === varijantaIzbor?.soba_id);
                   const p = v?.ponude[varijantaIzbor?.prevoz ? "sa_prevozom" : "bez_prevoza"];
                   if (!v || !p || !p.dostupno || p.cena_jedinicna == null || varijantaIzbor == null) return;
+                  const novaSobaId = v.izvor_soba_id ?? v.soba_id;
+                  const noviBoravak = { ...boravak, soba: String(novaSobaId), struktura: v.struktura ?? boravak.struktura };
                   updCene({ cenaSmestaj: String(p.cena_jedinicna), ...(p.koeficijent != null ? { kolSmestaj: String(p.koeficijent) } : {}) });
-                  setObracunIzbor({ broj_sobe: v.broj_sobe ?? "", struktura: v.struktura ?? "", prevoz: varijantaIzbor.prevoz, kljuc: kljucBoravka(boravak) });
+                  setBoravak(noviBoravak);
+                  setObracunIzbor({ broj_sobe: v.broj_sobe ?? "", struktura: v.struktura ?? "", prevoz: varijantaIzbor.prevoz, kljuc: kljucBoravka(noviBoravak) });
                   setVarijanteOtvoren(false);
                 }}
               >
@@ -2556,6 +2643,54 @@ export default function RezervacijePage() {
             >
               Zatvori
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={avansPopup !== null} onOpenChange={(open) => { if (!open && avansPopup?.faza !== "cekanje") setAvansPopup(null); }}>
+        <DialogContent className="max-w-3xl bg-card" onEscapeKeyDown={(e) => { if (avansPopup?.faza === "cekanje") e.preventDefault(); }}>
+          <DialogHeader>
+            <DialogTitle>Avans na SEF — uplata {avansPopup?.kljuc}</DialogTitle>
+            <DialogDescription>
+              Avans se evidentira u evidenciji avansnih računa i šalje na Sistem elektronskih faktura.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            {avansPopup?.faza === "spremno" && (
+              <p className="text-muted-foreground">Uplata subagenta SEF je spremna za slanje avansa.</p>
+            )}
+            {avansPopup?.faza === "cekanje" && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                <span>Šaljem avans na SEF…</span>
+              </div>
+            )}
+            {avansPopup?.faza === "greska" && (
+              <p className="text-red-600">{avansPopup.poruka}</p>
+            )}
+            {avansPopup?.faza === "rezultat" && (
+              <p className={avansPopup.uspeh ? "font-semibold text-emerald-600" : "font-semibold text-red-600"}>
+                {avansPopup.poruka}
+              </p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              disabled={avansPopup?.faza === "cekanje"}
+              onClick={() => setAvansPopup(null)}
+            >
+              Zatvori
+            </Button>
+            {(avansPopup?.faza === "spremno" || avansPopup?.faza === "greska") && (
+              <Button
+                className="bg-violet-700 text-white hover:bg-violet-800"
+                onClick={() => avansPopup && void posaljiAvansSef(avansPopup.kljuc)}
+              >
+                <Send className="mr-1.5 size-4" />
+                Pošalji avans na SEF
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -2698,7 +2833,7 @@ export default function RezervacijePage() {
 
                 </Fld>
                 <Fld label="Tip rezervacije">
-                  <Select value={tipRezervacije} onValueChange={(v) => { setTipRezervacije(v); if (v !== "Predrezervacija") { setTimeLimitDatum(undefined); setTimeLimitOtvoren(false); } }} disabled={zakljucano}>
+                  <Select value={tipRezervacije} onValueChange={(v) => setTipRezervacije(v)} disabled={zakljucano}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {tipOpcije.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
@@ -2709,7 +2844,13 @@ export default function RezervacijePage() {
                   <Popover open={subagentOtvoren} onOpenChange={(o) => { setSubagentOtvoren(o); if (!o) setSubagentPretraga(""); }}>
                     <PopoverTrigger asChild>
                       <Button variant="outline" disabled={zakljucano} className={cn("w-full justify-start font-normal truncate", !subagent && "text-muted-foreground")}>
-                        {subagent || "Izaberite subagenta"}
+                        {subagent ? (
+                          <span className="truncate">
+                            {subagent}
+                            {subagentMesto ? ` (${subagentMesto})` : ""}
+                            {subagentProvizija != null ? ` - ${subagentProvizija}%` : ""}
+                          </span>
+                        ) : "Izaberite subagenta"}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
@@ -2739,7 +2880,7 @@ export default function RezervacijePage() {
                     <PopoverTrigger asChild>
                       <Button
                         variant="outline"
-                        disabled={zakljucano || tipRezervacije !== "Predrezervacija"}
+                        disabled={zakljucano}
                         className={cn("w-full justify-start gap-2 font-normal", !timeLimitDatum && "text-muted-foreground")}
                       >
                         <CalendarDays className="size-4 shrink-0" />
@@ -2764,6 +2905,23 @@ export default function RezervacijePage() {
                           </SelectContent>
                         </Select>
                       </div>
+                      {tipRezervacije !== "Predrezervacija" && (
+                        <div className="flex items-center justify-between gap-2 border-t px-4 py-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-rose-600 hover:text-rose-700"
+                            disabled={!timeLimitDatum}
+                            onClick={() => { setTimeLimitDatum(undefined); setTimeLimitSat(TIMELIMIT_SAT_PODRAZUMEVANO); setTimeLimitOtvoren(false); }}
+                          >
+                            Obriši time limit
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => setTimeLimitOtvoren(false)}>
+                            Zatvori
+                          </Button>
+                        </div>
+                      )}
                     </PopoverContent>
                   </Popover>
                 </Fld>
@@ -2791,7 +2949,7 @@ export default function RezervacijePage() {
                       disabled={zakljucano}
                     />
                   </Fld>
-                  <Fld label="Datum rođenja">
+                  <Fld label={<>Datum rođenja <StarostBadge rodjen={nosilac.datumRodjenja} datumOd={boravak.datumOd} /></>}>
                     <Input
                       type="text"
                       inputMode="numeric"
@@ -2879,7 +3037,7 @@ export default function RezervacijePage() {
                           disabled={zakljucano}
                         />
                       </Fld>
-                      <Fld label="Datum rođenja">
+                      <Fld label={<>Datum rođenja <StarostBadge rodjen={s.datumRodjenja} datumOd={boravak.datumOd} /></>}>
                         <Input
                           type="text"
                           inputMode="numeric"
@@ -3090,7 +3248,7 @@ export default function RezervacijePage() {
                     <span className="text-muted-foreground"> | Tip: </span>
                     <span className="font-semibold">{sobaZaPrikaz?.opis?.trim() || "—"}</span>
                   </div>
-                  <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={proveriObracun}
+                  <Button type="button" size="sm" className="h-7 text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700" onClick={proveriObracun}
                     disabled={!izabranaSoba || !boravak.smestaj || boravak.smestaj === CUVAR || !boravak.datumOd || !boravak.datumDo}>
                     PROVERI OBRAČUN
                   </Button>
@@ -3844,11 +4002,15 @@ export default function RezervacijePage() {
               <CardDescription>Evidencija uplata za ovu rezervaciju</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="grid gap-4 grid-cols-1 md:grid-cols-4">
+              <div className={cn("grid gap-4 grid-cols-1 md:grid-cols-4", jeRacunovodstvo && "md:grid-cols-5")}>
                 <Fld label="Uplatilac">
+
                   <Select value={uplata.uplatilac} onValueChange={setUplatilac}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
+                      {subagent.trim() && (
+                        <SelectItem value="subagent">{subagent.trim()}</SelectItem>
+                      )}
                       {putnici.map((p) => (
                         <SelectItem key={p.uid} value={p.uid}>{p.ime}</SelectItem>
                       ))}
@@ -3882,6 +4044,9 @@ export default function RezervacijePage() {
                     </SelectContent>
                   </Select>
                 </Fld>
+                {jeRacunovodstvo && (
+                  <DatumField label="Datum uplate" value={uplataDatum} onChange={setUplataDatum} />
+                )}
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -3923,6 +4088,7 @@ export default function RezervacijePage() {
                         <TableHeader>
                           <TableRow>
                             <TableHead>Datum</TableHead>
+                            <TableHead>Uplatilac</TableHead>
                             <TableHead>Način plaćanja</TableHead>
                             <TableHead className="text-right">RSD</TableHead>
                             <TableHead className="text-right">Suma u €</TableHead>
@@ -3934,12 +4100,16 @@ export default function RezervacijePage() {
                             <TableHead className="w-14 text-center">PDF</TableHead>
                             <TableHead className="w-14 text-center">Prebacivanje</TableHead>
                             <TableHead className="w-20 text-center">Fiskal</TableHead>
+                            {subagent.trim() !== "" && (
+                              <TableHead className="w-20 text-center">Avans SEF</TableHead>
+                            )}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {uplateRedovi.map((u, i) => (
                             <TableRow key={u.kljuc ?? `${u.id}-${u.danas}-${i}`}>
                               <TableCell className="whitespace-nowrap">{u.danas ?? "—"}</TableCell>
+                              <TableCell>{u.ime?.trim() || "—"}</TableCell>
                               <TableCell>{u.nacin?.trim() || "—"}</TableCell>
                               <TableCell className="whitespace-nowrap text-right">{u.din != null ? `${nf2.format(u.din)} din` : "—"}</TableCell>
                               <TableCell
@@ -4049,6 +4219,28 @@ export default function RezervacijePage() {
                                 )}
                                 </div>
                               </TableCell>
+                              {subagent.trim() !== "" && (
+                                <TableCell className="text-center">
+                                  {u.kljuc != null && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className={cn(
+                                        "size-7",
+                                        u.avans_sef_poslato
+                                          ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                                          : "text-red-600 hover:bg-red-50 hover:text-red-700",
+                                      )}
+                                      title={u.avans_sef_poslato ? "Avans je poslat na SEF" : "Avans — pošalji na Sistem elektronskih faktura"}
+                                      aria-label={`Avans SEF — uplata ${u.kljuc}`}
+                                      disabled={!!u.avans_sef_poslato}
+                                      onClick={() => void otvoriAvansPopup(u.kljuc as number)}
+                                    >
+                                      <Send className="size-4" />
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              )}
                             </TableRow>
                           ))}
                         </TableBody>
@@ -4057,7 +4249,7 @@ export default function RezervacijePage() {
                             <TableCell colSpan={2}>Ukupno uplaćeno:</TableCell>
                             <TableCell className="whitespace-nowrap text-right font-semibold">{nf2.format(uplateSumaRSD)} din</TableCell>
                             <TableCell className="whitespace-nowrap text-right font-semibold">{nf2.format(uplateSumaEUR)}€</TableCell>
-                            <TableCell colSpan={8} />
+                            <TableCell colSpan={subagent.trim() !== "" ? 9 : 8} />
                           </TableRow>
                         </TableFooter>
                       </Table>

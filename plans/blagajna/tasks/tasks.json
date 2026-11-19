@@ -1,0 +1,32 @@
+[
+  {
+    "content": "[BE-1] blagajna_api.py: tabela blagajna + CRUD + pretraga",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[BE-2] avansni_racuni_api.py: GET /avansni-racuni sa pretragom po svim poljima i na_sef",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[BE-3] routes.py: init/register za blagajnu i avansne racune",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[FE-1] AvansniRacuniPage.tsx pregled sa pretragom i kolonom Na SEF",
+    "id": "4",
+    "status": "completed"
+  },
+  {
+    "content": "[FE-2] BlagajnaPage.tsx CRUD stranica sa pretragom",
+    "id": "5",
+    "status": "completed"
+  },
+  {
+    "content": "[FE-3] App.tsx rute + Sidebar stavka Blagajna; test + tsc",
+    "id": "6",
+    "status": "completed"
+  }
+]

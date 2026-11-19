@@ -12,6 +12,7 @@ import TipPonudePage from "./pages/TipPonudePage";
 import DrzavaPage from "./pages/DrzavaPage";
 import DestinacijaPage from "./pages/DestinacijaPage";
 import MestoPage from "./pages/MestoPage";
+import CisPage from "./pages/CisPage";
 import TipSmestajPage from "./pages/TipSmestajPage";
 import SmestajPage from "./pages/SmestajPage";
 import SobePage from "./pages/SobePage";
@@ -40,10 +41,13 @@ import ZabranePage from "./pages/ZabranePage";
 import SubagentiPage from "./pages/SubagentiPage";
 import DobavljaciPage from "./pages/DobavljaciPage";
 import BankePage from "./pages/BankePage";
+import BlagajnaPage from "./pages/BlagajnaPage";
+import AvansniRacuniPage from "./pages/AvansniRacuniPage";
 import PredracuniPage from "./pages/PredracuniPage";
 import PredracunFormPage from "./pages/PredracunFormPage";
 import PregledProdajaAranzmanaPage from "./pages/PregledProdajaAranzmanaPage";
 import PregledUplataPage from "./pages/PregledUplataPage";
+import KontrolaUgovoraPage from "./pages/KontrolaUgovoraPage";
 import NotifikacijePage from "./pages/NotifikacijePage";
 import ProfilPage from "./pages/ProfilPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
@@ -111,6 +115,7 @@ function ProtectedLayout() {
             <Route path="/agencija/drzava" element={<DrzavaPage />} />
             <Route path="/agencija/destinacija" element={<DestinacijaPage />} />
             <Route path="/agencija/mesto" element={<MestoPage />} />
+            <Route path="/agencija/cis" element={<CisPage />} />
             <Route path="/agencija/tip-smestaja" element={<TipSmestajPage />} />
             <Route path="/agencija/smestaj" element={<SmestajPage />} />
             <Route path="/agencija/sobe" element={<SobePage />} />
@@ -132,16 +137,18 @@ function ProtectedLayout() {
             <Route path="/knjigovodstvo/subagenti" element={<SubagentiPage />} />
             <Route path="/knjigovodstvo/dobavljaci" element={<DobavljaciPage />} />
             <Route path="/knjigovodstvo/banke" element={<BankePage />} />
+            <Route path="/knjigovodstvo/blagajna" element={<BlagajnaPage />} />
             <Route path="/knjigovodstvo/predracuni" element={<PredracuniPage />} />
             <Route path="/knjigovodstvo/predracuni/novi/*" element={<PredracunFormPage />} />
             <Route path="/knjigovodstvo/predracuni/:id/edit" element={<PredracunFormPage />} />
-            <Route path="/knjigovodstvo/avansne-fakture" element={<PlaceholderPage title="Avansne fakture" />} />
+            <Route path="/knjigovodstvo/avansne-fakture" element={<AvansniRacuniPage />} />
             <Route path="/knjigovodstvo/fakture" element={<PlaceholderPage title="Fakture" />} />
             <Route path="/knjigovodstvo/dok-smanjenju" element={<PlaceholderPage title="Dokumenti o smanjenju" />} />
             <Route path="/knjigovodstvo/dok-smanjenju-avansnih" element={<PlaceholderPage title="Dokumenti o smanjenju avansnih faktura" />} />
             <Route path="/knjigovodstvo/dok-povecanju" element={<PlaceholderPage title="Dokumenti o povećanju" />} />
             <Route path="/pregledi/dnevni-izvestaji/prodaja-aranzmana" element={<PregledProdajaAranzmanaPage />} />
             <Route path="/pregledi/dnevni-izvestaji/uplate" element={<PregledUplataPage />} />
+            <Route path="/pregledi/kontrola-ugovora" element={<KontrolaUgovoraPage />} />
             <Route path="/podesavanja/tipovi-korisnika" element={<UserTypesPage />} />
             <Route path="/podesavanja/korisnici" element={<UsersPage />} />
             <Route path="/podesavanja/agencija" element={<AgencijaPage />} />

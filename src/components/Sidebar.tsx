@@ -8,8 +8,8 @@ import { useAgencijaPrviNaziv } from "../hooks/useAgencijaPrviNaziv";
 import {
   LayoutDashboard, Users, UserPlus,
   ChevronLeft, ChevronRight, ChevronDown, LogOut, ShieldCheck, Settings,
-  Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus,
-  FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage,
+  Building2, Tag, Flag, MapPin, Map, Hotel, BedDouble, DoorOpen, Bus, ChartGantt, X, Building, CalendarDays, TrendingUp, Search, CalendarPlus, ClipboardCheck,
+  FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage, Wallet,
   Eye, ShoppingBag, Banknote, Palette, Sigma, Bell, Store, ArrowRightLeft, Ban, Calculator, Armchair
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -224,9 +224,21 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
               !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[640px] opacity-100"
             )}
           >
-            {meniKnjigovodstvo.map((s) => (
-              <NavItem key={s.path} to={s.path} icon={ikonaZaMeni(s.icon)} label={s.label} collapsed={collapsed} onClick={onNavClick} />
-            ))}          </div>
+            <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/izvodi" icon={Landmark} label="Izvodi" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/knjizenje" icon={NotebookPen} label="Knjiženje" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/prebacivanja" icon={ArrowRightLeft} label="Prebacivanja" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/zabrane" icon={Ban} label="Administrativne zabrane" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/predracuni" icon={Receipt} label="Predračuni" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/avansne-fakture" icon={ReceiptText} label="Avansne fakture" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/fakture" icon={FileText} label="Fakture" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/dok-smanjenju" icon={FileMinus} label="Dok. o smanjenju" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/dok-smanjenju-avansnih" icon={FileX} label="Dok. o smanjenju avansnih" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/dok-povecanju" icon={FilePlus} label="Dok. o povećanju" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/dobavljaci" icon={Store} label="Dobavljači" collapsed={collapsed} onClick={onNavClick} />
+            <NavItem to="/knjigovodstvo/banke" icon={Landmark} label="Banke" collapsed={collapsed} onClick={onNavClick} />
+          </div>
         </div>
         </>
         )}
@@ -619,9 +631,21 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                     !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[640px] opacity-100"
                   )}
                 >
-                  {meniKnjigovodstvo.map((s) => (
-                    <NavItem key={s.path} to={s.path} icon={ikonaZaMeni(s.icon)} label={s.label} collapsed={false} onClick={closeMobile} />
-                  ))}                </div>
+                  <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/izvodi" icon={Landmark} label="Izvodi" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/knjizenje" icon={NotebookPen} label="Knjiženje" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/prebacivanja" icon={ArrowRightLeft} label="Prebacivanja" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/zabrane" icon={Ban} label="Administrativne zabrane" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/predracuni" icon={Receipt} label="Predračuni" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/avansne-fakture" icon={ReceiptText} label="Avansne fakture" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/fakture" icon={FileText} label="Fakture" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/dok-smanjenju" icon={FileMinus} label="Dok. o smanjenju" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/dok-smanjenju-avansnih" icon={FileX} label="Dok. o smanjenju avansnih" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/dok-povecanju" icon={FilePlus} label="Dok. o povećanju" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/dobavljaci" icon={Store} label="Dobavljači" collapsed={false} onClick={closeMobile} />
+                  <NavItem to="/knjigovodstvo/banke" icon={Landmark} label="Banke" collapsed={false} onClick={closeMobile} />
+                </div>
               </div>
               </>
               )}
