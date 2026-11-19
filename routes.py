@@ -5385,6 +5385,13 @@ def create_app(static_dir: str) -> FastAPI:
         _sync_proveri_uplatu(kljuc, naziv)
         return _avans_sef_slanje(kljuc)
 
+    @api.get("/sync/prodaja/uplate/{kljuc}/avans-sef/pregled")
+    def sync_avans_sef_pregled_uplate(kljuc: int, request: Request):
+        """Pregled XML-a avansa za uplatu sopstvenog ugovora — samo čitanje."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return uplata_avans_sef_pregled(kljuc)
+
     def _priznanica_pdf(kljuc: int) -> bytes:
         """PDF priznanica o uplati — dva primerka na A4, isprekidana linija + makaze."""
         from priznanica_pdf import build_priznanica_pdf
