@@ -5914,12 +5914,10 @@ def create_app(static_dir: str) -> FastAPI:
         sinhronizuj_posle_izmene(engine, kljuc)
         return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
 
-    @api.put("/rezervacije/{kljuc:path}")
-    def izmeni_rezervaciju(kljuc: str, body: RezervacijaIn,
-                           current_user: dict = Depends(get_current_user)):
-        """Izmeni — snimanje izmena postojećeg ugovora (broj se ne menja)."""
+    def _izmeni_rezervaciju(kljuc: str, body: RezervacijaIn, urow, identitet) -> str:
+        """Zajedničko snimanje izmena ugovora (korisnik i App2 subagent).
+        identitet(conn) -> (uid, uime) za evidenciju promena."""
         kljuc = kljuc.strip().strip("/")
-        urow = _rez_user_row(current_user)
         with engine.begin() as conn:
             arow = conn.execute(text("SELECT id FROM aranzman WHERE kljuc = :k"),
                                 {"k": kljuc}).fetchone()
@@ -5945,12 +5943,21 @@ def create_app(static_dir: str) -> FastAPI:
             obracun_iz_rezervacije(conn, arow.id, **_obracun_argumenti(body, vals))
             if body.transferi is not None:
                 rez_transferi_upisi(conn, kljuc, body.transferi)
-            uid, uime = log_user(conn, current_user)
+            uid, uime = identitet(conn)
             for oblast, promene in podeli_po_oblastima(stari, vals).items():
                 zabelezi(conn, kljuc, oblast, "izmena", uid, uime, promene)
             zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "izmena", uid, uime,
                      diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici, conn)))
         sinhronizuj_posle_izmene(engine, kljuc)
+        return kljuc
+
+    @api.put("/rezervacije/{kljuc:path}")
+    def izmeni_rezervaciju(kljuc: str, body: RezervacijaIn,
+                           current_user: dict = Depends(get_current_user)):
+        """Izmeni — snimanje izmena postojećeg ugovora (broj se ne menja)."""
+        urow = _rez_user_row(current_user)
+        kljuc = _izmeni_rezervaciju(kljuc, body, urow,
+                                    lambda conn: log_user(conn, current_user))
         return {"ok": True, "kljuc": kljuc, "message": "Izmene su sačuvane"}
 
     @api.get("/keptp/ugovor/{kljuc:path}")
@@ -7002,6 +7009,400 @@ def create_app(static_dir: str) -> FastAPI:
             "ukupna_vrednost": ukupna,
             **calc,
         }
+
+    # ── App2 prodaja: referentne liste za formu (subagent: sub_* rute, isti podaci) ──
+    @api.get("/sync/prodaja/referenca/mesto")
+    def sync_ref_mesto(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_mesto(None)
+
+    @api.get("/sync/prodaja/referenca/smestaj")
+    def sync_ref_smestaj(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_smestaj(None)
+
+    @api.get("/sync/prodaja/referenca/sobe")
+    def sync_ref_sobe(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_sobe(request, None)
+
+    @api.get("/sync/prodaja/referenca/destinacija")
+    def sync_ref_destinacija(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_destinacija(None)
+
+    @api.get("/sync/prodaja/referenca/polazak")
+    def sync_ref_polazak(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_polazak(None)
+
+    @api.get("/sync/prodaja/referenca/kurs")
+    def sync_ref_kurs(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return get_kurs(None)
+
+    # ── App2 prodaja: forma ugovora u RezervacijaIn obliku (port izaberiUgovor + payload) ──
+    def _forma_iz_ugovora(kljuc: str) -> dict:
+        """Ulaz: isti odgovor kao GET /ugovori/{k}. Izlaz: telo za PUT /sync/prodaja/rezervacije/{k}.
+        Logika je prevedena iz RezervacijePage.tsx (izaberiUgovor + payload builder); nazivi
+        referenci se razrešavaju u owner bazi, a nepoznat naziv ostaje kao *Naziv fallback."""
+        d = ugovor_detail(kljuc, None)
+
+        def nz(v) -> str:
+            return (v or "").strip().lower()
+
+        def dmy_iso(v):
+            if not v:
+                return None
+            try:
+                return datetime.strptime(v, "%d.%m.%Y").date().isoformat()
+            except ValueError:
+                return None
+
+        def norm_str(v) -> str:
+            return "".join((v or "").split()).upper()
+
+        def timelimit_iso(v):
+            # "dd.mm.yyyy HH:MM" → "yyyy-mm-ddTHH:00:00" (App1 zadržava samo sat)
+            if not v:
+                return None
+            try:
+                return datetime.strptime(v, "%d.%m.%Y %H:%M").strftime("%Y-%m-%dT%H:00:00")
+            except ValueError:
+                return None
+
+        def pozitivan(v):
+            return float(v) if v and float(v) > 0 else None
+
+        with engine.connect() as conn:
+            mesta = conn.execute(text("SELECT id, naziv, destinacija FROM mesto")).fetchall()
+            smestaji = conn.execute(text("SELECT id, naziv, mesto FROM smestaj")).fetchall()
+            sobe = conn.execute(text("SELECT id, broj_sobe, veza_id_smestaj FROM sobe")).fetchall()
+            destinacije = conn.execute(text("SELECT id, naziv FROM destinacija")).fetchall()
+            dprevoz = conn.execute(text("SELECT id, id_destinacije, naziv FROM destinacija_prevoz")).fetchall()
+
+        def dp_id(id_, naziv):
+            # destinacija prevoza iz ugovora → id; legacy red bez id-ja: traži po nazivu
+            if id_ is not None:
+                return id_
+            n = (naziv or "").strip()
+            nadjen = next((x for x in dprevoz if x.naziv.strip() == n), None) if n else None
+            return nadjen.id if nadjen else None
+
+        # ── boravak: nazivi → ID-jevi (ista pravila kao izaberiUgovor)
+        mesto_id = next((m.id for m in mesta if nz(m.naziv) == nz(d.get("mesto"))), None)
+        kandidati = [s for s in smestaji if nz(s.naziv) == nz(d.get("naziv"))]
+        smestaj_id = None
+        if kandidati:
+            def soba_postoji(s):
+                return any(r.veza_id_smestaj == s.id and nz(r.broj_sobe) == nz(d.get("soba")) for r in sobe)
+            izbor = (next((s for s in kandidati if (not mesto_id or s.mesto == mesto_id) and soba_postoji(s)), None)
+                     or next((s for s in kandidati if not mesto_id or s.mesto == mesto_id), None)
+                     or kandidati[0])
+            smestaj_id = izbor.id
+        soba_id = None
+        if smestaj_id:
+            soba_id = next((r.id for r in sobe if r.veza_id_smestaj == smestaj_id
+                            and nz(r.broj_sobe) == nz(d.get("soba"))), None)
+
+        # ── nosilac i prevoz
+        nos_ow = bool(d.get("prevozow"))
+        nos_rt = not nos_ow and bool(d.get("prevozrt"))
+        nos_sp = not nos_ow and not d.get("prevozrt") and bool(d.get("prevozsp"))
+        dp_ow = dp_id(d.get("destinacija_ow_id"), d.get("destinacija_ow"))
+        dp_pol = dp_id(d.get("destinacija_polaska_id"), d.get("destinacija_polaska"))
+        dp_pov = dp_id(d.get("destinacija_povratka_id"), d.get("destinacija_povratka"))
+
+        def prevoz_polja(ow, rt, mesto_sed, placeno, zelja, datum_ow, datum_pol, datum_pov,
+                         dest_ow, dest_pol, dest_pov):
+            # isto kao prevozPolja u payload builderu: datumi/destinacije samo za uključen smer
+            return {
+                "mestoSedenja": mesto_sed or "",
+                "placeno": bool(placeno),
+                "zelja": bool(zelja),
+                "datumOw": datum_ow if ow else None,
+                "destinacijaOwId": dest_ow if ow else None,
+                "datumPolaska": datum_pol if rt else None,
+                "destinacijaPolaskaId": dest_pol if rt else None,
+                "datumPovratka": datum_pov if rt else None,
+                "destinacijaPovratkaId": dest_pov if rt else None,
+            }
+
+        nosilac = {
+            "ime": (d.get("putnik") or "").strip(),
+            "datumRodjenja": dmy_iso(d.get("rodjen")),
+            "pasos": d.get("pasos") or "",
+            "uzrast": d.get("uzrast") or "",
+            "ow": nos_ow, "rt": nos_rt, "sp": nos_sp,
+            "smer": (d.get("smer") or "") if nos_ow else "",
+            "adresa": (d.get("adresa") or "").strip(),
+            "grad": (d.get("grad") or "").strip(),
+            "telefon": (d.get("telefon") or "").strip(),
+            "email": (d.get("refno") or "").strip(),
+            **prevoz_polja(nos_ow, nos_rt, d.get("mesto_sedenja"), d.get("placeno_prevoz"),
+                           d.get("zelja_prevoz"), d.get("datum_ow"), d.get("datum_polaska"),
+                           d.get("datum_povratka"), dp_ow, dp_pol, dp_pov),
+        }
+
+        saputnici = []
+        for p in d.get("putnici_detalji") or []:
+            if not (p.get("saputnik") or "").strip():
+                continue
+            ow = bool(p.get("prevozow"))
+            rt = not ow and bool(p.get("prevozrt"))
+            sp = not ow and not p.get("prevozrt") and bool(p.get("prevozsp"))
+            saputnici.append({
+                "ime": p["saputnik"],
+                "datumRodjenja": dmy_iso(p.get("rodjen")),
+                "pasos": p.get("pasos") or "",
+                "uzrast": p.get("uzrast") or "",
+                "dodatnoSediste": bool(p.get("dodatno_sediste")),
+                "ow": ow, "rt": rt, "sp": sp,
+                "smer": (p.get("smer") or "") if ow else "",
+                "adresa": p.get("adresa") or "",
+                "grad": p.get("grad") or "",
+                "telefon": p.get("telefon") or "",
+                "email": p.get("email") or "",
+                "ulazak": p.get("ulazak") or "",
+                "mestoIzlaska": p.get("mesto_izlaska") or p.get("ulazak") or "",
+                **prevoz_polja(ow, rt, p.get("mesto_sedenja"), p.get("placeno_prevoz"),
+                               p.get("zelja_prevoz"), p.get("datum_ow"), p.get("datum_polaska"),
+                               p.get("datum_povratka"),
+                               dp_id(p.get("destinacija_ow_id"), p.get("destinacija_ow")),
+                               dp_id(p.get("destinacija_polaska_id"), p.get("destinacija_polaska")),
+                               dp_id(p.get("destinacija_povratka_id"), p.get("destinacija_povratka"))),
+            })
+
+        # ── destinacija: "Izbor destinacije" = destinacija prevoza (sačuvana, pa po destinaciji ugovora)
+        dpids = {x.id: x for x in dprevoz}
+        dp_sel = None
+        if d.get("destinacija_prevoz_id") in dpids:
+            dp_sel = dpids[d["destinacija_prevoz_id"]]
+        else:
+            dest_id = next((x.id for x in destinacije if nz(x.naziv) == nz(d.get("destinacija"))), None)
+            if dest_id is not None:
+                dp_sel = next((x for x in dprevoz if x.id_destinacije == dest_id), None)
+        struktura = (d.get("gde") or "").strip() or (d.get("apartman") or "")
+        viza = d.get("viza")
+        try:
+            viza = int(viza or 0) == 1
+        except (TypeError, ValueError):
+            viza = False
+
+        # ── obračun: sačuvana varijanta vraća se samo ako se razlikuje od forme
+        obr = d.get("obracun")
+        forma_prevoz = bool(d.get("prevozow")) or bool(d.get("prevozrt"))
+        obracun_izbor = None
+        if obr and obr.get("soba_cenovnik") and obr.get("struktura") and (
+            norm_str(obr["soba_cenovnik"]) != norm_str(d.get("soba"))
+            or norm_str(obr["struktura"]) != norm_str(struktura)
+            or bool(obr.get("prevoz")) != forma_prevoz
+        ):
+            obracun_izbor = {"broj_sobe": obr["soba_cenovnik"], "struktura": obr["struktura"],
+                             "prevoz": bool(obr.get("prevoz"))}
+
+        # ── cene: pct ima prednost; prazno → 0 (cene), količina prazna → 1 (isto kao App1 učitavanje)
+        kol_prevoz = max(d.get("kolow") or 0, d.get("kolrt") or 0) or 1
+        provizija_prevoz = None
+        if pozitivan(d.get("procenatpr")):
+            provizija_prevoz = {"eur": round(float(d["procenatpr"]) * kol_prevoz, 2)}
+        cene = {
+            "cenaSmestajEUR": float(d.get("cenaaranz") or 0),
+            "kolSmestajEUR": float(d["kolaranz"]) if d.get("kolaranz") is not None else 1.0,
+            "cenaSmestajRSD": 0.0, "kolSmestajRSD": 1.0,
+            "popustSmestaj": {"pct": pozitivan(d.get("popustar"))} if pozitivan(d.get("popustar")) else {},
+            "cenaPrevozEUR": 0.0, "kolPrevozEUR": 1.0,
+            "cenaPrevozRSD": 0.0, "kolPrevozRSD": 1.0,
+            "popustPrevoz": {"pct": pozitivan(d.get("popustpr"))} if pozitivan(d.get("popustpr")) else {},
+            "osiguranjeEUR": float(d.get("osiguranje1") or 0),
+            "osiguranjeRSD": float(d.get("osiguranje") or 0),
+            "provizijaSmestaj": {"pct": pozitivan(d.get("procenatar"))} if pozitivan(d.get("procenatar")) else {},
+            "provizijaPrevoz": provizija_prevoz or {},
+        }
+        nacin = d.get("nacin_placanja")
+
+        return {
+            "tiprezervacije": d.get("tiprezervacije") or "",
+            "subagent": (d.get("subagent") or "").strip(),
+            "timelimit": timelimit_iso(d.get("timelimit")),
+            "nosilac": nosilac,
+            "saputnici": saputnici,
+            "boravak": {
+                "datumOd": dmy_iso(d.get("datumod")), "datumDo": dmy_iso(d.get("datumdo")),
+                "smestajId": smestaj_id, "sobaId": soba_id, "mestoId": mesto_id,
+                "smestajNaziv": (d.get("naziv") or "").strip() or None,
+                "sobaBroj": (d.get("soba") or "").strip() or None,
+                "mestoNaziv": (d.get("mesto") or "").strip() or None,
+                "struktura": struktura,
+                "napomena": d.get("napomena") or "",
+                "napomenaInterna": d.get("napomena1") or "",
+                "viza": viza,
+            },
+            "destinacijaId": dp_sel.id_destinacije if dp_sel else None,
+            "destinacijaNaziv": (d.get("destinacija") or "").strip() or None,
+            "destinacijaPrevozId": None if nos_sp or not dp_sel else dp_sel.id,
+            "ulazak": d.get("ulazak") or "",
+            "izlazak": d.get("mesto_izlaska") or d.get("ulazak") or "",
+            "napomenaPrevoz": d.get("napomena_prevoz") or "",
+            "cene": cene,
+            "nacinPlacanja": nacin if nacin in ("delimicno", "u_celosti") else "",
+            # transferi=None → PUT ne dira dodatne stavke (App1 forma šalje listu; ovde se ne menja)
+            "transferi": None,
+            "obracunIzbor": obracun_izbor,
+        }
+
+    @api.get("/sync/prodaja/forma/{kljuc:path}")
+    def sync_prodaja_forma(kljuc: str, request: Request):
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        return _forma_iz_ugovora(k)
+
+    # ── App2 prodaja: subagent menja ugovor — pisanje ────────────────────────
+    @api.put("/sync/prodaja/rezervacije/{kljuc:path}")
+    def sync_izmeni_rezervaciju(kljuc: str, body: RezervacijaIn, request: Request):
+        """Izmena ugovora iz App2 subagenta — samo sopstveni ugovori.
+        Subagent se izvodi iz API klijenta; polje `subagent` iz tela se ignoriše."""
+        klijent = autentifikuj_subagenta(engine, request, SCOPE_REZERVACIJA)
+        with engine.connect() as conn:
+            naziv = conn.execute(text("SELECT naziv FROM subagenti WHERE id = :i"),
+                                 {"i": klijent["subagent_id"]}).scalar()
+        if not naziv:
+            raise HTTPException(status_code=403, detail="Subagent nije pronađen")
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        body = body.model_copy(update={"subagent": naziv})
+        urow = SimpleNamespace(id=None, first_name=naziv, last_name="(subagent)",
+                               status="aktivan", poslovnica_naziv=None)
+        kljuc_out = _izmeni_rezervaciju(k, body, urow,
+                                        lambda conn: (None, f"{naziv} (subagent)"))
+        return {"ok": True, "kljuc": kljuc_out, "message": "Izmene su sačuvane"}
+
+    # ── App2 prodaja: subagent menja ugovor — čitanje ────────────────────────
+    # Namespace /sync/prodaja/* ne sadrži catch-all {kljuc:path}, pa redosled
+    # registracije ne može da presretne podrute.
+    def _sync_proveri_uplatu(kljuc: int, naziv: str) -> int:
+        """404 ako uplata ne postoji ili pripada ugovoru drugog subagenta."""
+        # Ista veza uplata→ugovor kao u _uplate_za_ugovor: faktura = broj ugovora ili id = broj.
+        with engine.connect() as conn:
+            ok = conn.execute(text(
+                "SELECT 1 FROM uplate u WHERE u.kljuc = :k AND EXISTS ("
+                "  SELECT 1 FROM aranzman a "
+                "  WHERE a.subagent = :sa AND ("
+                "    split_part(a.kljuc, '/', 1) = COALESCE(u.faktura, '')"
+                "    OR split_part(a.kljuc, '/', 1) = u.id::text))"
+            ), {"k": kljuc, "sa": naziv}).scalar()
+        if not ok:
+            raise HTTPException(status_code=404, detail="Uplata nije pronađena")
+        return kljuc
+
+    def _sync_dd(v) -> str:
+        return v.strftime("%d.%m.%Y") if v else ""
+
+    @api.get("/sync/prodaja/zabrane")
+    def sync_prodaja_zabrane(request: Request, kljuc: str = Query(...)):
+        """Administrativne zabrane ugovora subagenta (isto kao /ugovori/{kljuc}/zabrane)."""
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT brojzabrane, datum, ukupno, valuta, preuzeta_datum "
+                "FROM zabrana WHERE id_aranzmana = :k ORDER BY id"
+            ), {"k": k}).mappings().all()
+        out = [{
+            "broj": r["brojzabrane"],
+            "datum": r["datum"].isoformat() if r["datum"] else None,
+            "ukupno": float(r["ukupno"]) if r["ukupno"] is not None else None,
+            "valuta": r["valuta"] or "",
+            "preuzeta_datum": _sync_dd(r["preuzeta_datum"]),
+        } for r in rows]
+        return {"rows": out, "total": len(out)}
+
+    @api.get("/sync/prodaja/istorija")
+    def sync_prodaja_istorija(request: Request, kljuc: str = Query(...), limit: int = 200):
+        """Istorija izmena ugovora (rezervacija_log) — isto kao /rezervacije-istorija."""
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        limit = max(1, min(int(limit), 500))
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT id, oblast, dogadjaj, user_id, user_ime, created_at, promene
+                FROM rezervacija_log WHERE kljuc = :k ORDER BY id DESC LIMIT :l
+            """), {"k": k, "l": limit}).mappings().all()
+        return {"rows": [{
+            "id": r["id"], "oblast": r["oblast"], "dogadjaj": r["dogadjaj"],
+            "user_id": r["user_id"], "user_ime": r["user_ime"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "promene": r["promene"] or [],
+        } for r in rows]}
+
+    @api.get("/sync/prodaja/uplate/{kljuc}/cekovi")
+    def sync_prodaja_cekovi(kljuc: int, request: Request):
+        """Čekovi jedne uplate (isto kao /uplate/{kljuc}/cekovi), uz proveru vlasništva."""
+        naziv = sync_subagent_iz_zahteva(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT c.redni, to_char(c.datum, 'YYYY-MM-DD') AS datum, c.iznos, c.banka,
+                       c.banka_klijenta, bk.naziv AS banka_klijenta_naziv,
+                       c.broj_racuna_banke, c.broj_racuna_klijenta, c.serijski_broj
+                FROM cekovi c LEFT JOIN banke bk ON bk.id = c.banka_klijenta
+                WHERE c.uplata_kljuc = :k ORDER BY c.redni
+            """), {"k": kljuc}).fetchall()
+        return [{
+            "redni": r.redni, "datum": r.datum, "iznos": float(r.iznos), "banka": r.banka,
+            "bankaKlijentaId": r.banka_klijenta, "bankaKlijentaNaziv": r.banka_klijenta_naziv,
+            "brojRacunaBanke": r.broj_racuna_banke, "brojRacunaKlijenta": r.broj_racuna_klijenta,
+            "serijskiBroj": r.serijski_broj or "",
+        } for r in rows]
+
+    @api.get("/sync/prodaja/keptp")
+    def sync_prodaja_keptp(request: Request, kljuc: str = Query(...)):
+        """KEPTP evidencija ugovora subagenta (isto kao /keptp/ugovor/{kljuc})."""
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        with engine.connect() as conn:
+            r = conn.execute(text(
+                "SELECT broj_keptp, datum FROM keptp WHERE broj_ugovora = :k"
+            ), {"k": k}).fetchone()
+        if not r:
+            return None
+        return {"broj_keptp": r.broj_keptp, "datum": f"{r.datum:%d.%m.%Y}"}
+
+    @api.get("/sync/prodaja/varijante-cene")
+    def sync_prodaja_varijante_cene(request: Request, smestaj_id: int, soba_id: int,
+                                    datumod: SubDate, datumdo: SubDate):
+        """Varijante cene za sobu/termin (globalni šifarnik, bez podataka subagenta)."""
+        sync_subagent_iz_zahteva(request)
+        if datumdo <= datumod:
+            raise HTTPException(status_code=400, detail="datumdo mora biti posle datumod")
+        with engine.connect() as conn:
+            return varijante_cene(conn, smestaj_id, soba_id, datumod, datumdo)
+
+    @api.get("/sync/prodaja/tipovi-kartica")
+    def sync_prodaja_tipovi_kartica(request: Request):
+        sync_subagent_iz_zahteva(request)
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT naziv FROM tipovi_kartica ORDER BY naziv")).fetchall()
+        return [r.naziv for r in rows]
+
+    @api.get("/sync/prodaja/destinacija-prevoz")
+    def sync_prodaja_destinacija_prevoz(request: Request):
+        sync_subagent_iz_zahteva(request)
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT dp.id, dp.id_destinacije, dp.naziv, dp.created_at, dp.updated_at,
+                       COALESCE(json_agg(json_build_object('id', pg.id, 'naziv', pg.naziv)
+                                ORDER BY pg.naziv) FILTER (WHERE pg.id IS NOT NULL), '[]') AS grupe
+                FROM destinacija_prevoz dp
+                LEFT JOIN destinacija_prevoz_grupa dpg ON dpg.destinacija_prevoz_id = dp.id
+                LEFT JOIN period_grupa pg ON pg.id = dpg.id_grupe_termina
+                GROUP BY dp.id ORDER BY dp.naziv
+            """)).fetchall()
+        return [{
+            "id": r.id, "id_destinacije": r.id_destinacije, "naziv": r.naziv,
+            "grupe": r.grupe,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        } for r in rows]
 
     # ── Subagenti (povezani sa aranzman.subagent = subagenti.naziv) ─────────
     SUBAGENTI_SORT = {
