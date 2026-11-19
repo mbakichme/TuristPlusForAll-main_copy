@@ -21,6 +21,8 @@ import hmac
 import json
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -36,6 +38,12 @@ APP2_SYNC_KEY_ENV = "APP2_SYNC_KEY"
 APP1_ONLY_KOLONE = {"subagent_id"}
 
 _app2_engine: Engine | None = None
+
+# Keš uspešne subagent autentifikacije: (client_id, hash_secret) -> naziv subagenta.
+# Skraćuje jedan round-trip po zahtevu; ukinut klijent prestaje da važi najviše AUTH_KES_SEKUNDI kasnije.
+AUTH_KES_SEKUNDI = 60
+_auth_lock = threading.Lock()
+_auth_kes: dict[tuple[str, str], tuple[float, str]] = {}
 
 
 def _app2() -> Engine | None:
@@ -294,20 +302,34 @@ def register_app2_sync(api, engine):
     def subagent_iz_zahteva(request: Request) -> str:
         """Per-subagent autentifikacija (X-Client-Id / X-Client-Secret), isto kao pretraga i rezervacije.
         Vraća naziv subagenta čiji su kredencijali. Ne koristi globalni X-Sync-Key."""
-        from subagent_api import verify_client
+        from subagent_api import hash_secret
 
         cid = request.headers.get("X-Client-Id", "").strip()
         secret = request.headers.get("X-Client-Secret", "")
-        klijent = verify_client(engine, cid, secret) if cid and secret else None
-        if klijent is None:
+        if not cid or not secret:
             raise HTTPException(status_code=401, detail="Nevalidni kredencijali subagenta")
+        hes = hash_secret(secret)
+        kljuc = (cid, hes)
+        with _auth_lock:
+            hit = _auth_kes.get(kljuc)
+            if hit and time.monotonic() - hit[0] < AUTH_KES_SEKUNDI:
+                return hit[1]
+        # Jedan upit umesto dva (verify_client + naziv): klijent, hash i naziv subagenta zajedno.
         with engine.connect() as conn:
-            naziv = conn.execute(text(
-                "SELECT naziv FROM subagenti WHERE id = :id AND naziv <> ''"
-            ), {"id": klijent["subagent_id"]}).scalar()
-        if not naziv:
-            raise HTTPException(status_code=404, detail="Subagent nije pronađen")
-        return naziv
+            red = conn.execute(text(
+                "SELECT c.secret_hash, s.naziv FROM subagent_api_clients c "
+                "JOIN subagenti s ON s.id = c.subagent_id "
+                "WHERE c.client_id = :cid AND c.is_active AND c.sync_status = 'synced' "
+                "AND s.is_active AND COALESCE(s.naziv, '') <> ''"
+            ), {"cid": cid}).fetchone()
+        if red is None or not hmac.compare_digest(red.secret_hash, hes):
+            raise HTTPException(status_code=401, detail="Nevalidni kredencijali subagenta")
+        with _auth_lock:
+            sada = time.monotonic()
+            for k in [k for k, (t, _) in _auth_kes.items() if sada - t >= AUTH_KES_SEKUNDI]:
+                del _auth_kes[k]
+            _auth_kes[kljuc] = (sada, red.naziv)
+        return red.naziv
 
     @api.post("/sync/puna")
     def sync_puna(request: Request):

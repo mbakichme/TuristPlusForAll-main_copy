@@ -3925,8 +3925,18 @@ def create_app(static_dir: str) -> FastAPI:
     }
 
     # Svi obračuni koriste trajnu tabelu kurs; API se poziva samo za nedostajući datum.
+    # Kurs je isti za ceo dan, pa se drži u procesu — bez ponovnog upita po zahtevu.
+    _kurs_po_danu: dict[str, float | None] = {}
+
     def get_eur_middle():
-        return get_eur_rate(engine, _belgrade_now().date().isoformat())[0]
+        danas = _belgrade_now().date().isoformat()
+        if danas in _kurs_po_danu:
+            return _kurs_po_danu[danas]
+        vrednost = get_eur_rate(engine, danas)[0]
+        if vrednost is not None:
+            _kurs_po_danu.clear()
+            _kurs_po_danu[danas] = vrednost
+        return vrednost
 
     def get_eur_middle_za_datum(iso_datum: str):
         return get_eur_rate(engine, iso_datum)
@@ -6617,13 +6627,16 @@ def create_app(static_dir: str) -> FastAPI:
         where = "WHERE " + " AND ".join(conds)
 
         with engine.connect() as conn:
-            total = conn.execute(text(f"SELECT COUNT(*) FROM aranzman a {where}"), bind).scalar() or 0
             bind_bez_tipa = {k: v for k, v in bind.items() if k != "tip_grupa"}
-            po_tipu = {"predrezervacija": 0, "storno": 0, "rezervacije": 0}
-            for g, c in conn.execute(text(
-                f"SELECT {tip_grupa_expr} AS g, COUNT(*) FROM aranzman a {where_bez_tipa} GROUP BY 1"
-            ), bind_bez_tipa).fetchall():
-                po_tipu[g] = int(c)
+            # Jedan upit za sve tri grupe umesto GROUP BY po grupi.
+            grupe = conn.execute(text(f"""
+                SELECT COUNT(*) FILTER (WHERE ({tip_grupa_expr}) = 'predrezervacija') AS predrezervacija,
+                       COUNT(*) FILTER (WHERE ({tip_grupa_expr}) = 'storno') AS storno,
+                       COUNT(*) FILTER (WHERE ({tip_grupa_expr}) = 'rezervacije') AS rezervacije
+                FROM aranzman a {where_bez_tipa}
+            """), bind_bez_tipa).mappings().one()
+            po_tipu = {k: int(grupe[k] or 0) for k in ("predrezervacija", "storno", "rezervacije")}
+            # COUNT(*) OVER() i dodatni popusti idu u isti upit kao redovi (manje round-tripova).
             rows = conn.execute(text(f"""
                 SELECT kljuc,
                        to_char(danas, 'DD.MM.YYYY') AS danas_fmt,
@@ -6638,16 +6651,32 @@ def create_app(static_dir: str) -> FastAPI:
                              AND COALESCE(TRIM(ad.saputnik), '') <> ''
                            ORDER BY ad.id
                        ) saputnici) AS saputnici_list,
+                       (SELECT COALESCE(json_agg(json_build_object(
+                                   'id', dp.id, 'naziv', dp.naziv, 'eur', dp.eur,
+                                   'rsd', dp.rsd, 'procenat', dp.procenat) ORDER BY dp.id), '[]'::json)
+                          FROM dodatni_popusti dp WHERE dp.aranzman_id = a.id) AS dodatni_list,
                        to_char(datumod, 'DD.MM.YYYY') AS datumod_fmt,
                        to_char(datumdo, 'DD.MM.YYYY') AS datumdo_fmt,
-                       {', '.join(UGOVORI_LIST_COLS)}
+                       {', '.join(UGOVORI_LIST_COLS)},
+                       COUNT(*) OVER() AS _ukupno
                 FROM aranzman a {where}
                 ORDER BY {sort} {direction} NULLS LAST, a.id {direction}
                 LIMIT :limit OFFSET :offset
             """), {**bind, "limit": page_size, "offset": (page - 1) * page_size}).fetchall()
+            if rows:
+                total = int(rows[0]._ukupno or 0)
+            elif page > 1:
+                # Strana van opsega: window COUNT nema red da ga nosi.
+                total = int(conn.execute(
+                    text(f"SELECT COUNT(*) FROM aranzman a {where}"), bind
+                ).scalar() or 0)
+            else:
+                total = 0
 
         kurs = get_eur_middle()
-        dodatni_map = dodatni_za_ugovori([r.kljuc for r in rows]) if kurs else {}
+        dodatni_map = {
+            str(r.kljuc or "").strip().strip("/"): (r.dodatni_list or []) for r in rows
+        } if kurs else {}
 
         def row_putnici(r) -> list:
             ps = [str(r.putnik or "").strip()]
