@@ -4662,12 +4662,18 @@ def create_app(static_dir: str) -> FastAPI:
             rows = conn.execute(text("SELECT naziv FROM tipovi_kartica ORDER BY naziv")).fetchall()
         return [r.naziv for r in rows]
 
-    @api.put("/uplate/{kljuc}/kartica")
-    def izmeni_kartica_uplate(kljuc: int, body: KarticaPodaci, current_user: dict = Depends(get_current_user)):
-        try:
-            user_id = int(current_user["sub"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+    def _korisnik_identitet(user_id: int):
+        """Identitet za istoriju: (user_id, ime prezime) iz tabele users."""
+        def _id(conn):
+            row = conn.execute(text(
+                "SELECT first_name, last_name FROM users WHERE id = :id"
+            ), {"id": user_id}).fetchone()
+            obradio = f"{(row.first_name or '').strip()} {(row.last_name or '').strip()}".strip() if row else ""
+            return user_id, obradio
+        return _id
+
+    def _izmeni_karticu_uplate(kljuc: int, body: KarticaPodaci, identitet) -> None:
+        """identitet(conn) -> (user_id, obradio); poziva se samo kad ima promena."""
         with engine.begin() as conn:
             stari = conn.execute(text(
                 "SELECT id, faktura, nacin, broj_potvrde, tip_kartice, broj_kartice, broj_odobrenja "
@@ -4682,22 +4688,27 @@ def create_app(static_dir: str) -> FastAPI:
                 "UPDATE uplate SET broj_potvrde = :broj_potvrde, tip_kartice = :tip_kartice, "
                 "broj_kartice = :broj_kartice, broj_odobrenja = :broj_odobrenja WHERE kljuc = :k"
             ), {**novo, "k": kljuc})
-            obradio_row = conn.execute(text(
-                "SELECT first_name, last_name FROM users WHERE id = :id"
-            ), {"id": user_id}).fetchone()
-            obradio = f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip() if obradio_row else ""
             promene = []
             for polje, labela in (("broj_potvrde", "Broj potvrde"), ("tip_kartice", "Tip kartice"),
                                   ("broj_kartice", "Broj kartice"), ("broj_odobrenja", "Broj odobrenja")):
                 if (getattr(stari, polje) or None) != novo[polje]:
                     promene.append({"polje": labela, "stara": getattr(stari, polje), "nova": novo[polje]})
             if promene:
+                user_id, obradio = identitet(conn)
                 arow = conn.execute(text(
                     "SELECT kljuc FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
                     "ORDER BY id DESC LIMIT 1"
                 ), {"b": stari.faktura or ""}).fetchone()
                 zabelezi(conn, arow.kljuc if arow else (stari.faktura or ""), OBLAST_UPLATA,
                          "uplata_kartica_izmenjena", user_id, obradio, promene)
+
+    @api.put("/uplate/{kljuc}/kartica")
+    def izmeni_kartica_uplate(kljuc: int, body: KarticaPodaci, current_user: dict = Depends(get_current_user)):
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+        _izmeni_karticu_uplate(kljuc, body, _korisnik_identitet(user_id))
         return {"status": "sacuvano", "kljuc": kljuc}
 
     @api.get("/uplate/{kljuc}/cekovi")
@@ -4722,12 +4733,8 @@ def create_app(static_dir: str) -> FastAPI:
             for r in rows
         ]
 
-    @api.put("/uplate/{kljuc}/cekovi")
-    def izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, current_user: dict = Depends(get_current_user)):
-        try:
-            user_id = int(current_user["sub"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+    def _izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, identitet) -> int:
+        """identitet(conn) -> (user_id, obradio); poziva se samo kad ima promena. Vraća broj čekova."""
         with engine.begin() as conn:
             stari = conn.execute(text(
                 "SELECT id, faktura, nacin, din FROM uplate WHERE kljuc = :k"
@@ -4770,18 +4777,23 @@ def create_app(static_dir: str) -> FastAPI:
             for r in sorted(set(nova_map) - set(stari_c)):
                 promene.append({"polje": f"Ček {r}", "stara": None, "nova": nova_map[r]["iznos"]})
             if promene:
-                obradio_row = conn.execute(text(
-                    "SELECT first_name, last_name FROM users WHERE id = :id"
-                ), {"id": user_id}).fetchone()
-                obradio = (f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip()
-                           if obradio_row else "")
+                user_id, obradio = identitet(conn)
                 arow = conn.execute(text(
                     "SELECT kljuc FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
                     "ORDER BY id DESC LIMIT 1"
                 ), {"b": stari.faktura or ""}).fetchone()
                 zabelezi(conn, arow.kljuc if arow else (stari.faktura or ""), OBLAST_UPLATA,
                          "uplata_cekovi_izmenjeni", user_id, obradio, promene)
-        return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": len(novi)}
+        return len(novi)
+
+    @api.put("/uplate/{kljuc}/cekovi")
+    def izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, current_user: dict = Depends(get_current_user)):
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+        broj = _izmeni_cekove_uplate(kljuc, body, _korisnik_identitet(user_id))
+        return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": broj}
 
     class PrebacivanjeUplate(BaseModel):
         ugovor: str
@@ -7353,6 +7365,32 @@ def create_app(static_dir: str) -> FastAPI:
             "brojRacunaBanke": r.broj_racuna_banke, "brojRacunaKlijenta": r.broj_racuna_klijenta,
             "serijskiBroj": r.serijski_broj or "",
         } for r in rows]
+
+    def _sync_naziv_pisca(request: Request) -> str:
+        """Subagent za upis (scope rezervacija:write); vraća naziv za zapis u istoriju."""
+        klijent = autentifikuj_subagenta(engine, request, SCOPE_REZERVACIJA)
+        with engine.connect() as conn:
+            naziv = conn.execute(text("SELECT naziv FROM subagenti WHERE id = :i"),
+                                 {"i": klijent["subagent_id"]}).scalar()
+        if not naziv:
+            raise HTTPException(status_code=403, detail="Subagent nije pronađen")
+        return naziv
+
+    @api.put("/sync/prodaja/uplate/{kljuc}/kartica")
+    def sync_izmeni_karticu_uplate(kljuc: int, body: KarticaPodaci, request: Request):
+        """Izmena kartice uplate iz App2 subagenta — samo uplate sopstvenih ugovora."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        _izmeni_karticu_uplate(kljuc, body, lambda conn: (None, f"{naziv} (subagent)"))
+        return {"status": "sacuvano", "kljuc": kljuc}
+
+    @api.put("/sync/prodaja/uplate/{kljuc}/cekovi")
+    def sync_izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, request: Request):
+        """Izmena čekova uplate iz App2 subagenta — samo uplate sopstvenih ugovora."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        broj = _izmeni_cekove_uplate(kljuc, body, lambda conn: (None, f"{naziv} (subagent)"))
+        return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": broj}
 
     @api.get("/sync/prodaja/keptp")
     def sync_prodaja_keptp(request: Request, kljuc: str = Query(...)):
