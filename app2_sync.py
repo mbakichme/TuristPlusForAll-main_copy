@@ -284,9 +284,30 @@ def sinhronizuj_sve(engine: Engine) -> dict[str, int]:
     return rezultat
 
 
-def register_app2_sync(api, engine) -> None:
+def register_app2_sync(api, engine):
     """Puno osvežavanje na zahtev App2 superadmina. Zaštita: deljeni ključ APP2_SYNC_KEY
-    (header X-Sync-Key). Subagent klijenti ovde nemaju pristup."""
+    (header X-Sync-Key). Subagent klijenti ovde nemaju pristup.
+
+    Vraća `subagent_iz_zahteva(request) -> str`: proverava X-Client-Id / X-Client-Secret
+    (per-subagent, kao pretraga) i vraća naziv subagenta (aranzman.subagent). Koristi ga sync ruta za ugovore."""
+
+    def subagent_iz_zahteva(request: Request) -> str:
+        """Per-subagent autentifikacija (X-Client-Id / X-Client-Secret), isto kao pretraga i rezervacije.
+        Vraća naziv subagenta čiji su kredencijali. Ne koristi globalni X-Sync-Key."""
+        from subagent_api import verify_client
+
+        cid = request.headers.get("X-Client-Id", "").strip()
+        secret = request.headers.get("X-Client-Secret", "")
+        klijent = verify_client(engine, cid, secret) if cid and secret else None
+        if klijent is None:
+            raise HTTPException(status_code=401, detail="Nevalidni kredencijali subagenta")
+        with engine.connect() as conn:
+            naziv = conn.execute(text(
+                "SELECT naziv FROM subagenti WHERE id = :id AND naziv <> ''"
+            ), {"id": klijent["subagent_id"]}).scalar()
+        if not naziv:
+            raise HTTPException(status_code=404, detail="Subagent nije pronađen")
+        return naziv
 
     @api.post("/sync/puna")
     def sync_puna(request: Request):
@@ -369,6 +390,8 @@ def register_app2_sync(api, engine) -> None:
                 for r in redovi
             ],
         }
+
+    return subagent_iz_zahteva
 
 
 if __name__ == "__main__":

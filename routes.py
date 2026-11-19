@@ -1946,7 +1946,7 @@ def create_app(static_dir: str) -> FastAPI:
     register_rezervacija_log(api, engine, get_current_user)
     register_profil(api, engine, get_current_user, hash_password, verify_password)
     register_subagent_api(api, engine, get_current_user)
-    register_app2_sync(api, engine)
+    sync_subagent_iz_zahteva = register_app2_sync(api, engine)
     register_dashboard(api, engine, get_current_user)
 
     # Read rute pretrage: prihvataju korisnika (JWT) ili App2 subagenta (X-Client-Id/Secret).
@@ -6555,6 +6555,423 @@ def create_app(static_dir: str) -> FastAPI:
             "po_tipu": po_tipu,
             "page": page,
             "page_size": page_size,
+        }
+
+    @api.get("/sync/ugovori")
+    def sync_list_ugovori(request: Request):
+        """Lista ugovora ulogovanog subagenta za App2 (X-Sync-Key + client_id).
+        Ista logika kao /ugovori, ali uvek ograničena na aranzman.subagent = naziv subagenta."""
+        naziv = sync_subagent_iz_zahteva(request)
+        q = dict(request.query_params)
+        search = q.get("search", "").strip()
+        sort = q.get("sort", "danas")
+        direction = q.get("dir", "desc")
+        try:
+            page = max(int(q.get("page", "1")), 1)
+        except ValueError:
+            page = 1
+        try:
+            page_size = min(max(int(q.get("page_size", "50")), 1), 200)
+        except ValueError:
+            page_size = 50
+        if sort not in UGOVORI_SORT:
+            sort = "kljuc"
+        if direction not in ("asc", "desc"):
+            direction = "asc"
+
+        # Obavezan scope: subagent vidi samo svoje ugovore.
+        conds = ["a.subagent = :sa_naziv"]
+        bind = {"sa_naziv": naziv}
+        if search:
+            like = f"%{search}%"
+            cols = UGOVORI_SEARCH_COLS + list(UGOVORI_SEARCH_EXTRA)
+            search_in = (q.get("search_in") or "").strip()
+            if search_in:
+                dozvoljene = set(UGOVORI_SEARCH_COLS) | set(UGOVORI_SEARCH_EXTRA)
+                req = [c.strip() for c in search_in.split(",") if c.strip() in dozvoljene]
+                if req:
+                    cols = req
+            ors = " OR ".join(
+                f"{UGOVORI_SEARCH_EXTRA[c]} ILIKE :search" if c in UGOVORI_SEARCH_EXTRA
+                else f"COALESCE({c}::text, '') ILIKE :search"
+                for c in cols
+            )
+            conds.append(f"({ors})")
+            bind["search"] = like
+        for fkey, fexpr in UGOVORI_FILTER_COLS.items():
+            fval = (q.get(f"f_{fkey}") or "").strip()
+            if len(fval) >= 3:
+                conds.append(f"{fexpr} ILIKE :f_{fkey}")
+                bind[f"f_{fkey}"] = f"%{fval}%"
+
+        tip_expr = "UPPER(TRIM(COALESCE(a.tiprezervacije, '')))"
+        tip_grupa_expr = (
+            f"CASE WHEN {tip_expr} = 'PREDREZERVACIJA' THEN 'predrezervacija' "
+            f"WHEN {tip_expr} = 'STORNO' THEN 'storno' ELSE 'rezervacije' END"
+        )
+        where_bez_tipa = "WHERE " + " AND ".join(conds)
+        tip = (q.get("tip") or "").strip().lower()
+        if tip in ("predrezervacija", "storno", "rezervacije"):
+            conds.append(f"({tip_grupa_expr}) = :tip_grupa")
+            bind["tip_grupa"] = tip
+        where = "WHERE " + " AND ".join(conds)
+
+        with engine.connect() as conn:
+            total = conn.execute(text(f"SELECT COUNT(*) FROM aranzman a {where}"), bind).scalar() or 0
+            bind_bez_tipa = {k: v for k, v in bind.items() if k != "tip_grupa"}
+            po_tipu = {"predrezervacija": 0, "storno": 0, "rezervacije": 0}
+            for g, c in conn.execute(text(
+                f"SELECT {tip_grupa_expr} AS g, COUNT(*) FROM aranzman a {where_bez_tipa} GROUP BY 1"
+            ), bind_bez_tipa).fetchall():
+                po_tipu[g] = int(c)
+            rows = conn.execute(text(f"""
+                SELECT kljuc,
+                       to_char(danas, 'DD.MM.YYYY') AS danas_fmt,
+                       putnik, mesto, naziv, subagent, apartman, soba,
+                       (SELECT b.tip FROM sobe b
+                         WHERE b.veza_id_smestaj = a.smestaj_id
+                           AND TRIM(b.broj_sobe) = TRIM(a.soba)
+                         LIMIT 1) AS tip_sobe,
+                       (SELECT COALESCE(json_agg(saputnici.sk), '[]'::json) FROM (
+                           SELECT saputnik AS sk FROM aranzman_dopuna ad
+                           WHERE ad.aranzman_id = a.id
+                             AND COALESCE(TRIM(ad.saputnik), '') <> ''
+                           ORDER BY ad.id
+                       ) saputnici) AS saputnici_list,
+                       to_char(datumod, 'DD.MM.YYYY') AS datumod_fmt,
+                       to_char(datumdo, 'DD.MM.YYYY') AS datumdo_fmt,
+                       {', '.join(UGOVORI_LIST_COLS)}
+                FROM aranzman a {where}
+                ORDER BY {sort} {direction} NULLS LAST, a.id {direction}
+                LIMIT :limit OFFSET :offset
+            """), {**bind, "limit": page_size, "offset": (page - 1) * page_size}).fetchall()
+
+        kurs = get_eur_middle()
+        dodatni_map = dodatni_za_ugovori([r.kljuc for r in rows]) if kurs else {}
+
+        def row_putnici(r) -> list:
+            ps = [str(r.putnik or "").strip()]
+            ps += [str(s or "").strip() for s in (r.saputnici_list or [])]
+            return [p for p in ps if p]
+
+        def row_ukupna(r) -> float | None:
+            if not kurs:
+                return None
+            kljuc = str(r.kljuc or "").strip().strip("/")
+            calc = calc_ugovor_values(dict(r._mapping), dodatni_map.get(kljuc, []))
+            return round((calc["naplata"] + calc["provizija"]) * kurs, 2)
+
+        return {
+            "rows": [{
+                "kljuc": r.kljuc,
+                "danas": r.danas_fmt,
+                "putnik": r.putnik,
+                "putnici": row_putnici(r),
+                "mesto": r.mesto,
+                "naziv": r.naziv,
+                "struktura": (r.apartman or "").strip() or (r.tip_sobe or "").strip() or None,
+                "soba": r.soba,
+                "subagent": r.subagent,
+                "datumod": r.datumod_fmt,
+                "datumdo": r.datumdo_fmt,
+                "ukupna_vrednost": row_ukupna(r),
+            } for r in rows],
+            "total": total,
+            "po_tipu": po_tipu,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def _sync_proveri_vlasnistvo(kljuc: str, naziv: str) -> str:
+        """404 ako ugovor ne postoji ili ne pripada subagentu. Vraća očišćen ključ."""
+        kljuc_clean = kljuc.strip().strip("/")
+        with engine.connect() as conn:
+            ok = conn.execute(text(
+                "SELECT 1 FROM aranzman WHERE kljuc = :k AND subagent = :sa"
+            ), {"k": kljuc_clean, "sa": naziv}).scalar()
+        if not ok:
+            raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+        return kljuc_clean
+
+    # Uplate i PDF moraju biti registrovani pre detalja ({kljuc:path} bi ih presreo).
+    @api.get("/sync/ugovori/{kljuc:path}/uplate")
+    def sync_ugovor_uplate(kljuc: str, request: Request):
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        out = _uplate_za_ugovor(k)
+        return {"rows": out, "total": len(out)}
+
+    @api.get("/sync/ugovori/{kljuc:path}/uplate/pdf")
+    def sync_ugovor_uplate_pdf(kljuc: str, request: Request):
+        """PDF 'Pregled uplata' za ugovor subagenta. Isti šablon kao /ugovori/{kljuc}/uplate/pdf."""
+        from uplate_pdf import build_uplate_pdf
+
+        naziv = sync_subagent_iz_zahteva(request)
+        kljuc_clean = _sync_proveri_vlasnistvo(kljuc, naziv)
+        rows = _uplate_za_ugovor(kljuc_clean)
+        with engine.connect() as conn:
+            arow = conn.execute(text(
+                "SELECT putnik, adresa FROM aranzman WHERE kljuc = :k"
+            ), {"k": kljuc_clean}).fetchone()
+            arow_full = conn.execute(text(
+                "SELECT * FROM aranzman WHERE kljuc = :k"
+            ), {"k": kljuc_clean}).mappings().first()
+            logo_row = conn.execute(text(
+                "SELECT slika, slika_mime FROM dokumenti WHERE tip = 'logo'"
+            )).fetchone()
+        vrednost_eur = calc_ugovor_values(dict(arow_full), dodatni_za_ugovor(arow_full["kljuc"]))["naplata"] if arow_full else None
+        logo_data_url = None
+        if logo_row and logo_row.slika:
+            mime = logo_row.slika_mime or "image/png"
+            logo_data_url = f"data:{mime};base64,{logo_row.slika}"
+        pdf_bytes = build_uplate_pdf(
+            putnik=arow.putnik if arow else None,
+            adresa=arow.adresa if arow else None,
+            ugovor=kljuc_clean,
+            rows=rows,
+            logo_data_url=logo_data_url,
+            vrednost_eur=vrednost_eur,
+        )
+        fname = f"Pregled_uplata_{kljuc_clean.replace('/', '-')}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+
+    @api.get("/sync/ugovori/{kljuc:path}/pdf")
+    def sync_download_ugovor_pdf(kljuc: str, request: Request):
+        """PDF ugovora za subagenta. Ista logika kao /ugovori/{kljuc}/pdf, bez korisničke
+        provere (vlasništvo proverava _sync_proveri_vlasnistvo)."""
+        from decimal import Decimal, ROUND_HALF_UP
+        from ugovor_pdf import generate_ugovor_pdf, ukupno_ugovora
+        naziv = sync_subagent_iz_zahteva(request)
+        ugovor = _sync_proveri_vlasnistvo(kljuc, naziv)
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT * FROM aranzman WHERE kljuc = :k"),
+                               {"k": ugovor}).mappings().one()
+            data = dict(row)
+            data["email"] = data.get("refno") or ""
+            data["putnici_detalji"] = [dict(p) for p in conn.execute(text(
+                "SELECT * FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id"
+            ), {"i": data["id"]}).mappings()]
+            data["dodatne"] = [dict(p) for p in conn.execute(text(
+                "SELECT stavka_id, usluga, eur, din FROM dodatne WHERE ugovor = :u ORDER BY stavka_id"
+            ), {"u": ugovor}).mappings()]
+            kep = conn.execute(text(
+                "SELECT broj_keptp FROM keptp WHERE broj_ugovora = :k"
+            ), {"k": ugovor}).first()
+            if kep:
+                data["keptp"] = kep.broj_keptp
+            agency = conn.execute(text("SELECT * FROM agencija WHERE id = 1")).mappings().first()
+            if data.get("smestaj_id"):
+                sm = conn.execute(text(
+                    "SELECT s.napomena, m.cis FROM smestaj s LEFT JOIN mesto m ON m.id = s.mesto WHERE s.id = :s"
+                ), {"s": data["smestaj_id"]}).mappings().first()
+                if sm:
+                    data["smestaj_napomena"] = sm["napomena"]
+                    data["mesto_cis"] = sm["cis"]
+                soba = conn.execute(text(
+                    "SELECT opis, opis_dodatno, tip, opis_ugovor FROM sobe WHERE veza_id_smestaj = :s AND TRIM(broj_sobe) = TRIM(:b) ORDER BY id LIMIT 1"
+                ), {"s": data["smestaj_id"], "b": data.get("soba") or ""}).mappings().first()
+                if soba:
+                    data["soba_opis"] = soba["opis"]
+                    data["soba_opis_dodatno"] = soba["opis_dodatno"]
+                    data["soba_tip"] = soba["tip"]
+                    data["soba_opis_ugovor"] = soba["opis_ugovor"]
+            if (data.get("subagent") or "").strip():
+                sub = conn.execute(text(
+                    "SELECT naziv, pib, matbroj, adresa, mesto, email, tel FROM subagenti "
+                    "WHERE naziv = :n AND naziv <> '' ORDER BY id LIMIT 1"
+                ), {"n": data["subagent"]}).mappings().first()
+                data["subagent_info"] = dict(sub) if sub else None
+            data["ulogovan"] = str(data.get("obradio") or "").strip()
+        if not data.get("danas"):
+            raise HTTPException(status_code=422, detail="Ugovor nema datum izdavanja")
+        data["uplaceno_eur"] = sum((Decimal(str(u["suma_eur"])) for u in _uplate_za_ugovor(ugovor)
+                                    if u.get("suma_eur") is not None), Decimal(0))
+        datum = data["danas"].date() if hasattr(data["danas"], "date") else data["danas"]
+        kurs, kurs_datum = get_eur_middle_za_datum(datum.isoformat())
+        if not kurs or not math.isfinite(kurs) or kurs <= 0:
+            raise HTTPException(status_code=503, detail="Kurs NBS za datum ugovora nije dostupan. Pokušajte ponovo.")
+        calc = calc_ugovor_values(data, dodatni_za_ugovor(data.get("kljuc")))
+        ukupno, ukupno_din_dodatne = ukupno_ugovora(data, calc, data.get("dodatne"))
+        ukupno_rsd = (Decimal(str(ukupno)) * Decimal(str(kurs))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) + Decimal(str(ukupno_din_dodatne))
+        data.update(obracun=calc, ukupno_eur=ukupno,
+                    ukupno_rsd=ukupno_rsd,
+                    kurs=kurs, kurs_datum=kurs_datum, datum_izdavanja=datum)
+        izdavalac = dict(agency) if agency else {}
+        izdavalac["racun"] = next((izdavalac.get(f"tekuci_racun{i}") for i in range(1, 5)
+                                  if izdavalac.get(f"tekuci_racun{i}")), "")
+        izdavalac["banka"] = next((izdavalac.get(f"banka{i}") for i in range(1, 5)
+                                  if izdavalac.get(f"tekuci_racun{i}")), "")
+        izdavalac["banke"] = _banke_izdavaoca(izdavalac)
+        izdavalac["logo_data_url"] = _logo_data_url_iz_baze()
+        pdf = generate_ugovor_pdf(data, izdavalac)
+        safe_key = re.sub(r"[^0-9A-Za-z_-]", "-", ugovor)
+        return Response(content=pdf, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="Ugovor_{safe_key}.pdf"'})
+
+    @api.get("/sync/ugovori/{kljuc:path}/cis-link")
+    def sync_ugovor_cis_link(kljuc: str, request: Request, cena_eur: str | None = Query(None)):
+        """CIS link za ugovor subagenta. Vlasništvo se proverava pre poziva postojeće logike."""
+        naziv = sync_subagent_iz_zahteva(request)
+        kljuc_clean = _sync_proveri_vlasnistvo(kljuc, naziv)
+        return ugovor_cis_link(kljuc_clean, cena_eur=cena_eur, _=None)
+
+    @api.get("/sync/ugovori/{kljuc:path}")
+    def sync_ugovor_detail(kljuc: str, request: Request):
+        """Detalj ugovora ulogovanog subagenta za App2 (X-Sync-Key + client_id).
+        Ugovor koji ne pripada subagentu vraća 404 (isto kao da ne postoji)."""
+        naziv = sync_subagent_iz_zahteva(request)
+        kljuc = kljuc.strip().strip("/")
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT a.*, s.naziv AS subagent_naziv, s.provizija AS subagent_provizija,
+                       s.racun AS subagent_racun, s.tel AS subagent_tel,
+                       s.kontakt AS subagent_kontakt
+                FROM aranzman a
+                LEFT JOIN subagenti s ON s.naziv = a.subagent AND s.naziv <> ''
+                WHERE a.kljuc = :kljuc AND a.subagent = :sa
+            """), {"kljuc": kljuc, "sa": naziv}).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            dopuni = conn.execute(text("""
+                SELECT saputnik, uzrast, prevozow, prevozrt, prevozsp, viza, ulazak, mesto_izlaska, smer,
+                       adresa, grad, email, telefon, rodjen, pasos,
+                       mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
+                       datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka,
+                       destinacija_ow_id, destinacija_polaska_id, destinacija_povratka_id,
+                       dodatno_sediste
+                FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id
+            """), {"i": row.id}).fetchall()
+            dodatne = conn.execute(text("""
+                SELECT stavka_id, usluga, eur, din, dodatna_usluga_id FROM dodatne WHERE ugovor = :k
+                ORDER BY usluga NULLS LAST, eur NULLS LAST, din NULLS LAST
+            """), {"k": kljuc}).mappings().all()
+            dodatni_popusti = conn.execute(text("""
+                SELECT id, naziv, eur, rsd, procenat FROM dodatni_popusti WHERE aranzman_id = :i ORDER BY id
+            """), {"i": row.id}).mappings().all()
+            obr = conn.execute(text(
+                "SELECT soba_cenovnik, struktura, prevoz FROM obracun_po_aranzmanu WHERE aranzman_id = :i"
+            ), {"i": row.id}).fetchone()
+        d = dict(row._mapping)
+        dodatni_lista = dodatni_popusti_iznosi(d, [dict(p) for p in dodatni_popusti])
+        subagent = None
+        if d.get("subagent_naziv"):
+            subagent = {
+                "naziv": d.get("subagent_naziv"),
+                "provizija": d.get("subagent_provizija"),
+                "racun": d.get("subagent_racun"),
+                "tel": d.get("subagent_tel"),
+                "kontakt": d.get("subagent_kontakt"),
+            }
+        kurs = get_eur_middle()
+        calc = calc_ugovor_values(d, dodatni_lista)
+        ukupna = round((calc["naplata"] + calc["provizija"]) * kurs, 2) if kurs else None
+        fmt_date = lambda v: v.strftime("%d.%m.%Y") if v else None
+        putnici_detalji = [{
+            "saputnik": (p.saputnik or "").strip(),
+            "rodjen": fmt_date(p.rodjen),
+            "pasos": p.pasos,
+            "uzrast": (p.uzrast or "").strip() or None,
+            "dodatno_sediste": bool(p.dodatno_sediste),
+            "prevozow": p.prevozow,
+            "prevozrt": p.prevozrt,
+            "prevozsp": p.prevozsp,
+            "ulazak": p.ulazak,
+            "mesto_izlaska": p.mesto_izlaska,
+            "smer": p.smer,
+            "adresa": (p.adresa or "").strip() or None,
+            "grad": (p.grad or "").strip() or None,
+            "email": (p.email or "").strip() or None,
+            "telefon": (p.telefon or "").strip() or None,
+            "mesto_sedenja": p.mesto_sedenja,
+            "placeno_prevoz": bool(p.placeno_prevoz),
+            "zelja_prevoz": bool(p.zelja_prevoz),
+            "datum_ow": p.datum_ow.isoformat() if p.datum_ow else None,
+            "destinacija_ow": p.destinacija_ow,
+            "datum_polaska": p.datum_polaska.isoformat() if p.datum_polaska else None,
+            "destinacija_polaska": p.destinacija_polaska,
+            "datum_povratka": p.datum_povratka.isoformat() if p.datum_povratka else None,
+            "destinacija_povratka": p.destinacija_povratka,
+            "destinacija_ow_id": p.destinacija_ow_id,
+            "destinacija_polaska_id": p.destinacija_polaska_id,
+            "destinacija_povratka_id": p.destinacija_povratka_id,
+        } for p in dopuni]
+        putnici = [str(d.get("putnik") or "").strip()]
+        putnici += [p["saputnik"] for p in putnici_detalji if p["saputnik"]]
+        putnici = [p for p in putnici if p]
+        return {
+            "kljuc": d.get("kljuc"),
+            "danas": fmt_date(d.get("danas")),
+            "putnik": d.get("putnik"),
+            "rodjen": fmt_date(d.get("rodjen")),
+            "pasos": d.get("pasos"),
+            "uzrast": d.get("uzrast") or None,
+            "putnici": putnici,
+            "putnici_detalji": putnici_detalji,
+            "dodatne": [dict(stavka) for stavka in dodatne],
+            "dodatni_popusti": dodatni_lista,
+            "smer": d.get("smer"),
+            "tiprezervacije": d.get("tiprezervacije"),
+            "viza": d.get("viza"),
+            "subagent": d.get("subagent") or "",
+            "timelimit": d["timelimit"].strftime("%d.%m.%Y %H:%M") if d.get("timelimit") else None,
+            "adresa": d.get("adresa"),
+            "grad": d.get("grad"),
+            "telefon": d.get("telefon"),
+            "refno": d.get("refno"),
+            "prevozow": d.get("prevozow"),
+            "prevozrt": d.get("prevozrt"),
+            "prevozsp": d.get("prevozsp"),
+            "mesto_sedenja": d.get("mesto_sedenja"),
+            "placeno_prevoz": bool(d.get("placeno_prevoz")),
+            "zelja_prevoz": bool(d.get("zelja_prevoz")),
+            "datum_ow": d["datum_ow"].isoformat() if d.get("datum_ow") else None,
+            "destinacija_ow": d.get("destinacija_ow"),
+            "datum_polaska": d["datum_polaska"].isoformat() if d.get("datum_polaska") else None,
+            "destinacija_polaska": d.get("destinacija_polaska"),
+            "datum_povratka": d["datum_povratka"].isoformat() if d.get("datum_povratka") else None,
+            "destinacija_povratka": d.get("destinacija_povratka"),
+            "destinacija_ow_id": d.get("destinacija_ow_id"),
+            "destinacija_polaska_id": d.get("destinacija_polaska_id"),
+            "destinacija_povratka_id": d.get("destinacija_povratka_id"),
+            "napomena_prevoz": d.get("napomena_prevoz"),
+            "destinacija_prevoz_id": d.get("destinacija_prevoz_id"),
+            "nacin_placanja": d.get("nacin_placanja"),
+            "osiguranje1": d.get("osiguranje1"),
+            "soba": d.get("soba"),
+            "apartman": d.get("apartman"),
+            "opis": d.get("opis"),
+            "gde": d.get("gde"),
+            "obracun": {"soba_cenovnik": obr.soba_cenovnik, "struktura": obr.struktura,
+                        "prevoz": bool(obr.prevoz)} if obr else None,
+            "napomena": d.get("napomena"),
+            "napomena1": d.get("napomena1"),
+            "obradio": d.get("obradio"),
+            "ulazak": d.get("ulazak"),
+            "mesto_izlaska": d.get("mesto_izlaska") or d.get("ulazak"),
+            "cenaaranz": d.get("cenaaranz"),
+            "kolaranz": d.get("kolaranz"),
+            "popustar": d.get("popustar"),
+            "cenaow": d.get("cenaow"),
+            "kolow": d.get("kolow"),
+            "cenart": d.get("cenart"),
+            "kolrt": d.get("kolrt"),
+            "popustpr": d.get("popustpr"),
+            "cenadod": d.get("cenadod"),
+            "uplacenod": d.get("uplacenod"),
+            "procenatar": d.get("procenatar"),
+            "mesto": d.get("mesto"),
+            "naziv": d.get("naziv"),
+            "datumod": fmt_date(d.get("datumod")),
+            "datumdo": fmt_date(d.get("datumdo")),
+            "destinacija": d.get("destinacija"),
+            "subagent_info": subagent,
+            "kurs": kurs,
+            "ukupna_vrednost": ukupna,
+            **calc,
         }
 
     # ── Subagenti (povezani sa aranzman.subagent = subagenti.naziv) ─────────
