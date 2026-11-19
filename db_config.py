@@ -5,11 +5,36 @@ Da bi se aplikacija postavila na drugu bazu, menja se SAMO promenljiva
 okruženja DB_URL_ENV (ili vrednost ovde ako je potrebno).
 """
 import os
+from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 DB_URL_ENV = "EXTERNAL_NEON_DATABASE_URL"
+
+
+def _ucitaj_dotenv(putanja: Path) -> None:
+    """Učitava KEY=VALUE parove iz .env bez prepisivanja postojećih promenljivih.
+
+    Parser je namerno jednostavan (bez shell interpretacije), jer URL-ovi
+    sadrže znakove kao što su & i ?.
+    """
+    if not putanja.is_file():
+        return
+    for linija in putanja.read_text(encoding="utf-8").splitlines():
+        linija = linija.strip()
+        if not linija or linija.startswith("#") or "=" not in linija:
+            continue
+        kljuc, vrednost = linija.split("=", 1)
+        kljuc = kljuc.strip()
+        vrednost = vrednost.strip()
+        if len(vrednost) >= 2 and vrednost[0] == vrednost[-1] and vrednost[0] in "\"'":
+            vrednost = vrednost[1:-1]
+        if kljuc and kljuc not in os.environ:
+            os.environ[kljuc] = vrednost
+
+
+_ucitaj_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 def get_database_url() -> str:
