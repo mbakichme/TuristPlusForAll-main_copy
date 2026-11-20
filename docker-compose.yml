@@ -1,8 +1,14 @@
-name: turistplus-app1
+name: ${COMPOSE_PROJECT_NAME:-turistplus-app1}
 
-# App1 (organizator) u Docker-u. Baza je spoljni Neon (EXTERNAL_NEON_DATABASE_URL).
-# Konfiguracija se čita iz .env u ovom direktorijumu (nije u git-u); vrednosti se ne upisuju ovde.
-# Port na hostu: 3070 = App1 UI (nginx), /api ide na backend interno na 8000.
+# App1 (organizator) u Docker-u. Jedna slika, više instanci: svaka instanca ima
+# svoj env fajl (svoja baza) i svoj port na hostu.
+#
+#   docker compose -p helena --env-file instances/helena.env up -d --build
+#   (env fajl sadrži EXTERNAL_NEON_DATABASE_URL, JWT_SECRET_KEY, ...; nije u git-u)
+#
+# Promenljive:
+#   INSTANCE_ENV_FILE  putanja do env fajla instance (podrazumevano .env)
+#   APP_PORT_HOST      port na hostu za UI (podrazumevano 3070)
 
 services:
   backend:
@@ -10,11 +16,8 @@ services:
       context: .
       dockerfile: docker/backend.Dockerfile
     env_file:
-      - path: .env
+      - path: ${INSTANCE_ENV_FILE:-.env}
         required: false
-    environment:
-      ORGANIZER_CODE: ${ORGANIZER_CODE:-}
-      ORGANIZER_NAME: ${ORGANIZER_NAME:-}
     restart: unless-stopped
 
   frontend:
@@ -26,5 +29,5 @@ services:
     depends_on:
       - backend
     ports:
-      - "3070:80"
+      - "${APP_PORT_HOST:-3070}:80"
     restart: unless-stopped

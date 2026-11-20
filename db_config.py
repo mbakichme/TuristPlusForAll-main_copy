@@ -34,7 +34,10 @@ def _ucitaj_dotenv(putanja: Path) -> None:
             os.environ[kljuc] = vrednost
 
 
-_ucitaj_dotenv(Path(__file__).resolve().parent / ".env")
+# Env fajl instance (organizatora): INSTANCE_ENV_FILE=instances/helena.env, inače .env
+_ucitaj_dotenv(
+    Path(os.environ.get("INSTANCE_ENV_FILE") or Path(__file__).resolve().parent / ".env")
+)
 
 
 def get_database_url() -> str:
