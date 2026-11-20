@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from datetime import date as SubDate
 from decimal import Decimal
 from typing import Optional, List
+from types import SimpleNamespace
 from urllib.parse import quote
 
 from fastapi import FastAPI, APIRouter, Request, Depends, HTTPException, UploadFile, File, Query
@@ -38,7 +39,14 @@ from blagajna_api import init_blagajna, register_blagajna
 from avansni_racuni_api import init_avansni_racuni, register_avansni_pregled
 from notifikacije_api import init_notifikacije, register_notifikacije
 from profil_api import init_profil, register_profil
+from subagent_api import (
+    SCOPE_REZERVACIJA, SCOPE_PRETRAGA,
+    autentifikuj_subagenta,
+    init_subagent_api, register_subagent_api, sinhronizuj_nakon_izmene, sinhronizuj_subagenta,
+    deaktiviraj_pre_brisanja, ensure_super_admin_subagent, je_zasticen,
+)
 from dashboard_api import register_dashboard
+from app2_sync import register_app2_sync, sinhronizuj_posle_izmene
 from obracun_po_aranzmanu import init_obracun_po_aranzmanu, obracun_iz_rezervacije, varijante_cene
 from rezervacija_log import (
     OBLAST_OBRACUN, OBLAST_SAPUTNICI, OBLAST_UPLATA, OBLAST_REZERVACIJA,
@@ -207,11 +215,17 @@ def init_db(engine):
 
         # Seed superadmin — always update password hash to ensure compatibility
         superadmin_pass = hash_password("admin123")
-        conn.execute(text("""
-            INSERT INTO users (first_name, last_name, email, username, password_hash, status, is_superadmin)
-            VALUES ('Super', 'Admin', 'www@oktopod.rs', 'superadmin', :pw, 'aktivan', TRUE)
-            ON CONFLICT (email) DO UPDATE SET password_hash = :pw
-        """), {"pw": superadmin_pass})
+        postojeci_sa = conn.execute(text(
+            "SELECT email FROM users WHERE username = 'superadmin'"
+        )).first()
+        if postojeci_sa is None or postojeci_sa.email == "www@oktopod.rs":
+            conn.execute(text("""
+                INSERT INTO users (first_name, last_name, email, username, password_hash, status, is_superadmin)
+                VALUES ('Super', 'Admin', 'www@oktopod.rs', 'superadmin', :pw, 'aktivan', TRUE)
+                ON CONFLICT (email) DO UPDATE SET password_hash = :pw
+            """), {"pw": superadmin_pass})
+        else:
+            print(f"[seed] superadmin već postoji sa emailom {postojeci_sa.email}; seed preskočen")
 
         # ── New tables ──────────────────────────────────────────────────────
         conn.execute(text("""
@@ -295,6 +309,21 @@ def init_db(engine):
         conn.execute(text(
             "ALTER TABLE smestaj ADD COLUMN IF NOT EXISTS provizija INTEGER NOT NULL DEFAULT 10"
         ))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS polazak (
+                id SERIAL PRIMARY KEY,
+                destinacija VARCHAR(60) DEFAULT NULL,
+                polazak VARCHAR(60) DEFAULT NULL,
+                sat VARCHAR(10) DEFAULT NULL,
+                valuta VARCHAR(3) DEFAULT NULL,
+                adlrt DOUBLE PRECISION DEFAULT NULL,
+                chdrt DOUBLE PRECISION DEFAULT NULL,
+                infrt DOUBLE PRECISION DEFAULT NULL,
+                adlow DOUBLE PRECISION DEFAULT NULL,
+                chdow DOUBLE PRECISION DEFAULT NULL,
+                infow DOUBLE PRECISION DEFAULT NULL
+            )
+        """))
         conn.execute(text(
             "ALTER TABLE IF EXISTS polazak ADD COLUMN IF NOT EXISTS cena_transfera DOUBLE PRECISION NULL"
         ))
@@ -656,6 +685,11 @@ def init_db(engine):
         ))
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_aranzman_smestaj_id ON aranzman(smestaj_id)"
+        ))
+        # App2 lista rezervacija: filtar po subagentu, sortiranje po datumu (sync_rezervacije)
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_aranzman_subagent_datumod "
+            "ON aranzman(subagent, datumod DESC, id DESC)"
         ))
         # Način plaćanja rezervacije (delimicno | u_celosti | NULL = nije izabran) — bira popust sobe
         conn.execute(text(
@@ -1878,6 +1912,8 @@ def _obracun_argumenti(body, vals: dict) -> dict:
 
 def create_app(static_dir: str) -> FastAPI:
     engine = get_engine()
+    # Read-only engine za sub_ rute (App2 pretraga); bez SEARCH_DATABASE_URL = lokalni engine.
+    search_engine = db_config.get_search_engine(engine)
     init_db(engine)
     init_cenovnici(engine)
     init_koeficijenti(engine)
@@ -1909,7 +1945,15 @@ def create_app(static_dir: str) -> FastAPI:
     register_notifikacije(api, engine, get_current_user)
     register_rezervacija_log(api, engine, get_current_user)
     register_profil(api, engine, get_current_user, hash_password, verify_password)
+    register_subagent_api(api, engine, get_current_user)
+    sync_subagent_iz_zahteva = register_app2_sync(api, engine)
     register_dashboard(api, engine, get_current_user)
+
+    # Read rute pretrage: prihvataju korisnika (JWT) ili App2 subagenta (X-Client-Id/Secret).
+    def get_caller_or_subagent(request: Request):
+        if request.headers.get("X-Client-Id"):
+            return autentifikuj_subagenta(engine, request)
+        return get_current_user(request)
 
     # ── Health ──────────────────────────────────────────────────────────────
     @api.get("/health")
@@ -2227,6 +2271,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Destinacija ─────────────────────────────────────────────────────────
     @api.get("/destinacija")
     def list_destinacija(_: dict = Depends(get_current_user)):
+        return _destinacija_upit(engine)
+
+    @api.get("/sub_destinacija")
+    def sub_destinacija(_: dict = Depends(get_caller_or_subagent)):
+        return _destinacija_upit(search_engine)
+
+    def _destinacija_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT d.id, d.naziv, d.drzava, d.status, d.organizator,
@@ -2307,6 +2358,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/mesto")
     def list_mesto(_: dict = Depends(get_current_user)):
+        return _mesto_upit(engine)
+
+    @api.get("/sub_mesto")
+    def sub_mesto(_: dict = Depends(get_caller_or_subagent)):
+        return _mesto_upit(search_engine)
+
+    def _mesto_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT m.id, m.naziv, m.drzava, m.destinacija, m.grupa_datuma, m.status,
@@ -2524,6 +2582,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Smestaj ─────────────────────────────────────────────────────────────
     @api.get("/smestaj")
     def list_smestaj(_: dict = Depends(get_current_user)):
+        return _smestaj_upit(engine)
+
+    @api.get("/sub_smestaj")
+    def sub_smestaj(_: dict = Depends(get_caller_or_subagent)):
+        return _smestaj_upit(search_engine)
+
+    def _smestaj_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT s.id, s.naziv, s.drzava, s.destinacija, s.mesto, s.tip_smestaja,
@@ -2644,6 +2709,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Sobe (veza na smestaj: više soba → jedan smeštaj) ──────────────────
     @api.get("/sobe")
     def list_sobe(request: Request, _: dict = Depends(get_current_user)):
+        return _sobe_upit(engine, request)
+
+    @api.get("/sub_sobe")
+    def sub_sobe(request: Request, _: dict = Depends(get_caller_or_subagent)):
+        return _sobe_upit(search_engine, request)
+
+    def _sobe_upit(engine, request: Request):
         q = (request.query_params.get("q") or "").strip()
         where = ""
         bind = {}
@@ -2789,6 +2861,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/polazak")
     def list_polazak(_: dict = Depends(get_current_user)):
+        return _polazak_upit(engine)
+
+    @api.get("/sub_polazak")
+    def sub_polazak(_: dict = Depends(get_caller_or_subagent)):
+        return _polazak_upit(search_engine)
+
+    def _polazak_upit(engine):
         with engine.connect() as conn:
             return _polazak_sa_nazivima(conn)
 
@@ -3240,6 +3319,13 @@ def create_app(static_dir: str) -> FastAPI:
 
     @api.get("/slobodne-sobe")
     def slobodne_sobe(request: Request, _: dict = Depends(get_current_user)):
+        return _slobodne_sobe_upit(engine, request)
+
+    @api.get("/sub_slobodne-sobe")
+    def sub_slobodne_sobe(request: Request, _: dict = Depends(get_caller_or_subagent)):
+        return _slobodne_sobe_upit(search_engine, request)
+
+    def _slobodne_sobe_upit(engine, request: Request):
         q = dict(request.query_params)
         od = (q.get("datum_od") or "").strip()
         do = (q.get("datum_do") or "").strip()
@@ -3638,7 +3724,9 @@ def create_app(static_dir: str) -> FastAPI:
                     ORDER BY a.kljuc
                 """), {"naziv": srow.naziv, "sid": srow.id, "mpref": mpref,
                        "g": grupa_id, "m": srow.mesto}).fetchall()
-                # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora
+                # Saldo po ugovoru (EUR) — ista logika obračuna kao detalj ugovora.
+                # Dodatni popusti jednim batch upitom (ne po ugovoru — N+1 je usporavao grafik).
+                popusti_po_kljucu = dodatni_za_ugovori([r.kljuc for r in ugovori])
                 ugovori_out = []
                 upl_eur = uplate_eur_za(ugovori)
                 for r in ugovori:
@@ -3692,6 +3780,13 @@ def create_app(static_dir: str) -> FastAPI:
     # ── Periodi ─────────────────────────────────────────────────────────────
     @api.get("/period-grupa")
     def list_period_grupa(_: dict = Depends(get_current_user)):
+        return _period_grupa_upit(engine)
+
+    @api.get("/sub_period-grupa")
+    def sub_period_grupa(_: dict = Depends(get_caller_or_subagent)):
+        return _period_grupa_upit(search_engine)
+
+    def _period_grupa_upit(engine):
         with engine.connect() as conn:
             rows = conn.execute(text("""
                 SELECT g.id, g.naziv, g.created_at,
@@ -3830,8 +3925,18 @@ def create_app(static_dir: str) -> FastAPI:
     }
 
     # Svi obračuni koriste trajnu tabelu kurs; API se poziva samo za nedostajući datum.
+    # Kurs je isti za ceo dan, pa se drži u procesu — bez ponovnog upita po zahtevu.
+    _kurs_po_danu: dict[str, float | None] = {}
+
     def get_eur_middle():
-        return get_eur_rate(engine, _belgrade_now().date().isoformat())[0]
+        danas = _belgrade_now().date().isoformat()
+        if danas in _kurs_po_danu:
+            return _kurs_po_danu[danas]
+        vrednost = get_eur_rate(engine, danas)[0]
+        if vrednost is not None:
+            _kurs_po_danu.clear()
+            _kurs_po_danu[danas] = vrednost
+        return vrednost
 
     def get_eur_middle_za_datum(iso_datum: str):
         return get_eur_rate(engine, iso_datum)
@@ -4557,12 +4662,18 @@ def create_app(static_dir: str) -> FastAPI:
             rows = conn.execute(text("SELECT naziv FROM tipovi_kartica ORDER BY naziv")).fetchall()
         return [r.naziv for r in rows]
 
-    @api.put("/uplate/{kljuc}/kartica")
-    def izmeni_kartica_uplate(kljuc: int, body: KarticaPodaci, current_user: dict = Depends(get_current_user)):
-        try:
-            user_id = int(current_user["sub"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+    def _korisnik_identitet(user_id: int):
+        """Identitet za istoriju: (user_id, ime prezime) iz tabele users."""
+        def _id(conn):
+            row = conn.execute(text(
+                "SELECT first_name, last_name FROM users WHERE id = :id"
+            ), {"id": user_id}).fetchone()
+            obradio = f"{(row.first_name or '').strip()} {(row.last_name or '').strip()}".strip() if row else ""
+            return user_id, obradio
+        return _id
+
+    def _izmeni_karticu_uplate(kljuc: int, body: KarticaPodaci, identitet) -> None:
+        """identitet(conn) -> (user_id, obradio); poziva se samo kad ima promena."""
         with engine.begin() as conn:
             stari = conn.execute(text(
                 "SELECT id, faktura, nacin, broj_potvrde, tip_kartice, broj_kartice, broj_odobrenja "
@@ -4577,22 +4688,27 @@ def create_app(static_dir: str) -> FastAPI:
                 "UPDATE uplate SET broj_potvrde = :broj_potvrde, tip_kartice = :tip_kartice, "
                 "broj_kartice = :broj_kartice, broj_odobrenja = :broj_odobrenja WHERE kljuc = :k"
             ), {**novo, "k": kljuc})
-            obradio_row = conn.execute(text(
-                "SELECT first_name, last_name FROM users WHERE id = :id"
-            ), {"id": user_id}).fetchone()
-            obradio = f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip() if obradio_row else ""
             promene = []
             for polje, labela in (("broj_potvrde", "Broj potvrde"), ("tip_kartice", "Tip kartice"),
                                   ("broj_kartice", "Broj kartice"), ("broj_odobrenja", "Broj odobrenja")):
                 if (getattr(stari, polje) or None) != novo[polje]:
                     promene.append({"polje": labela, "stara": getattr(stari, polje), "nova": novo[polje]})
             if promene:
+                user_id, obradio = identitet(conn)
                 arow = conn.execute(text(
                     "SELECT kljuc FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
                     "ORDER BY id DESC LIMIT 1"
                 ), {"b": stari.faktura or ""}).fetchone()
                 zabelezi(conn, arow.kljuc if arow else (stari.faktura or ""), OBLAST_UPLATA,
                          "uplata_kartica_izmenjena", user_id, obradio, promene)
+
+    @api.put("/uplate/{kljuc}/kartica")
+    def izmeni_kartica_uplate(kljuc: int, body: KarticaPodaci, current_user: dict = Depends(get_current_user)):
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+        _izmeni_karticu_uplate(kljuc, body, _korisnik_identitet(user_id))
         return {"status": "sacuvano", "kljuc": kljuc}
 
     @api.get("/uplate/{kljuc}/cekovi")
@@ -4617,12 +4733,8 @@ def create_app(static_dir: str) -> FastAPI:
             for r in rows
         ]
 
-    @api.put("/uplate/{kljuc}/cekovi")
-    def izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, current_user: dict = Depends(get_current_user)):
-        try:
-            user_id = int(current_user["sub"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+    def _izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, identitet) -> int:
+        """identitet(conn) -> (user_id, obradio); poziva se samo kad ima promena. Vraća broj čekova."""
         with engine.begin() as conn:
             stari = conn.execute(text(
                 "SELECT id, faktura, nacin, din FROM uplate WHERE kljuc = :k"
@@ -4665,32 +4777,33 @@ def create_app(static_dir: str) -> FastAPI:
             for r in sorted(set(nova_map) - set(stari_c)):
                 promene.append({"polje": f"Ček {r}", "stara": None, "nova": nova_map[r]["iznos"]})
             if promene:
-                obradio_row = conn.execute(text(
-                    "SELECT first_name, last_name FROM users WHERE id = :id"
-                ), {"id": user_id}).fetchone()
-                obradio = (f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip()
-                           if obradio_row else "")
+                user_id, obradio = identitet(conn)
                 arow = conn.execute(text(
                     "SELECT kljuc FROM aranzman WHERE split_part(kljuc, '/', 1) = :b "
                     "ORDER BY id DESC LIMIT 1"
                 ), {"b": stari.faktura or ""}).fetchone()
                 zabelezi(conn, arow.kljuc if arow else (stari.faktura or ""), OBLAST_UPLATA,
                          "uplata_cekovi_izmenjeni", user_id, obradio, promene)
-        return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": len(novi)}
+        return len(novi)
 
-    class PrebacivanjeUplate(BaseModel):
-        ugovor: str
-
-    @api.post("/uplate/{kljuc}/prebaci")
-    def prebaci_uplatu(kljuc: int, body: PrebacivanjeUplate, current_user: dict = Depends(get_current_user)):
-        """Povraćaj: prebacuje uplatu sa trenutnog ugovora na drugi ugovor.
-        uplate.id / uplate.faktura → novi ugovor; napomene interne oba ugovora se dopunjuju;
-        datum prebacivanja = danas."""
+    @api.put("/uplate/{kljuc}/cekovi")
+    def izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, current_user: dict = Depends(get_current_user)):
         try:
             user_id = int(current_user["sub"])
         except (KeyError, TypeError, ValueError):
             raise HTTPException(status_code=401, detail="Neautorizovan pristup")
-        ugovor = (body.ugovor or "").strip().strip("/")
+        broj = _izmeni_cekove_uplate(kljuc, body, _korisnik_identitet(user_id))
+        return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": broj}
+
+    class PrebacivanjeUplate(BaseModel):
+        ugovor: str
+
+    def _prebaci_uplatu(kljuc: int, ugovor_in: str, identitet, proveri_cilj=None) -> str:
+        """Povraćaj: prebacuje uplatu sa trenutnog ugovora na drugi ugovor.
+        identitet(conn) -> (user_id, obradio); proveri_cilj(kljuc_ugovora) baca 404 ako odredište nije dozvoljeno.
+        uplate.id / uplate.faktura → novi ugovor; napomene interne oba ugovora se dopunjuju;
+        datum prebacivanja = danas. Vraća ključ novog ugovora."""
+        ugovor = (ugovor_in or "").strip().strip("/")
         if not ugovor:
             raise HTTPException(status_code=400, detail="Izaberite ugovor na koji se uplata prebacuje")
         with engine.begin() as conn:
@@ -4726,6 +4839,8 @@ def create_app(static_dir: str) -> FastAPI:
             ), {"b": broj_stari}).fetchone()
             if not stari_ar:
                 raise HTTPException(status_code=404, detail="Polazni ugovor nije pronađen")
+            if proveri_cilj:
+                proveri_cilj(nov.kljuc)
 
             iznos = float(stari.din or 0)
             iznos_txt = f"{iznos:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -4749,10 +4864,7 @@ def create_app(static_dir: str) -> FastAPI:
                 "WHERE kljuc = :k"
             ), {"nid": nid, "nb": broj_novi, "sb": broj_stari, "dp": sada, "k": kljuc})
 
-            obradio_row = conn.execute(text(
-                "SELECT first_name, last_name FROM users WHERE id = :id"
-            ), {"id": user_id}).fetchone()
-            obradio = f"{(obradio_row.first_name or '').strip()} {(obradio_row.last_name or '').strip()}".strip() if obradio_row else ""
+            user_id, obradio = identitet(conn)
             conn.execute(text(
                 "INSERT INTO prebacivanje (datum, uplata_kljuc, iznos, stari_ugovor, novi_ugovor, operater_id, operater) "
                 "VALUES (:dp, :uk, :iznos, :stari, :novi, :uid, :op)"
@@ -4766,7 +4878,17 @@ def create_app(static_dir: str) -> FastAPI:
                 {"polje": "Prebačena sa ugovora", "stara": None, "nova": stari_ar.kljuc},
                 {"polje": "Iznos (DIN)", "stara": None, "nova": norm_vrednost(iznos)},
             ])
-        return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov.kljuc}
+        return nov.kljuc
+
+    @api.post("/uplate/{kljuc}/prebaci")
+    def prebaci_uplatu(kljuc: int, body: PrebacivanjeUplate, current_user: dict = Depends(get_current_user)):
+        """Povraćaj: prebacuje uplatu sa trenutnog ugovora na drugi ugovor (vidi _prebaci_uplatu)."""
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+        nov = _prebaci_uplatu(kljuc, body.ugovor, _korisnik_identitet(user_id))
+        return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov}
 
     register_zabrana(api, engine, get_current_user, lambda: get_eur_middle(),
                      lambda r: calc_ugovor_values(r, dodatni_za_ugovor(r.get("kljuc"))))
@@ -4793,8 +4915,8 @@ def create_app(static_dir: str) -> FastAPI:
             out.append(d)
         return {"rows": out, "total": len(out)}
 
-    @api.post("/uplate", status_code=201)
-    def create_uplata(body: UplataCreate, current_user: dict = Depends(get_current_user)):
+    def _uplata_validiraj(body: UplataCreate) -> dict:
+        """Provera polja uplate i kursa (kurs mora postojati PRE unosa). Vraća očišćene vrednosti."""
         ugovor = (body.ugovor or "").strip().strip("/")
         ime = (body.ime or "").strip()
         adresa = (body.adresa or "").strip()
@@ -4821,11 +4943,81 @@ def create_app(static_dir: str) -> FastAPI:
         if abs(din - round(din, 2)) > 1e-9:
             raise HTTPException(status_code=400, detail="Iznos može imati najviše 2 decimale")
 
-        # kurs mora postojati PRE samog unosa uplate
         kurs = get_eur_middle()
         if not kurs or not math.isfinite(float(kurs)) or float(kurs) <= 0:
             raise HTTPException(status_code=503, detail="Kurs EUR nije dostupan — uplata nije uneta")
+        return {"ugovor": ugovor, "ime": ime, "adresa": adresa, "nacin": nacin,
+                "svrha": svrha, "din": din, "kurs": float(kurs)}
 
+    def _uplata_upisi(conn, arow, v: dict, danas_unosa: datetime, obradio: str,
+                      poslovnica, user_id) -> int:
+        """Upis nove uplate na ugovor arow + zapis u istoriju. Vraća ključ nove uplate."""
+        broj_ugovora = (arow.kljuc or "").split("/")[0].strip()
+        try:
+            ugovor_id = int(broj_ugovora)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
+
+        din = v["din"]
+        uevro = round(din / v["kurs"], 2)
+        # kartica i čekovi se dodaju posle unosa uplate (PUT /uplate/{kljuc}/kartica i /cekovi)
+        kartica = {"broj_potvrde": None, "tip_kartice": None, "broj_kartice": None, "broj_odobrenja": None}
+
+        new_kljuc = conn.execute(text("""
+            INSERT INTO uplate
+                (id, danas, ime, adresa, nacin, din, evro, uevro, svrha,
+                 obradio, vrsta, faktura, destinacija, mesto, subagent,
+                 organizator, poslovnica,
+                 broj_potvrde, tip_kartice, broj_kartice, broj_odobrenja)
+            VALUES
+                (:id, :danas, :ime, :adresa, :nacin, :din, :evro, :uevro, :svrha,
+                 :obradio, :vrsta, :faktura, :destinacija, :mesto, :subagent,
+                 :organizator, :poslovnica,
+                 :broj_potvrde, :tip_kartice, :broj_kartice, :broj_odobrenja)
+            RETURNING kljuc
+        """), {
+            "id": ugovor_id,
+            "danas": danas_unosa,
+            "ime": v["ime"],
+            "adresa": v["adresa"],
+            "nacin": v["nacin"],
+            "din": din,
+            "evro": 0,
+            "uevro": uevro,
+            "svrha": v["svrha"],
+            "obradio": obradio,
+            "vrsta": "UPLATA",
+            "faktura": broj_ugovora,
+            "destinacija": arow.destinacija,
+            "mesto": arow.mesto,
+            "subagent": arow.subagent,
+            "organizator": arow.organizator,
+            "poslovnica": poslovnica,
+            **kartica,
+        }).scalar_one()
+
+        # broj dokumenta = ključ nove uplate kao string (VARCHAR(10) ograničenje)
+        broj_dokumenta = str(new_kljuc)
+        if len(broj_dokumenta) > 10:
+            raise HTTPException(
+                status_code=500,
+                detail="Broj uplate premašuje dozvoljenih 10 znakova",
+            )
+        conn.execute(text("UPDATE uplate SET broj = :b WHERE kljuc = :k"),
+                     {"b": broj_dokumenta, "k": new_kljuc})
+        zabelezi(conn, arow.kljuc, OBLAST_UPLATA, "uplata_dodata", user_id, obradio, [
+            {"polje": "Uplata (broj)", "stara": None, "nova": broj_dokumenta},
+            {"polje": "Platilac", "stara": None, "nova": v["ime"]},
+            {"polje": "Iznos (DIN)", "stara": None, "nova": norm_vrednost(din)},
+            {"polje": "Način plaćanja", "stara": None, "nova": v["nacin"]},
+            {"polje": "Svrha", "stara": None, "nova": v["svrha"]},
+        ])
+        return int(new_kljuc)
+
+    @api.post("/uplate", status_code=201)
+    def create_uplata(body: UplataCreate, current_user: dict = Depends(get_current_user)):
+        v = _uplata_validiraj(body)
+        ugovor = v["ugovor"]
         try:
             user_id = int(current_user["sub"])
         except (KeyError, TypeError, ValueError):
@@ -4872,81 +5064,19 @@ def create_app(static_dir: str) -> FastAPI:
             if not arow:
                 raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
 
-            broj_ugovora = (arow.kljuc or "").split("/")[0].strip()
-            try:
-                ugovor_id = int(broj_ugovora)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Neispravan broj ugovora")
-
             obradio = f"{(urow.first_name or '').strip()} {(urow.last_name or '').strip()}".strip()
-            uevro = round(din / float(kurs), 2)
-            # kartica i čekovi se dodaju posle unosa uplate (PUT /uplate/{kljuc}/kartica i /cekovi)
-            kartica = {"broj_potvrde": None, "tip_kartice": None, "broj_kartice": None, "broj_odobrenja": None}
+            new_kljuc = _uplata_upisi(conn, arow, v, danas_unosa, obradio,
+                                      urow.poslovnica_naziv or arow.poslovnica, user_id)
 
-            new_kljuc = conn.execute(text("""
-                INSERT INTO uplate
-                    (id, danas, ime, adresa, nacin, din, evro, uevro, svrha,
-                     obradio, vrsta, faktura, destinacija, mesto, subagent,
-                     organizator, poslovnica,
-                     broj_potvrde, tip_kartice, broj_kartice, broj_odobrenja)
-                VALUES
-                    (:id, :danas, :ime, :adresa, :nacin, :din, :evro, :uevro, :svrha,
-                     :obradio, :vrsta, :faktura, :destinacija, :mesto, :subagent,
-                     :organizator, :poslovnica,
-                     :broj_potvrde, :tip_kartice, :broj_kartice, :broj_odobrenja)
-                RETURNING kljuc
-            """), {
-                "id": ugovor_id,
-                "danas": danas_unosa,
-                "ime": ime,
-                "adresa": adresa,
-                "nacin": nacin,
-                "din": din,
-                "evro": 0,
-                "uevro": uevro,
-                "svrha": svrha,
-                "obradio": obradio,
-                "vrsta": "UPLATA",
-                "faktura": broj_ugovora,
-                "destinacija": arow.destinacija,
-                "mesto": arow.mesto,
-                "subagent": arow.subagent,
-                "organizator": arow.organizator,
-                "poslovnica": urow.poslovnica_naziv or arow.poslovnica,
-                **kartica,
-            }).scalar_one()
+        return {"kljuc": new_kljuc, "message": "Uplata je uspešno uneta"}
 
-            # broj dokumenta = ključ nove uplate kao string (VARCHAR(10) ograničenje)
-            broj_dokumenta = str(new_kljuc)
-            if len(broj_dokumenta) > 10:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Broj uplate premašuje dozvoljenih 10 znakova",
-                )
-            conn.execute(text("UPDATE uplate SET broj = :b WHERE kljuc = :k"),
-                         {"b": broj_dokumenta, "k": new_kljuc})
-            zabelezi(conn, arow.kljuc, OBLAST_UPLATA, "uplata_dodata", user_id, obradio, [
-                {"polje": "Uplata (broj)", "stara": None, "nova": broj_dokumenta},
-                {"polje": "Platilac", "stara": None, "nova": ime},
-                {"polje": "Iznos (DIN)", "stara": None, "nova": norm_vrednost(din)},
-                {"polje": "Način plaćanja", "stara": None, "nova": nacin},
-                {"polje": "Svrha", "stara": None, "nova": svrha},
-            ])
-
-        return {"kljuc": int(new_kljuc), "message": "Uplata je uspešno uneta"}
-
-    @api.post("/uplate/{kljuc}/fiskal")
-    def uplata_fiskal(kljuc: int, current_user: dict = Depends(get_current_user)):
-        """Fiskalizacija već sačuvane uplate. Uspešno poslata uplata se ne šalje ponovo."""
+    def _fiskal_uplate(kljuc: int, ucitaj_korisnika) -> dict:
+        """Fiskalizacija sačuvane uplate. ucitaj_korisnika(conn) -> dict(username, first_name, last_name,
+        poslovnica_naziv) ili None (401). Uspešno poslata uplata se ne šalje ponovo."""
         import httpx
         import time
         from fiskal import (FISKAL_INVOICE_PAUSA_SEC, build_fiskal_params, dohvati_invoice, invoice_odbijen, je_uspeh,
                             parsiraj_invoice, posalji_fiskal)
-
-        try:
-            user_id = int(current_user["sub"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
 
         with engine.connect() as conn:
             u = conn.execute(text("SELECT * FROM uplate WHERE kljuc = :k"), {"k": kljuc}).mappings().first()
@@ -4954,10 +5084,7 @@ def create_app(static_dir: str) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Uplata nije pronađena")
             if u["fiskal_poslato"]:
                 raise HTTPException(status_code=409, detail="Uplata je već fiskalizovana")
-            urow = conn.execute(text(
-                "SELECT u.username, u.first_name, u.last_name, p.naziv AS poslovnica_naziv FROM users u "
-                "LEFT JOIN poslovnice p ON p.id = u.poslovnica_id WHERE u.id = :id"
-            ), {"id": user_id}).mappings().first()
+            urow = ucitaj_korisnika(conn)
             if not urow:
                 raise HTTPException(status_code=401, detail="Neautorizovan pristup")
             ag = conn.execute(text(
@@ -5036,6 +5163,30 @@ def create_app(static_dir: str) -> FastAPI:
             "invoice_http_status": invoice_status or None,
             "invoice_odgovor": invoice_tekst,
         }
+
+    @api.post("/uplate/{kljuc}/fiskal")
+    def uplata_fiskal(kljuc: int, current_user: dict = Depends(get_current_user)):
+        """Fiskalizacija već sačuvane uplate. Uspešno poslata uplata se ne šalje ponovo."""
+        try:
+            user_id = int(current_user["sub"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Neautorizovan pristup")
+
+        def _korisnik(conn):
+            return conn.execute(text(
+                "SELECT u.username, u.first_name, u.last_name, p.naziv AS poslovnica_naziv FROM users u "
+                "LEFT JOIN poslovnice p ON p.id = u.poslovnica_id WHERE u.id = :id"
+            ), {"id": user_id}).mappings().first()
+
+        return _fiskal_uplate(kljuc, _korisnik)
+
+    @api.post("/sync/prodaja/uplate/{kljuc}/fiskal")
+    def sync_fiskal_uplate(kljuc: int, request: Request):
+        """Fiskalizacija uplate sopstvenog ugovora; kasir je naziv subagenta."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return _fiskal_uplate(kljuc, lambda conn: {"username": naziv, "first_name": naziv,
+                                                   "last_name": "", "poslovnica_naziv": None})
 
     def _avans_priprema(kljuc: int) -> dict:
         """Čita uplatu, agenciju, subagenta i ugovor i računa iznose. Ne upisuje i ne šalje ništa."""
@@ -5144,8 +5295,14 @@ def create_app(static_dir: str) -> FastAPI:
         return {"faktura": faktura, "xml": _avans_xml(p, faktura),
                 "url": f"{SEF_URL}?requestId={faktura}&sendToCir=No"}
 
-    @api.post("/uplate/{kljuc}/avans-sef")
-    def uplata_avans_sef(kljuc: int, current_user: dict = Depends(get_current_user)):
+    @api.get("/sync/prodaja/uplate/{kljuc}/avans-sef/pregled")
+    def sync_avans_sef_pregled(kljuc: int, request: Request):
+        """Pregled XML-a avansa za uplatu sopstvenog ugovora (samo čitanje)."""
+        naziv = sync_subagent_iz_zahteva(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return uplata_avans_sef_pregled(kljuc)
+
+    def _avans_sef_slanje(kljuc: int) -> dict:
         """Slanje avansa na SEF za uplatu. Broj avansa `n/YY` (YY = godina datumod aranžmana) se
         dodeljuje u transakciji i ostaje isti pri ponovnom pokušaju; jedinstveni indeks sprečava duplikate."""
         import httpx
@@ -5216,8 +5373,26 @@ def create_app(static_dir: str) -> FastAPI:
                 "poruka": f"Avans {faktura} je uspešno poslat na SEF", "odgovor": tekst,
                 "http_status": status_http}
 
-    @api.get("/uplate/{kljuc}/priznanica")
-    def uplata_priznanica(kljuc: int, _: dict = Depends(get_current_user)):
+    @api.post("/uplate/{kljuc}/avans-sef")
+    def uplata_avans_sef(kljuc: int, current_user: dict = Depends(get_current_user)):
+        """Slanje avansa na SEF za uplatu (vidi _avans_sef_slanje)."""
+        return _avans_sef_slanje(kljuc)
+
+    @api.post("/sync/prodaja/uplate/{kljuc}/avans-sef")
+    def sync_avans_sef_uplate(kljuc: int, request: Request):
+        """Slanje avansa na SEF za uplatu sopstvenog ugovora."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return _avans_sef_slanje(kljuc)
+
+    @api.get("/sync/prodaja/uplate/{kljuc}/avans-sef/pregled")
+    def sync_avans_sef_pregled_uplate(kljuc: int, request: Request):
+        """Pregled XML-a avansa za uplatu sopstvenog ugovora — samo čitanje."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return uplata_avans_sef_pregled(kljuc)
+
+    def _priznanica_pdf(kljuc: int) -> bytes:
         """PDF priznanica o uplati — dva primerka na A4, isprekidana linija + makaze."""
         from priznanica_pdf import build_priznanica_pdf
 
@@ -5285,12 +5460,27 @@ def create_app(static_dir: str) -> FastAPI:
             logo_data_url=logo_data_url,
             preostalo_eur=preostalo_eur,
         )
+        return pdf_bytes
+
+    def _priznanica_odgovor(kljuc: int) -> Response:
         fname = f"Priznanica_{kljuc}.pdf"
         return Response(
-            content=pdf_bytes,
+            content=_priznanica_pdf(kljuc),
             media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{fname}"'},
         )
+
+    @api.get("/uplate/{kljuc}/priznanica")
+    def uplata_priznanica(kljuc: int, _: dict = Depends(get_current_user)):
+        """PDF priznanica o uplati — dva primerka na A4, isprekidana linija + makaze."""
+        return _priznanica_odgovor(kljuc)
+
+    @api.get("/sync/prodaja/uplate/{kljuc}/priznanica")
+    def sync_prodaja_priznanica(kljuc: int, request: Request):
+        """PDF priznanica za uplatu sopstvenog ugovora (isto kao /uplate/{kljuc}/priznanica)."""
+        naziv = sync_subagent_iz_zahteva(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        return _priznanica_odgovor(kljuc)
 
     # ── Ugovor: promena smeštaja (soba + termin) ────────────────────────────
     @api.patch("/ugovori/{kljuc:path}/smestaj")
@@ -5741,11 +5931,8 @@ def create_app(static_dir: str) -> FastAPI:
                 "INSERT INTO dodatne (ugovor, usluga, eur, din) VALUES (:u, :usluga, :eur, :din)"
             ), {"u": ugovor, **vals})
 
-    @api.post("/rezervacije", status_code=201)
-    def kreiraj_rezervaciju(body: RezervacijaIn, current_user: dict = Depends(get_current_user)):
-        """Sačuvaj — novi ugovor. Broj = MAX(broj) unutar godine iz Datuma od + 1,
-        pod advisory lock-om + UNIQUE(kljuc) kao poslednjom odbranom od duplikata."""
-        urow = _rez_user_row(current_user)
+    def _sacuvaj_novu_rezervaciju(body: RezervacijaIn, urow, uid, uime) -> str:
+        """Dodela broja i upis novog aranžmana (zajedničko za korisnika i App2 subagenta)."""
         datum_od_d = _rez_datum(body.boravak.datumOd, "Datum od")
         if datum_od_d is None:
             raise HTTPException(status_code=400, detail="Datum od je obavezan")
@@ -5773,24 +5960,49 @@ def create_app(static_dir: str) -> FastAPI:
                     obracun_iz_rezervacije(conn, aid, **_obracun_argumenti(body, vals))
                     if body.transferi:
                         rez_transferi_upisi(conn, kljuc, body.transferi)
-                    uid, uime = log_user(conn, current_user)
                     for oblast, promene in podeli_po_oblastima({}, vals).items():
                         zabelezi(conn, kljuc, oblast, "kreirana", uid, uime, promene)
                     zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "kreirana", uid, uime,
                              diff_saputnike([], rez_saputnici_snimak(body.saputnici, conn)))
-                return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
+                return kljuc
             except IntegrityError:
                 # UNIQUE(kljuc) — import je ubacio isti broj u međuvremenu;
                 # preskoči na sledeći slobodan broj
                 continue
         raise HTTPException(status_code=500, detail="Dodela broja ugovora nije uspela — pokušajte ponovo")
 
-    @api.put("/rezervacije/{kljuc:path}")
-    def izmeni_rezervaciju(kljuc: str, body: RezervacijaIn,
-                           current_user: dict = Depends(get_current_user)):
-        """Izmeni — snimanje izmena postojećeg ugovora (broj se ne menja)."""
-        kljuc = kljuc.strip().strip("/")
+    @api.post("/rezervacije", status_code=201)
+    def kreiraj_rezervaciju(body: RezervacijaIn, current_user: dict = Depends(get_current_user)):
+        """Sačuvaj — novi ugovor. Broj = MAX(broj) unutar godine iz Datuma od + 1,
+        pod advisory lock-om + UNIQUE(kljuc) kao poslednjom odbranom od duplikata."""
         urow = _rez_user_row(current_user)
+        with engine.connect() as conn:
+            uid, uime = log_user(conn, current_user)
+        kljuc = _sacuvaj_novu_rezervaciju(body, urow, uid, uime)
+        sinhronizuj_posle_izmene(engine, kljuc)
+        return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
+
+    @api.post("/sub_rezervacije", status_code=201)
+    def sub_kreiraj_rezervaciju(body: RezervacijaIn, request: Request):
+        """Sačuvaj — novi ugovor iz App2 subagenta (X-Client-Id / X-Client-Secret).
+        Subagent se izvodi iz API klijenta na serveru; polje `subagent` iz tela se ignoriše."""
+        klijent = autentifikuj_subagenta(engine, request, SCOPE_REZERVACIJA)
+        with engine.connect() as conn:
+            naziv = conn.execute(text("SELECT naziv FROM subagenti WHERE id = :i"),
+                                 {"i": klijent["subagent_id"]}).scalar()
+        if not naziv:
+            raise HTTPException(status_code=403, detail="Subagent nije pronađen")
+        body = body.model_copy(update={"subagent": naziv})
+        urow = SimpleNamespace(id=None, first_name=naziv, last_name="(subagent)",
+                               status="aktivan", poslovnica_naziv=None)
+        kljuc = _sacuvaj_novu_rezervaciju(body, urow, None, f"{naziv} (subagent)")
+        sinhronizuj_posle_izmene(engine, kljuc)
+        return {"kljuc": kljuc, "message": "Rezervacija je sačuvana"}
+
+    def _izmeni_rezervaciju(kljuc: str, body: RezervacijaIn, urow, identitet) -> str:
+        """Zajedničko snimanje izmena ugovora (korisnik i App2 subagent).
+        identitet(conn) -> (uid, uime) za evidenciju promena."""
+        kljuc = kljuc.strip().strip("/")
         with engine.begin() as conn:
             arow = conn.execute(text("SELECT id FROM aranzman WHERE kljuc = :k"),
                                 {"k": kljuc}).fetchone()
@@ -5816,11 +6028,21 @@ def create_app(static_dir: str) -> FastAPI:
             obracun_iz_rezervacije(conn, arow.id, **_obracun_argumenti(body, vals))
             if body.transferi is not None:
                 rez_transferi_upisi(conn, kljuc, body.transferi)
-            uid, uime = log_user(conn, current_user)
+            uid, uime = identitet(conn)
             for oblast, promene in podeli_po_oblastima(stari, vals).items():
                 zabelezi(conn, kljuc, oblast, "izmena", uid, uime, promene)
             zabelezi(conn, kljuc, OBLAST_SAPUTNICI, "izmena", uid, uime,
                      diff_saputnike(stari_sap, rez_saputnici_snimak(body.saputnici, conn)))
+        sinhronizuj_posle_izmene(engine, kljuc)
+        return kljuc
+
+    @api.put("/rezervacije/{kljuc:path}")
+    def izmeni_rezervaciju(kljuc: str, body: RezervacijaIn,
+                           current_user: dict = Depends(get_current_user)):
+        """Izmeni — snimanje izmena postojećeg ugovora (broj se ne menja)."""
+        urow = _rez_user_row(current_user)
+        kljuc = _izmeni_rezervaciju(kljuc, body, urow,
+                                    lambda conn: log_user(conn, current_user))
         return {"ok": True, "kljuc": kljuc, "message": "Izmene su sačuvane"}
 
     @api.get("/keptp/ugovor/{kljuc:path}")
@@ -6437,6 +6659,889 @@ def create_app(static_dir: str) -> FastAPI:
             "page_size": page_size,
         }
 
+    @api.get("/sync/ugovori")
+    def sync_list_ugovori(request: Request):
+        """Lista ugovora ulogovanog subagenta za App2 (X-Sync-Key + client_id).
+        Ista logika kao /ugovori, ali uvek ograničena na aranzman.subagent = naziv subagenta."""
+        naziv = sync_subagent_iz_zahteva(request)
+        q = dict(request.query_params)
+        search = q.get("search", "").strip()
+        sort = q.get("sort", "danas")
+        direction = q.get("dir", "desc")
+        try:
+            page = max(int(q.get("page", "1")), 1)
+        except ValueError:
+            page = 1
+        try:
+            page_size = min(max(int(q.get("page_size", "50")), 1), 200)
+        except ValueError:
+            page_size = 50
+        if sort not in UGOVORI_SORT:
+            sort = "kljuc"
+        if direction not in ("asc", "desc"):
+            direction = "asc"
+
+        # Obavezan scope: subagent vidi samo svoje ugovore.
+        conds = ["a.subagent = :sa_naziv"]
+        bind = {"sa_naziv": naziv}
+        if search:
+            like = f"%{search}%"
+            cols = UGOVORI_SEARCH_COLS + list(UGOVORI_SEARCH_EXTRA)
+            search_in = (q.get("search_in") or "").strip()
+            if search_in:
+                dozvoljene = set(UGOVORI_SEARCH_COLS) | set(UGOVORI_SEARCH_EXTRA)
+                req = [c.strip() for c in search_in.split(",") if c.strip() in dozvoljene]
+                if req:
+                    cols = req
+            ors = " OR ".join(
+                f"{UGOVORI_SEARCH_EXTRA[c]} ILIKE :search" if c in UGOVORI_SEARCH_EXTRA
+                else f"COALESCE({c}::text, '') ILIKE :search"
+                for c in cols
+            )
+            conds.append(f"({ors})")
+            bind["search"] = like
+        for fkey, fexpr in UGOVORI_FILTER_COLS.items():
+            fval = (q.get(f"f_{fkey}") or "").strip()
+            if len(fval) >= 3:
+                conds.append(f"{fexpr} ILIKE :f_{fkey}")
+                bind[f"f_{fkey}"] = f"%{fval}%"
+
+        tip_expr = "UPPER(TRIM(COALESCE(a.tiprezervacije, '')))"
+        tip_grupa_expr = (
+            f"CASE WHEN {tip_expr} = 'PREDREZERVACIJA' THEN 'predrezervacija' "
+            f"WHEN {tip_expr} = 'STORNO' THEN 'storno' ELSE 'rezervacije' END"
+        )
+        where_bez_tipa = "WHERE " + " AND ".join(conds)
+        tip = (q.get("tip") or "").strip().lower()
+        if tip in ("predrezervacija", "storno", "rezervacije"):
+            conds.append(f"({tip_grupa_expr}) = :tip_grupa")
+            bind["tip_grupa"] = tip
+        where = "WHERE " + " AND ".join(conds)
+
+        with engine.connect() as conn:
+            bind_bez_tipa = {k: v for k, v in bind.items() if k != "tip_grupa"}
+            # Jedan upit za sve tri grupe umesto GROUP BY po grupi.
+            grupe = conn.execute(text(f"""
+                SELECT COUNT(*) FILTER (WHERE ({tip_grupa_expr}) = 'predrezervacija') AS predrezervacija,
+                       COUNT(*) FILTER (WHERE ({tip_grupa_expr}) = 'storno') AS storno,
+                       COUNT(*) FILTER (WHERE ({tip_grupa_expr}) = 'rezervacije') AS rezervacije
+                FROM aranzman a {where_bez_tipa}
+            """), bind_bez_tipa).mappings().one()
+            po_tipu = {k: int(grupe[k] or 0) for k in ("predrezervacija", "storno", "rezervacije")}
+            # COUNT(*) OVER() i dodatni popusti idu u isti upit kao redovi (manje round-tripova).
+            rows = conn.execute(text(f"""
+                SELECT kljuc,
+                       to_char(danas, 'DD.MM.YYYY') AS danas_fmt,
+                       putnik, mesto, naziv, subagent, apartman, soba,
+                       (SELECT b.tip FROM sobe b
+                         WHERE b.veza_id_smestaj = a.smestaj_id
+                           AND TRIM(b.broj_sobe) = TRIM(a.soba)
+                         LIMIT 1) AS tip_sobe,
+                       (SELECT COALESCE(json_agg(saputnici.sk), '[]'::json) FROM (
+                           SELECT saputnik AS sk FROM aranzman_dopuna ad
+                           WHERE ad.aranzman_id = a.id
+                             AND COALESCE(TRIM(ad.saputnik), '') <> ''
+                           ORDER BY ad.id
+                       ) saputnici) AS saputnici_list,
+                       (SELECT COALESCE(json_agg(json_build_object(
+                                   'id', dp.id, 'naziv', dp.naziv, 'eur', dp.eur,
+                                   'rsd', dp.rsd, 'procenat', dp.procenat) ORDER BY dp.id), '[]'::json)
+                          FROM dodatni_popusti dp WHERE dp.aranzman_id = a.id) AS dodatni_list,
+                       to_char(datumod, 'DD.MM.YYYY') AS datumod_fmt,
+                       to_char(datumdo, 'DD.MM.YYYY') AS datumdo_fmt,
+                       {', '.join(UGOVORI_LIST_COLS)},
+                       COUNT(*) OVER() AS _ukupno
+                FROM aranzman a {where}
+                ORDER BY {sort} {direction} NULLS LAST, a.id {direction}
+                LIMIT :limit OFFSET :offset
+            """), {**bind, "limit": page_size, "offset": (page - 1) * page_size}).fetchall()
+            if rows:
+                total = int(rows[0]._ukupno or 0)
+            elif page > 1:
+                # Strana van opsega: window COUNT nema red da ga nosi.
+                total = int(conn.execute(
+                    text(f"SELECT COUNT(*) FROM aranzman a {where}"), bind
+                ).scalar() or 0)
+            else:
+                total = 0
+
+        kurs = get_eur_middle()
+        dodatni_map = {
+            str(r.kljuc or "").strip().strip("/"): (r.dodatni_list or []) for r in rows
+        } if kurs else {}
+
+        def row_putnici(r) -> list:
+            ps = [str(r.putnik or "").strip()]
+            ps += [str(s or "").strip() for s in (r.saputnici_list or [])]
+            return [p for p in ps if p]
+
+        def row_ukupna(r) -> float | None:
+            if not kurs:
+                return None
+            kljuc = str(r.kljuc or "").strip().strip("/")
+            calc = calc_ugovor_values(dict(r._mapping), dodatni_map.get(kljuc, []))
+            return round((calc["naplata"] + calc["provizija"]) * kurs, 2)
+
+        return {
+            "rows": [{
+                "kljuc": r.kljuc,
+                "danas": r.danas_fmt,
+                "putnik": r.putnik,
+                "putnici": row_putnici(r),
+                "mesto": r.mesto,
+                "naziv": r.naziv,
+                "struktura": (r.apartman or "").strip() or (r.tip_sobe or "").strip() or None,
+                "soba": r.soba,
+                "subagent": r.subagent,
+                "datumod": r.datumod_fmt,
+                "datumdo": r.datumdo_fmt,
+                "ukupna_vrednost": row_ukupna(r),
+            } for r in rows],
+            "total": total,
+            "po_tipu": po_tipu,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def _sync_proveri_vlasnistvo(kljuc: str, naziv: str) -> str:
+        """404 ako ugovor ne postoji ili ne pripada subagentu. Vraća očišćen ključ."""
+        kljuc_clean = kljuc.strip().strip("/")
+        with engine.connect() as conn:
+            ok = conn.execute(text(
+                "SELECT 1 FROM aranzman WHERE kljuc = :k AND subagent = :sa"
+            ), {"k": kljuc_clean, "sa": naziv}).scalar()
+        if not ok:
+            raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+        return kljuc_clean
+
+    # Uplate i PDF moraju biti registrovani pre detalja ({kljuc:path} bi ih presreo).
+    @api.get("/sync/ugovori/{kljuc:path}/uplate")
+    def sync_ugovor_uplate(kljuc: str, request: Request):
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        out = _uplate_za_ugovor(k)
+        return {"rows": out, "total": len(out)}
+
+    @api.get("/sync/ugovori/{kljuc:path}/uplate/pdf")
+    def sync_ugovor_uplate_pdf(kljuc: str, request: Request):
+        """PDF 'Pregled uplata' za ugovor subagenta. Isti šablon kao /ugovori/{kljuc}/uplate/pdf."""
+        from uplate_pdf import build_uplate_pdf
+
+        naziv = sync_subagent_iz_zahteva(request)
+        kljuc_clean = _sync_proveri_vlasnistvo(kljuc, naziv)
+        rows = _uplate_za_ugovor(kljuc_clean)
+        with engine.connect() as conn:
+            arow = conn.execute(text(
+                "SELECT putnik, adresa FROM aranzman WHERE kljuc = :k"
+            ), {"k": kljuc_clean}).fetchone()
+            arow_full = conn.execute(text(
+                "SELECT * FROM aranzman WHERE kljuc = :k"
+            ), {"k": kljuc_clean}).mappings().first()
+            logo_row = conn.execute(text(
+                "SELECT slika, slika_mime FROM dokumenti WHERE tip = 'logo'"
+            )).fetchone()
+        vrednost_eur = calc_ugovor_values(dict(arow_full), dodatni_za_ugovor(arow_full["kljuc"]))["naplata"] if arow_full else None
+        logo_data_url = None
+        if logo_row and logo_row.slika:
+            mime = logo_row.slika_mime or "image/png"
+            logo_data_url = f"data:{mime};base64,{logo_row.slika}"
+        pdf_bytes = build_uplate_pdf(
+            putnik=arow.putnik if arow else None,
+            adresa=arow.adresa if arow else None,
+            ugovor=kljuc_clean,
+            rows=rows,
+            logo_data_url=logo_data_url,
+            vrednost_eur=vrednost_eur,
+        )
+        fname = f"Pregled_uplata_{kljuc_clean.replace('/', '-')}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+
+    @api.get("/sync/ugovori/{kljuc:path}/pdf")
+    def sync_download_ugovor_pdf(kljuc: str, request: Request):
+        """PDF ugovora za subagenta. Ista logika kao /ugovori/{kljuc}/pdf, bez korisničke
+        provere (vlasništvo proverava _sync_proveri_vlasnistvo)."""
+        from decimal import Decimal, ROUND_HALF_UP
+        from ugovor_pdf import generate_ugovor_pdf, ukupno_ugovora
+        naziv = sync_subagent_iz_zahteva(request)
+        ugovor = _sync_proveri_vlasnistvo(kljuc, naziv)
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT * FROM aranzman WHERE kljuc = :k"),
+                               {"k": ugovor}).mappings().one()
+            data = dict(row)
+            data["email"] = data.get("refno") or ""
+            data["putnici_detalji"] = [dict(p) for p in conn.execute(text(
+                "SELECT * FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id"
+            ), {"i": data["id"]}).mappings()]
+            data["dodatne"] = [dict(p) for p in conn.execute(text(
+                "SELECT stavka_id, usluga, eur, din FROM dodatne WHERE ugovor = :u ORDER BY stavka_id"
+            ), {"u": ugovor}).mappings()]
+            kep = conn.execute(text(
+                "SELECT broj_keptp FROM keptp WHERE broj_ugovora = :k"
+            ), {"k": ugovor}).first()
+            if kep:
+                data["keptp"] = kep.broj_keptp
+            agency = conn.execute(text("SELECT * FROM agencija WHERE id = 1")).mappings().first()
+            if data.get("smestaj_id"):
+                sm = conn.execute(text(
+                    "SELECT s.napomena, m.cis FROM smestaj s LEFT JOIN mesto m ON m.id = s.mesto WHERE s.id = :s"
+                ), {"s": data["smestaj_id"]}).mappings().first()
+                if sm:
+                    data["smestaj_napomena"] = sm["napomena"]
+                    data["mesto_cis"] = sm["cis"]
+                soba = conn.execute(text(
+                    "SELECT opis, opis_dodatno, tip, opis_ugovor FROM sobe WHERE veza_id_smestaj = :s AND TRIM(broj_sobe) = TRIM(:b) ORDER BY id LIMIT 1"
+                ), {"s": data["smestaj_id"], "b": data.get("soba") or ""}).mappings().first()
+                if soba:
+                    data["soba_opis"] = soba["opis"]
+                    data["soba_opis_dodatno"] = soba["opis_dodatno"]
+                    data["soba_tip"] = soba["tip"]
+                    data["soba_opis_ugovor"] = soba["opis_ugovor"]
+            if (data.get("subagent") or "").strip():
+                sub = conn.execute(text(
+                    "SELECT naziv, pib, matbroj, adresa, mesto, email, tel FROM subagenti "
+                    "WHERE naziv = :n AND naziv <> '' ORDER BY id LIMIT 1"
+                ), {"n": data["subagent"]}).mappings().first()
+                data["subagent_info"] = dict(sub) if sub else None
+            data["ulogovan"] = str(data.get("obradio") or "").strip()
+        if not data.get("danas"):
+            raise HTTPException(status_code=422, detail="Ugovor nema datum izdavanja")
+        data["uplaceno_eur"] = sum((Decimal(str(u["suma_eur"])) for u in _uplate_za_ugovor(ugovor)
+                                    if u.get("suma_eur") is not None), Decimal(0))
+        datum = data["danas"].date() if hasattr(data["danas"], "date") else data["danas"]
+        kurs, kurs_datum = get_eur_middle_za_datum(datum.isoformat())
+        if not kurs or not math.isfinite(kurs) or kurs <= 0:
+            raise HTTPException(status_code=503, detail="Kurs NBS za datum ugovora nije dostupan. Pokušajte ponovo.")
+        calc = calc_ugovor_values(data, dodatni_za_ugovor(data.get("kljuc")))
+        ukupno, ukupno_din_dodatne = ukupno_ugovora(data, calc, data.get("dodatne"))
+        ukupno_rsd = (Decimal(str(ukupno)) * Decimal(str(kurs))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) + Decimal(str(ukupno_din_dodatne))
+        data.update(obracun=calc, ukupno_eur=ukupno,
+                    ukupno_rsd=ukupno_rsd,
+                    kurs=kurs, kurs_datum=kurs_datum, datum_izdavanja=datum)
+        izdavalac = dict(agency) if agency else {}
+        izdavalac["racun"] = next((izdavalac.get(f"tekuci_racun{i}") for i in range(1, 5)
+                                  if izdavalac.get(f"tekuci_racun{i}")), "")
+        izdavalac["banka"] = next((izdavalac.get(f"banka{i}") for i in range(1, 5)
+                                  if izdavalac.get(f"tekuci_racun{i}")), "")
+        izdavalac["banke"] = _banke_izdavaoca(izdavalac)
+        izdavalac["logo_data_url"] = _logo_data_url_iz_baze()
+        pdf = generate_ugovor_pdf(data, izdavalac)
+        safe_key = re.sub(r"[^0-9A-Za-z_-]", "-", ugovor)
+        return Response(content=pdf, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="Ugovor_{safe_key}.pdf"'})
+
+    @api.get("/sync/ugovori/{kljuc:path}/cis-link")
+    def sync_ugovor_cis_link(kljuc: str, request: Request, cena_eur: str | None = Query(None)):
+        """CIS link za ugovor subagenta. Vlasništvo se proverava pre poziva postojeće logike."""
+        naziv = sync_subagent_iz_zahteva(request)
+        kljuc_clean = _sync_proveri_vlasnistvo(kljuc, naziv)
+        return ugovor_cis_link(kljuc_clean, cena_eur=cena_eur, _=None)
+
+    @api.get("/sync/ugovori/{kljuc:path}")
+    def sync_ugovor_detail(kljuc: str, request: Request):
+        """Detalj ugovora ulogovanog subagenta za App2 (X-Sync-Key + client_id).
+        Ugovor koji ne pripada subagentu vraća 404 (isto kao da ne postoji)."""
+        naziv = sync_subagent_iz_zahteva(request)
+        kljuc = kljuc.strip().strip("/")
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT a.*, s.naziv AS subagent_naziv, s.provizija AS subagent_provizija,
+                       s.racun AS subagent_racun, s.tel AS subagent_tel,
+                       s.kontakt AS subagent_kontakt
+                FROM aranzman a
+                LEFT JOIN subagenti s ON s.naziv = a.subagent AND s.naziv <> ''
+                WHERE a.kljuc = :kljuc AND a.subagent = :sa
+            """), {"kljuc": kljuc, "sa": naziv}).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            dopuni = conn.execute(text("""
+                SELECT saputnik, uzrast, prevozow, prevozrt, prevozsp, viza, ulazak, mesto_izlaska, smer,
+                       adresa, grad, email, telefon, rodjen, pasos,
+                       mesto_sedenja, placeno_prevoz, zelja_prevoz, datum_ow, destinacija_ow,
+                       datum_polaska, destinacija_polaska, datum_povratka, destinacija_povratka,
+                       destinacija_ow_id, destinacija_polaska_id, destinacija_povratka_id,
+                       dodatno_sediste
+                FROM aranzman_dopuna WHERE aranzman_id = :i ORDER BY id
+            """), {"i": row.id}).fetchall()
+            dodatne = conn.execute(text("""
+                SELECT stavka_id, usluga, eur, din, dodatna_usluga_id FROM dodatne WHERE ugovor = :k
+                ORDER BY usluga NULLS LAST, eur NULLS LAST, din NULLS LAST
+            """), {"k": kljuc}).mappings().all()
+            dodatni_popusti = conn.execute(text("""
+                SELECT id, naziv, eur, rsd, procenat FROM dodatni_popusti WHERE aranzman_id = :i ORDER BY id
+            """), {"i": row.id}).mappings().all()
+            obr = conn.execute(text(
+                "SELECT soba_cenovnik, struktura, prevoz FROM obracun_po_aranzmanu WHERE aranzman_id = :i"
+            ), {"i": row.id}).fetchone()
+        d = dict(row._mapping)
+        dodatni_lista = dodatni_popusti_iznosi(d, [dict(p) for p in dodatni_popusti])
+        subagent = None
+        if d.get("subagent_naziv"):
+            subagent = {
+                "naziv": d.get("subagent_naziv"),
+                "provizija": d.get("subagent_provizija"),
+                "racun": d.get("subagent_racun"),
+                "tel": d.get("subagent_tel"),
+                "kontakt": d.get("subagent_kontakt"),
+            }
+        kurs = get_eur_middle()
+        calc = calc_ugovor_values(d, dodatni_lista)
+        ukupna = round((calc["naplata"] + calc["provizija"]) * kurs, 2) if kurs else None
+        fmt_date = lambda v: v.strftime("%d.%m.%Y") if v else None
+        putnici_detalji = [{
+            "saputnik": (p.saputnik or "").strip(),
+            "rodjen": fmt_date(p.rodjen),
+            "pasos": p.pasos,
+            "uzrast": (p.uzrast or "").strip() or None,
+            "dodatno_sediste": bool(p.dodatno_sediste),
+            "prevozow": p.prevozow,
+            "prevozrt": p.prevozrt,
+            "prevozsp": p.prevozsp,
+            "ulazak": p.ulazak,
+            "mesto_izlaska": p.mesto_izlaska,
+            "smer": p.smer,
+            "adresa": (p.adresa or "").strip() or None,
+            "grad": (p.grad or "").strip() or None,
+            "email": (p.email or "").strip() or None,
+            "telefon": (p.telefon or "").strip() or None,
+            "mesto_sedenja": p.mesto_sedenja,
+            "placeno_prevoz": bool(p.placeno_prevoz),
+            "zelja_prevoz": bool(p.zelja_prevoz),
+            "datum_ow": p.datum_ow.isoformat() if p.datum_ow else None,
+            "destinacija_ow": p.destinacija_ow,
+            "datum_polaska": p.datum_polaska.isoformat() if p.datum_polaska else None,
+            "destinacija_polaska": p.destinacija_polaska,
+            "datum_povratka": p.datum_povratka.isoformat() if p.datum_povratka else None,
+            "destinacija_povratka": p.destinacija_povratka,
+            "destinacija_ow_id": p.destinacija_ow_id,
+            "destinacija_polaska_id": p.destinacija_polaska_id,
+            "destinacija_povratka_id": p.destinacija_povratka_id,
+        } for p in dopuni]
+        putnici = [str(d.get("putnik") or "").strip()]
+        putnici += [p["saputnik"] for p in putnici_detalji if p["saputnik"]]
+        putnici = [p for p in putnici if p]
+        return {
+            "kljuc": d.get("kljuc"),
+            "danas": fmt_date(d.get("danas")),
+            "putnik": d.get("putnik"),
+            "rodjen": fmt_date(d.get("rodjen")),
+            "pasos": d.get("pasos"),
+            "uzrast": d.get("uzrast") or None,
+            "putnici": putnici,
+            "putnici_detalji": putnici_detalji,
+            "dodatne": [dict(stavka) for stavka in dodatne],
+            "dodatni_popusti": dodatni_lista,
+            "smer": d.get("smer"),
+            "tiprezervacije": d.get("tiprezervacije"),
+            "viza": d.get("viza"),
+            "subagent": d.get("subagent") or "",
+            "timelimit": d["timelimit"].strftime("%d.%m.%Y %H:%M") if d.get("timelimit") else None,
+            "adresa": d.get("adresa"),
+            "grad": d.get("grad"),
+            "telefon": d.get("telefon"),
+            "refno": d.get("refno"),
+            "prevozow": d.get("prevozow"),
+            "prevozrt": d.get("prevozrt"),
+            "prevozsp": d.get("prevozsp"),
+            "mesto_sedenja": d.get("mesto_sedenja"),
+            "placeno_prevoz": bool(d.get("placeno_prevoz")),
+            "zelja_prevoz": bool(d.get("zelja_prevoz")),
+            "datum_ow": d["datum_ow"].isoformat() if d.get("datum_ow") else None,
+            "destinacija_ow": d.get("destinacija_ow"),
+            "datum_polaska": d["datum_polaska"].isoformat() if d.get("datum_polaska") else None,
+            "destinacija_polaska": d.get("destinacija_polaska"),
+            "datum_povratka": d["datum_povratka"].isoformat() if d.get("datum_povratka") else None,
+            "destinacija_povratka": d.get("destinacija_povratka"),
+            "destinacija_ow_id": d.get("destinacija_ow_id"),
+            "destinacija_polaska_id": d.get("destinacija_polaska_id"),
+            "destinacija_povratka_id": d.get("destinacija_povratka_id"),
+            "napomena_prevoz": d.get("napomena_prevoz"),
+            "destinacija_prevoz_id": d.get("destinacija_prevoz_id"),
+            "nacin_placanja": d.get("nacin_placanja"),
+            "osiguranje1": d.get("osiguranje1"),
+            "soba": d.get("soba"),
+            "apartman": d.get("apartman"),
+            "opis": d.get("opis"),
+            "gde": d.get("gde"),
+            "obracun": {"soba_cenovnik": obr.soba_cenovnik, "struktura": obr.struktura,
+                        "prevoz": bool(obr.prevoz)} if obr else None,
+            "napomena": d.get("napomena"),
+            "napomena1": d.get("napomena1"),
+            "obradio": d.get("obradio"),
+            "ulazak": d.get("ulazak"),
+            "mesto_izlaska": d.get("mesto_izlaska") or d.get("ulazak"),
+            "cenaaranz": d.get("cenaaranz"),
+            "kolaranz": d.get("kolaranz"),
+            "popustar": d.get("popustar"),
+            "cenaow": d.get("cenaow"),
+            "kolow": d.get("kolow"),
+            "cenart": d.get("cenart"),
+            "kolrt": d.get("kolrt"),
+            "popustpr": d.get("popustpr"),
+            "cenadod": d.get("cenadod"),
+            "uplacenod": d.get("uplacenod"),
+            "procenatar": d.get("procenatar"),
+            "mesto": d.get("mesto"),
+            "naziv": d.get("naziv"),
+            "datumod": fmt_date(d.get("datumod")),
+            "datumdo": fmt_date(d.get("datumdo")),
+            "destinacija": d.get("destinacija"),
+            "subagent_info": subagent,
+            "kurs": kurs,
+            "ukupna_vrednost": ukupna,
+            **calc,
+        }
+
+    # ── App2 prodaja: referentne liste za formu (subagent: sub_* rute, isti podaci) ──
+    @api.get("/sync/prodaja/referenca/mesto")
+    def sync_ref_mesto(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_mesto(None)
+
+    @api.get("/sync/prodaja/referenca/smestaj")
+    def sync_ref_smestaj(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_smestaj(None)
+
+    @api.get("/sync/prodaja/referenca/sobe")
+    def sync_ref_sobe(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_sobe(request, None)
+
+    @api.get("/sync/prodaja/referenca/destinacija")
+    def sync_ref_destinacija(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_destinacija(None)
+
+    @api.get("/sync/prodaja/referenca/polazak")
+    def sync_ref_polazak(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return sub_polazak(None)
+
+    @api.get("/sync/prodaja/referenca/kurs")
+    def sync_ref_kurs(request: Request):
+        autentifikuj_subagenta(engine, request)
+        return get_kurs(None)
+
+    # ── App2 prodaja: forma ugovora u RezervacijaIn obliku (port izaberiUgovor + payload) ──
+    def _forma_iz_ugovora(kljuc: str) -> dict:
+        """Ulaz: isti odgovor kao GET /ugovori/{k}. Izlaz: telo za PUT /sync/prodaja/rezervacije/{k}.
+        Logika je prevedena iz RezervacijePage.tsx (izaberiUgovor + payload builder); nazivi
+        referenci se razrešavaju u owner bazi, a nepoznat naziv ostaje kao *Naziv fallback."""
+        d = ugovor_detail(kljuc, None)
+
+        def nz(v) -> str:
+            return (v or "").strip().lower()
+
+        def dmy_iso(v):
+            if not v:
+                return None
+            try:
+                return datetime.strptime(v, "%d.%m.%Y").date().isoformat()
+            except ValueError:
+                return None
+
+        def norm_str(v) -> str:
+            return "".join((v or "").split()).upper()
+
+        def timelimit_iso(v):
+            # "dd.mm.yyyy HH:MM" → "yyyy-mm-ddTHH:00:00" (App1 zadržava samo sat)
+            if not v:
+                return None
+            try:
+                return datetime.strptime(v, "%d.%m.%Y %H:%M").strftime("%Y-%m-%dT%H:00:00")
+            except ValueError:
+                return None
+
+        def pozitivan(v):
+            return float(v) if v and float(v) > 0 else None
+
+        with engine.connect() as conn:
+            mesta = conn.execute(text("SELECT id, naziv, destinacija FROM mesto")).fetchall()
+            smestaji = conn.execute(text("SELECT id, naziv, mesto FROM smestaj")).fetchall()
+            sobe = conn.execute(text("SELECT id, broj_sobe, veza_id_smestaj FROM sobe")).fetchall()
+            destinacije = conn.execute(text("SELECT id, naziv FROM destinacija")).fetchall()
+            dprevoz = conn.execute(text("SELECT id, id_destinacije, naziv FROM destinacija_prevoz")).fetchall()
+
+        def dp_id(id_, naziv):
+            # destinacija prevoza iz ugovora → id; legacy red bez id-ja: traži po nazivu
+            if id_ is not None:
+                return id_
+            n = (naziv or "").strip()
+            nadjen = next((x for x in dprevoz if x.naziv.strip() == n), None) if n else None
+            return nadjen.id if nadjen else None
+
+        # ── boravak: nazivi → ID-jevi (ista pravila kao izaberiUgovor)
+        mesto_id = next((m.id for m in mesta if nz(m.naziv) == nz(d.get("mesto"))), None)
+        kandidati = [s for s in smestaji if nz(s.naziv) == nz(d.get("naziv"))]
+        smestaj_id = None
+        if kandidati:
+            def soba_postoji(s):
+                return any(r.veza_id_smestaj == s.id and nz(r.broj_sobe) == nz(d.get("soba")) for r in sobe)
+            izbor = (next((s for s in kandidati if (not mesto_id or s.mesto == mesto_id) and soba_postoji(s)), None)
+                     or next((s for s in kandidati if not mesto_id or s.mesto == mesto_id), None)
+                     or kandidati[0])
+            smestaj_id = izbor.id
+        soba_id = None
+        if smestaj_id:
+            soba_id = next((r.id for r in sobe if r.veza_id_smestaj == smestaj_id
+                            and nz(r.broj_sobe) == nz(d.get("soba"))), None)
+
+        # ── nosilac i prevoz
+        nos_ow = bool(d.get("prevozow"))
+        nos_rt = not nos_ow and bool(d.get("prevozrt"))
+        nos_sp = not nos_ow and not d.get("prevozrt") and bool(d.get("prevozsp"))
+        dp_ow = dp_id(d.get("destinacija_ow_id"), d.get("destinacija_ow"))
+        dp_pol = dp_id(d.get("destinacija_polaska_id"), d.get("destinacija_polaska"))
+        dp_pov = dp_id(d.get("destinacija_povratka_id"), d.get("destinacija_povratka"))
+
+        def prevoz_polja(ow, rt, mesto_sed, placeno, zelja, datum_ow, datum_pol, datum_pov,
+                         dest_ow, dest_pol, dest_pov):
+            # isto kao prevozPolja u payload builderu: datumi/destinacije samo za uključen smer
+            return {
+                "mestoSedenja": mesto_sed or "",
+                "placeno": bool(placeno),
+                "zelja": bool(zelja),
+                "datumOw": datum_ow if ow else None,
+                "destinacijaOwId": dest_ow if ow else None,
+                "datumPolaska": datum_pol if rt else None,
+                "destinacijaPolaskaId": dest_pol if rt else None,
+                "datumPovratka": datum_pov if rt else None,
+                "destinacijaPovratkaId": dest_pov if rt else None,
+            }
+
+        nosilac = {
+            "ime": (d.get("putnik") or "").strip(),
+            "datumRodjenja": dmy_iso(d.get("rodjen")),
+            "pasos": d.get("pasos") or "",
+            "uzrast": d.get("uzrast") or "",
+            "ow": nos_ow, "rt": nos_rt, "sp": nos_sp,
+            "smer": (d.get("smer") or "") if nos_ow else "",
+            "adresa": (d.get("adresa") or "").strip(),
+            "grad": (d.get("grad") or "").strip(),
+            "telefon": (d.get("telefon") or "").strip(),
+            "email": (d.get("refno") or "").strip(),
+            **prevoz_polja(nos_ow, nos_rt, d.get("mesto_sedenja"), d.get("placeno_prevoz"),
+                           d.get("zelja_prevoz"), d.get("datum_ow"), d.get("datum_polaska"),
+                           d.get("datum_povratka"), dp_ow, dp_pol, dp_pov),
+        }
+
+        saputnici = []
+        for p in d.get("putnici_detalji") or []:
+            if not (p.get("saputnik") or "").strip():
+                continue
+            ow = bool(p.get("prevozow"))
+            rt = not ow and bool(p.get("prevozrt"))
+            sp = not ow and not p.get("prevozrt") and bool(p.get("prevozsp"))
+            saputnici.append({
+                "ime": p["saputnik"],
+                "datumRodjenja": dmy_iso(p.get("rodjen")),
+                "pasos": p.get("pasos") or "",
+                "uzrast": p.get("uzrast") or "",
+                "dodatnoSediste": bool(p.get("dodatno_sediste")),
+                "ow": ow, "rt": rt, "sp": sp,
+                "smer": (p.get("smer") or "") if ow else "",
+                "adresa": p.get("adresa") or "",
+                "grad": p.get("grad") or "",
+                "telefon": p.get("telefon") or "",
+                "email": p.get("email") or "",
+                "ulazak": p.get("ulazak") or "",
+                "mestoIzlaska": p.get("mesto_izlaska") or p.get("ulazak") or "",
+                **prevoz_polja(ow, rt, p.get("mesto_sedenja"), p.get("placeno_prevoz"),
+                               p.get("zelja_prevoz"), p.get("datum_ow"), p.get("datum_polaska"),
+                               p.get("datum_povratka"),
+                               dp_id(p.get("destinacija_ow_id"), p.get("destinacija_ow")),
+                               dp_id(p.get("destinacija_polaska_id"), p.get("destinacija_polaska")),
+                               dp_id(p.get("destinacija_povratka_id"), p.get("destinacija_povratka"))),
+            })
+
+        # ── destinacija: "Izbor destinacije" = destinacija prevoza (sačuvana, pa po destinaciji ugovora)
+        dpids = {x.id: x for x in dprevoz}
+        dp_sel = None
+        if d.get("destinacija_prevoz_id") in dpids:
+            dp_sel = dpids[d["destinacija_prevoz_id"]]
+        else:
+            dest_id = next((x.id for x in destinacije if nz(x.naziv) == nz(d.get("destinacija"))), None)
+            if dest_id is not None:
+                dp_sel = next((x for x in dprevoz if x.id_destinacije == dest_id), None)
+        struktura = (d.get("gde") or "").strip() or (d.get("apartman") or "")
+        viza = d.get("viza")
+        try:
+            viza = int(viza or 0) == 1
+        except (TypeError, ValueError):
+            viza = False
+
+        # ── obračun: sačuvana varijanta vraća se samo ako se razlikuje od forme
+        obr = d.get("obracun")
+        forma_prevoz = bool(d.get("prevozow")) or bool(d.get("prevozrt"))
+        obracun_izbor = None
+        if obr and obr.get("soba_cenovnik") and obr.get("struktura") and (
+            norm_str(obr["soba_cenovnik"]) != norm_str(d.get("soba"))
+            or norm_str(obr["struktura"]) != norm_str(struktura)
+            or bool(obr.get("prevoz")) != forma_prevoz
+        ):
+            obracun_izbor = {"broj_sobe": obr["soba_cenovnik"], "struktura": obr["struktura"],
+                             "prevoz": bool(obr.get("prevoz"))}
+
+        # ── cene: pct ima prednost; prazno → 0 (cene), količina prazna → 1 (isto kao App1 učitavanje)
+        kol_prevoz = max(d.get("kolow") or 0, d.get("kolrt") or 0) or 1
+        provizija_prevoz = None
+        if pozitivan(d.get("procenatpr")):
+            provizija_prevoz = {"eur": round(float(d["procenatpr"]) * kol_prevoz, 2)}
+        cene = {
+            "cenaSmestajEUR": float(d.get("cenaaranz") or 0),
+            "kolSmestajEUR": float(d["kolaranz"]) if d.get("kolaranz") is not None else 1.0,
+            "cenaSmestajRSD": 0.0, "kolSmestajRSD": 1.0,
+            "popustSmestaj": {"pct": pozitivan(d.get("popustar"))} if pozitivan(d.get("popustar")) else {},
+            "cenaPrevozEUR": 0.0, "kolPrevozEUR": 1.0,
+            "cenaPrevozRSD": 0.0, "kolPrevozRSD": 1.0,
+            "popustPrevoz": {"pct": pozitivan(d.get("popustpr"))} if pozitivan(d.get("popustpr")) else {},
+            "osiguranjeEUR": float(d.get("osiguranje1") or 0),
+            "osiguranjeRSD": float(d.get("osiguranje") or 0),
+            "provizijaSmestaj": {"pct": pozitivan(d.get("procenatar"))} if pozitivan(d.get("procenatar")) else {},
+            "provizijaPrevoz": provizija_prevoz or {},
+        }
+        nacin = d.get("nacin_placanja")
+
+        return {
+            "tiprezervacije": d.get("tiprezervacije") or "",
+            "subagent": (d.get("subagent") or "").strip(),
+            "timelimit": timelimit_iso(d.get("timelimit")),
+            "nosilac": nosilac,
+            "saputnici": saputnici,
+            "boravak": {
+                "datumOd": dmy_iso(d.get("datumod")), "datumDo": dmy_iso(d.get("datumdo")),
+                "smestajId": smestaj_id, "sobaId": soba_id, "mestoId": mesto_id,
+                "smestajNaziv": (d.get("naziv") or "").strip() or None,
+                "sobaBroj": (d.get("soba") or "").strip() or None,
+                "mestoNaziv": (d.get("mesto") or "").strip() or None,
+                "struktura": struktura,
+                "napomena": d.get("napomena") or "",
+                "napomenaInterna": d.get("napomena1") or "",
+                "viza": viza,
+            },
+            "destinacijaId": dp_sel.id_destinacije if dp_sel else None,
+            "destinacijaNaziv": (d.get("destinacija") or "").strip() or None,
+            "destinacijaPrevozId": None if nos_sp or not dp_sel else dp_sel.id,
+            "ulazak": d.get("ulazak") or "",
+            "izlazak": d.get("mesto_izlaska") or d.get("ulazak") or "",
+            "napomenaPrevoz": d.get("napomena_prevoz") or "",
+            "cene": cene,
+            "nacinPlacanja": nacin if nacin in ("delimicno", "u_celosti") else "",
+            # transferi=None → PUT ne dira dodatne stavke (App1 forma šalje listu; ovde se ne menja)
+            "transferi": None,
+            "obracunIzbor": obracun_izbor,
+        }
+
+    @api.get("/sync/prodaja/forma/{kljuc:path}")
+    def sync_prodaja_forma(kljuc: str, request: Request):
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        return _forma_iz_ugovora(k)
+
+    # ── App2 prodaja: subagent menja ugovor — pisanje ────────────────────────
+    @api.put("/sync/prodaja/rezervacije/{kljuc:path}")
+    def sync_izmeni_rezervaciju(kljuc: str, body: RezervacijaIn, request: Request):
+        """Izmena ugovora iz App2 subagenta — samo sopstveni ugovori.
+        Subagent se izvodi iz API klijenta; polje `subagent` iz tela se ignoriše."""
+        klijent = autentifikuj_subagenta(engine, request, SCOPE_REZERVACIJA)
+        with engine.connect() as conn:
+            naziv = conn.execute(text("SELECT naziv FROM subagenti WHERE id = :i"),
+                                 {"i": klijent["subagent_id"]}).scalar()
+        if not naziv:
+            raise HTTPException(status_code=403, detail="Subagent nije pronađen")
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        body = body.model_copy(update={"subagent": naziv})
+        urow = SimpleNamespace(id=None, first_name=naziv, last_name="(subagent)",
+                               status="aktivan", poslovnica_naziv=None)
+        kljuc_out = _izmeni_rezervaciju(k, body, urow,
+                                        lambda conn: (None, f"{naziv} (subagent)"))
+        return {"ok": True, "kljuc": kljuc_out, "message": "Izmene su sačuvane"}
+
+    # ── App2 prodaja: subagent menja ugovor — čitanje ────────────────────────
+    # Namespace /sync/prodaja/* ne sadrži catch-all {kljuc:path}, pa redosled
+    # registracije ne može da presretne podrute.
+    def _sync_proveri_uplatu(kljuc: int, naziv: str) -> int:
+        """404 ako uplata ne postoji ili pripada ugovoru drugog subagenta."""
+        # Ista veza uplata→ugovor kao u _uplate_za_ugovor: faktura = broj ugovora ili id = broj.
+        with engine.connect() as conn:
+            ok = conn.execute(text(
+                "SELECT 1 FROM uplate u WHERE u.kljuc = :k AND EXISTS ("
+                "  SELECT 1 FROM aranzman a "
+                "  WHERE a.subagent = :sa AND ("
+                "    split_part(a.kljuc, '/', 1) = COALESCE(u.faktura, '')"
+                "    OR split_part(a.kljuc, '/', 1) = u.id::text))"
+            ), {"k": kljuc, "sa": naziv}).scalar()
+        if not ok:
+            raise HTTPException(status_code=404, detail="Uplata nije pronađena")
+        return kljuc
+
+    def _sync_dd(v) -> str:
+        return v.strftime("%d.%m.%Y") if v else ""
+
+    @api.get("/sync/prodaja/zabrane")
+    def sync_prodaja_zabrane(request: Request, kljuc: str = Query(...)):
+        """Administrativne zabrane ugovora subagenta (isto kao /ugovori/{kljuc}/zabrane)."""
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT brojzabrane, datum, ukupno, valuta, preuzeta_datum "
+                "FROM zabrana WHERE id_aranzmana = :k ORDER BY id"
+            ), {"k": k}).mappings().all()
+        out = [{
+            "broj": r["brojzabrane"],
+            "datum": r["datum"].isoformat() if r["datum"] else None,
+            "ukupno": float(r["ukupno"]) if r["ukupno"] is not None else None,
+            "valuta": r["valuta"] or "",
+            "preuzeta_datum": _sync_dd(r["preuzeta_datum"]),
+        } for r in rows]
+        return {"rows": out, "total": len(out)}
+
+    @api.get("/sync/prodaja/istorija")
+    def sync_prodaja_istorija(request: Request, kljuc: str = Query(...), limit: int = 200):
+        """Istorija izmena ugovora (rezervacija_log) — isto kao /rezervacije-istorija."""
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        limit = max(1, min(int(limit), 500))
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT id, oblast, dogadjaj, user_id, user_ime, created_at, promene
+                FROM rezervacija_log WHERE kljuc = :k ORDER BY id DESC LIMIT :l
+            """), {"k": k, "l": limit}).mappings().all()
+        return {"rows": [{
+            "id": r["id"], "oblast": r["oblast"], "dogadjaj": r["dogadjaj"],
+            "user_id": r["user_id"], "user_ime": r["user_ime"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "promene": r["promene"] or [],
+        } for r in rows]}
+
+    @api.get("/sync/prodaja/uplate/{kljuc}/cekovi")
+    def sync_prodaja_cekovi(kljuc: int, request: Request):
+        """Čekovi jedne uplate (isto kao /uplate/{kljuc}/cekovi), uz proveru vlasništva."""
+        naziv = sync_subagent_iz_zahteva(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT c.redni, to_char(c.datum, 'YYYY-MM-DD') AS datum, c.iznos, c.banka,
+                       c.banka_klijenta, bk.naziv AS banka_klijenta_naziv,
+                       c.broj_racuna_banke, c.broj_racuna_klijenta, c.serijski_broj
+                FROM cekovi c LEFT JOIN banke bk ON bk.id = c.banka_klijenta
+                WHERE c.uplata_kljuc = :k ORDER BY c.redni
+            """), {"k": kljuc}).fetchall()
+        return [{
+            "redni": r.redni, "datum": r.datum, "iznos": float(r.iznos), "banka": r.banka,
+            "bankaKlijentaId": r.banka_klijenta, "bankaKlijentaNaziv": r.banka_klijenta_naziv,
+            "brojRacunaBanke": r.broj_racuna_banke, "brojRacunaKlijenta": r.broj_racuna_klijenta,
+            "serijskiBroj": r.serijski_broj or "",
+        } for r in rows]
+
+    def _sync_naziv_pisca(request: Request) -> str:
+        """Subagent za upis (scope rezervacija:write); vraća naziv za zapis u istoriju."""
+        klijent = autentifikuj_subagenta(engine, request, SCOPE_REZERVACIJA)
+        with engine.connect() as conn:
+            naziv = conn.execute(text("SELECT naziv FROM subagenti WHERE id = :i"),
+                                 {"i": klijent["subagent_id"]}).scalar()
+        if not naziv:
+            raise HTTPException(status_code=403, detail="Subagent nije pronađen")
+        return naziv
+
+    @api.put("/sync/prodaja/uplate/{kljuc}/kartica")
+    def sync_izmeni_karticu_uplate(kljuc: int, body: KarticaPodaci, request: Request):
+        """Izmena kartice uplate iz App2 subagenta — samo uplate sopstvenih ugovora."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        _izmeni_karticu_uplate(kljuc, body, lambda conn: (None, f"{naziv} (subagent)"))
+        return {"status": "sacuvano", "kljuc": kljuc}
+
+    @api.put("/sync/prodaja/uplate/{kljuc}/cekovi")
+    def sync_izmeni_cekove_uplate(kljuc: int, body: CekoviPodaci, request: Request):
+        """Izmena čekova uplate iz App2 subagenta — samo uplate sopstvenih ugovora."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        broj = _izmeni_cekove_uplate(kljuc, body, lambda conn: (None, f"{naziv} (subagent)"))
+        return {"status": "sacuvano", "kljuc": kljuc, "broj_cekova": broj}
+
+    @api.post("/sync/prodaja/uplate", status_code=201)
+    def sync_create_uplata(body: UplataCreate, request: Request):
+        """Unos uplate iz App2 subagenta — samo na sopstveni ugovor (tačan ključ, npr. 33333/26).
+        Datum je uvek danas (polje datum se ignoriše)."""
+        naziv = _sync_naziv_pisca(request)
+        v = _uplata_validiraj(body)
+        kljuc_ugovora = _sync_proveri_vlasnistvo(v["ugovor"], naziv)
+        with engine.begin() as conn:
+            arow = conn.execute(text(
+                "SELECT kljuc, destinacija, mesto, subagent, organizator, poslovnica "
+                "FROM aranzman WHERE kljuc = :k"
+            ), {"k": kljuc_ugovora}).fetchone()
+            if not arow:
+                raise HTTPException(status_code=404, detail="Ugovor nije pronađen")
+            new_kljuc = _uplata_upisi(conn, arow, v, _belgrade_now(), f"{naziv} (subagent)",
+                                      arow.poslovnica, None)
+        return {"kljuc": new_kljuc, "message": "Uplata je uspešno uneta"}
+
+    @api.post("/sync/prodaja/uplate/{kljuc}/prebaci")
+    def sync_prebaci_uplatu(kljuc: int, body: PrebacivanjeUplate, request: Request):
+        """Prebacivanje uplate iz App2 subagenta — i izvorna uplata i odredišni ugovor moraju biti sopstveni."""
+        naziv = _sync_naziv_pisca(request)
+        _sync_proveri_uplatu(kljuc, naziv)
+        nov = _prebaci_uplatu(kljuc, body.ugovor, lambda conn: (None, f"{naziv} (subagent)"),
+                              lambda k: _sync_proveri_vlasnistvo(k, naziv))
+        return {"status": "prebaceno", "kljuc": kljuc, "ugovor": nov}
+
+    @api.get("/sync/prodaja/keptp")
+    def sync_prodaja_keptp(request: Request, kljuc: str = Query(...)):
+        """KEPTP evidencija ugovora subagenta (isto kao /keptp/ugovor/{kljuc})."""
+        naziv = sync_subagent_iz_zahteva(request)
+        k = _sync_proveri_vlasnistvo(kljuc, naziv)
+        with engine.connect() as conn:
+            r = conn.execute(text(
+                "SELECT broj_keptp, datum FROM keptp WHERE broj_ugovora = :k"
+            ), {"k": k}).fetchone()
+        if not r:
+            return None
+        return {"broj_keptp": r.broj_keptp, "datum": f"{r.datum:%d.%m.%Y}"}
+
+    @api.get("/sync/prodaja/varijante-cene")
+    def sync_prodaja_varijante_cene(request: Request, smestaj_id: int, soba_id: int,
+                                    datumod: SubDate, datumdo: SubDate):
+        """Varijante cene za sobu/termin (globalni šifarnik, bez podataka subagenta)."""
+        sync_subagent_iz_zahteva(request)
+        if datumdo <= datumod:
+            raise HTTPException(status_code=400, detail="datumdo mora biti posle datumod")
+        with engine.connect() as conn:
+            return varijante_cene(conn, smestaj_id, soba_id, datumod, datumdo)
+
+    @api.get("/sync/prodaja/tipovi-kartica")
+    def sync_prodaja_tipovi_kartica(request: Request):
+        sync_subagent_iz_zahteva(request)
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT naziv FROM tipovi_kartica ORDER BY naziv")).fetchall()
+        return [r.naziv for r in rows]
+
+    @api.get("/sync/prodaja/destinacija-prevoz")
+    def sync_prodaja_destinacija_prevoz(request: Request):
+        sync_subagent_iz_zahteva(request)
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT dp.id, dp.id_destinacije, dp.naziv, dp.created_at, dp.updated_at,
+                       COALESCE(json_agg(json_build_object('id', pg.id, 'naziv', pg.naziv)
+                                ORDER BY pg.naziv) FILTER (WHERE pg.id IS NOT NULL), '[]') AS grupe
+                FROM destinacija_prevoz dp
+                LEFT JOIN destinacija_prevoz_grupa dpg ON dpg.destinacija_prevoz_id = dp.id
+                LEFT JOIN period_grupa pg ON pg.id = dpg.id_grupe_termina
+                GROUP BY dp.id ORDER BY dp.naziv
+            """)).fetchall()
+        return [{
+            "id": r.id, "id_destinacije": r.id_destinacije, "naziv": r.naziv,
+            "grupe": r.grupe,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        } for r in rows]
+
     # ── Subagenti (povezani sa aranzman.subagent = subagenti.naziv) ─────────
     SUBAGENTI_SORT = {
         "naziv": "s.naziv", "mesto": "s.mesto",
@@ -6485,6 +7590,9 @@ def create_app(static_dir: str) -> FastAPI:
                 SELECT s.id, s.naziv, s.adresa, s.mesto, s.osoba, s.tel, s.tel1,
                        s.tel2, s.fax, s.racun, s.provizija, s.punnaziv, s.kontakt,
                        s.pib, s.matbroj, s.email, s.ugovor_broj, s.ugovor_datumod, s.ugovor_datumdo, s.ta,
+                       s.is_active, s.zasticen,
+                       (SELECT c.sync_status FROM subagent_api_clients c
+                         WHERE c.subagent_id = s.id AND c.is_active LIMIT 1) AS api_sync,
                        COALESCE(cnt.c, 0) AS broj_ugovora
                 FROM subagenti s
                 LEFT JOIN cnt ON cnt.subagent = s.naziv AND s.naziv <> ''
@@ -6524,25 +7632,52 @@ def create_app(static_dir: str) -> FastAPI:
                         COALESCE(:ugovor_broj, ''), :ugovor_datumod, :ugovor_datumdo, COALESCE(:ta, true))
                 RETURNING id
             """), body.model_dump()).fetchone()
-        return {"id": row.id}
+        status, greska = sinhronizuj_subagenta(engine, row.id)
+        return {"id": row.id, "api_sync": status, "api_sync_error": greska}
 
     @api.put("/subagenti/{item_id}")
     def update_subagent(item_id: int, body: SubagentUpdate, _: dict = Depends(get_current_user)):
         fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if not (k == "naziv" and v is None)}
         if not fields:
             raise HTTPException(status_code=400, detail="Nema podataka za ažuriranje")
+        if je_zasticen(engine, item_id) and any(k in fields for k in ("pib", "email")):
+            raise HTTPException(
+                status_code=403,
+                detail="Email i PIB subagenta superadmina su zaključani",
+            )
         set_clause = ", ".join(f"{k} = :{k}" for k in fields)
         fields["id"] = item_id
         with engine.begin() as conn:
+            stari = conn.execute(text(
+                "SELECT pib, email FROM subagenti WHERE id = :id"
+            ), {"id": item_id}).fetchone()
             row = conn.execute(text(
                 f"UPDATE subagenti SET {set_clause} WHERE id = :id RETURNING id"
             ), fields).fetchone()
-        if not row:
+        if not row or stari is None:
             raise HTTPException(status_code=404, detail="Subagent nije pronađen")
-        return {"id": row.id}
+        kljucna = any(
+            k in fields and fields[k] != (getattr(stari, k) or "") for k in ("pib", "email")
+        )
+        status, greska = sinhronizuj_nakon_izmene(engine, row.id, kljucna_promena=kljucna)
+        return {"id": row.id, "api_sync": status, "api_sync_error": greska}
 
     @api.delete("/subagenti/{item_id}")
     def delete_subagent(item_id: int, _: dict = Depends(get_current_user)):
+        if je_zasticen(engine, item_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Subagent superadmina se ne može obrisati",
+            )
+        try:
+            status, greska = deaktiviraj_pre_brisanja(engine, item_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Subagent nije pronađen")
+        if status != "deactivated":
+            raise HTTPException(
+                status_code=502,
+                detail=f"Subagent nije obrisan: App2 nije deaktivirao vezu ({greska})",
+            )
         with engine.begin() as conn:
             row = conn.execute(text(
                 "DELETE FROM subagenti WHERE id = :id RETURNING id"

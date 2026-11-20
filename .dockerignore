@@ -1,0 +1,12 @@
+# Lokalni build konteksta: bez lokalnih zavisnosti, virtuelnog okruženja i build izlaza.
+.git
+.venv
+node_modules
+dist
+__pycache__
+*.pyc
+.idea
+.workshop
+plans
+.env
+.env.*

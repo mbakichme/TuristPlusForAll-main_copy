@@ -251,6 +251,9 @@ export interface Subagent {
   punnaziv: string | null;
   kontakt: string | null;
   broj_ugovora?: number;
+  is_active?: boolean;
+  zasticen?: boolean;
+  api_sync?: string | null;
 }
 
 export interface SubagentiResponse {

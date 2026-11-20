@@ -12,6 +12,15 @@ import {
   FileText, Receipt, ReceiptText, FilePlus, FileMinus, FileX, Handshake, Landmark, NotebookPen, FileImage, Wallet,
   Eye, ShoppingBag, Banknote, Palette, Sigma, Bell, Store, ArrowRightLeft, Ban, Calculator, Armchair
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import meniKnjigovodstvo from "../config/menuKnjigovodstvo.json";
+
+/** Stavke Knjigovodstva (izvor istine: config/menuKnjigovodstvo.json; App2 ih čita sa App1 API-ja). */
+const KNJIGOVODSTVO_IKONE: Record<string, LucideIcon> = {
+  FileText, Landmark, NotebookPen, ArrowRightLeft, Ban, Receipt, ReceiptText,
+  FileMinus, FileX, FilePlus, Handshake, Store,
+};
+const ikonaZaMeni = (kljuc: string): LucideIcon => KNJIGOVODSTVO_IKONE[kljuc] ?? FileText;
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
@@ -133,7 +142,6 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             <NavItem to="/agencija/drzava" icon={Flag} label="Države" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/destinacija" icon={MapPin} label="Destinacije" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/mesto" icon={Map} label="Mesta" collapsed={collapsed} onClick={onNavClick} />
-            <NavItem to="/agencija/cis" icon={Tag} label="CIS" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/smestaj" icon={BedDouble} label="Smeštaj" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/sobe" icon={DoorOpen} label="Sobe" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/agencija/dodatne-usluge" icon={Receipt} label="Dodatne usluge" collapsed={collapsed} onClick={onNavClick} />
@@ -213,7 +221,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[1000px] opacity-100"
+              !collapsed && !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[640px] opacity-100"
             )}
           >
             <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={collapsed} onClick={onNavClick} />
@@ -230,7 +238,6 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
             <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/dobavljaci" icon={Store} label="Dobavljači" collapsed={collapsed} onClick={onNavClick} />
             <NavItem to="/knjigovodstvo/banke" icon={Landmark} label="Banke" collapsed={collapsed} onClick={onNavClick} />
-            <NavItem to="/knjigovodstvo/blagajna" icon={Wallet} label="Blagajna" collapsed={collapsed} onClick={onNavClick} />
           </div>
         </div>
         </>
@@ -263,7 +270,7 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
           <div
             className={cn(
               "space-y-1 overflow-hidden transition-all duration-200",
-              !collapsed && !preglediOpen ? "max-h-0 opacity-0" : "max-h-72 opacity-100"
+              !collapsed && !preglediOpen ? "max-h-0 opacity-0" : "max-h-56 opacity-100"
             )}
           >
             {!collapsed ? (
@@ -296,13 +303,9 @@ function SidebarContent({ collapsed, settingsOpen, setSettingsOpen, agencijaOpen
                     <NavItem to="/pregledi/dnevni-izvestaji/uplate" icon={Receipt} label="Pregled uplata" collapsed={collapsed} onClick={onNavClick} />
                   </div>
                 </div>
-                <NavItem to="/pregledi/kontrola-ugovora" icon={ClipboardCheck} label="Kontrola ugovora" collapsed={collapsed} onClick={onNavClick} />
               </>
             ) : (
-              <>
-                <NavItem to="/pregledi/dnevni-izvestaji/prodaja-aranzmana" icon={ShoppingBag} label="Prodaja aranžmana" collapsed={collapsed} onClick={onNavClick} />
-                <NavItem to="/pregledi/kontrola-ugovora" icon={ClipboardCheck} label="Kontrola ugovora" collapsed={collapsed} onClick={onNavClick} />
-              </>
+              <NavItem to="/pregledi/dnevni-izvestaji/prodaja-aranzmana" icon={ShoppingBag} label="Prodaja aranžmana" collapsed={collapsed} onClick={onNavClick} />
             )}
           </div>
         </div>
@@ -399,7 +402,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
   const [settingsOpen, settingsOpenRaw] = useState(false);
   const [agencijaOpen, agencijaOpenRaw] = useState(false);
   const [prodajaOpen, prodajaOpenRaw] = useState(false);
-  const [knjigovodstvoOpen, knjigovodstvoOpenRaw] = useState(true);
+  const [knjigovodstvoOpen, knjigovodstvoOpenRaw] = useState(false);
   const [preglediOpen, preglediOpenRaw] = useState(false);
   const [dnevniOpen, setDnevniOpen] = useState(true);
   const { user, logout } = useAuth();
@@ -554,7 +557,6 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/agencija/drzava" icon={Flag} label="Države" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/destinacija" icon={MapPin} label="Destinacije" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/mesto" icon={Map} label="Mesta" collapsed={false} onClick={closeMobile} />
-                  <NavItem to="/agencija/cis" icon={Tag} label="CIS" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/smestaj" icon={BedDouble} label="Smeštaj" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/sobe" icon={DoorOpen} label="Sobe" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/agencija/dodatne-usluge" icon={Receipt} label="Dodatne usluge" collapsed={false} onClick={closeMobile} />
@@ -626,7 +628,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[1000px] opacity-100"
+                    !knjigovodstvoOpen ? "max-h-0 opacity-0" : "max-h-[640px] opacity-100"
                   )}
                 >
                   <NavItem to="/knjigovodstvo/ugovori" icon={FileText} label="Ugovori" collapsed={false} onClick={closeMobile} />
@@ -643,7 +645,6 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                   <NavItem to="/knjigovodstvo/subagenti" icon={Handshake} label="Subagenti" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/dobavljaci" icon={Store} label="Dobavljači" collapsed={false} onClick={closeMobile} />
                   <NavItem to="/knjigovodstvo/banke" icon={Landmark} label="Banke" collapsed={false} onClick={closeMobile} />
-                  <NavItem to="/knjigovodstvo/blagajna" icon={Wallet} label="Blagajna" collapsed={false} onClick={closeMobile} />
                 </div>
               </div>
               </>
@@ -672,7 +673,7 @@ export default function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
                 <div
                   className={cn(
                     "space-y-1 overflow-hidden transition-all duration-200",
-                    !preglediOpen ? "max-h-0 opacity-0" : "max-h-72 opacity-100"
+                    !preglediOpen ? "max-h-0 opacity-0" : "max-h-56 opacity-100"
                   )}
                 >
                   <button

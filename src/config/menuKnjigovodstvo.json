@@ -1,0 +1,16 @@
+[
+  { "path": "/knjigovodstvo/ugovori", "label": "Ugovori", "icon": "FileText" },
+  { "path": "/knjigovodstvo/izvodi", "label": "Izvodi", "icon": "Landmark" },
+  { "path": "/knjigovodstvo/knjizenje", "label": "Knjiženje", "icon": "NotebookPen" },
+  { "path": "/knjigovodstvo/prebacivanja", "label": "Prebacivanja", "icon": "ArrowRightLeft" },
+  { "path": "/knjigovodstvo/zabrane", "label": "Administrativne zabrane", "icon": "Ban" },
+  { "path": "/knjigovodstvo/predracuni", "label": "Predračuni", "icon": "Receipt" },
+  { "path": "/knjigovodstvo/avansne-fakture", "label": "Avansne fakture", "icon": "ReceiptText" },
+  { "path": "/knjigovodstvo/fakture", "label": "Fakture", "icon": "FileText" },
+  { "path": "/knjigovodstvo/dok-smanjenju", "label": "Dok. o smanjenju", "icon": "FileMinus" },
+  { "path": "/knjigovodstvo/dok-smanjenju-avansnih", "label": "Dok. o smanjenju avansnih", "icon": "FileX" },
+  { "path": "/knjigovodstvo/dok-povecanju", "label": "Dok. o povećanju", "icon": "FilePlus" },
+  { "path": "/knjigovodstvo/subagenti", "label": "Subagenti", "icon": "Handshake" },
+  { "path": "/knjigovodstvo/dobavljaci", "label": "Dobavljači", "icon": "Store" },
+  { "path": "/knjigovodstvo/banke", "label": "Banke", "icon": "Landmark" }
+]
