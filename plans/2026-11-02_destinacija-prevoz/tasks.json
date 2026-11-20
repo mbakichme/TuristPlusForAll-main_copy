@@ -1,0 +1,32 @@
+[
+  {
+    "id": "1",
+    "content": "[DB-1] Kolona aranzman.destinacija_prevoz_id (init + ADD COLUMN IF NOT EXISTS)",
+    "status": "pending"
+  },
+  {
+    "id": "2",
+    "content": "[API-2] Čuvanje/učitavanje destinacija_prevoz_id u rezervaciji (POST/PUT/GET)",
+    "status": "pending"
+  },
+  {
+    "id": "3",
+    "content": "[API-3] Endpoint: broj RT putnika + limit za destinaciju prevoza i datum (Odlazak=datumod, Povratak=datumdo)",
+    "status": "pending"
+  },
+  {
+    "id": "4",
+    "content": "[UI-4] Izbor destinacije vezan za destinacija_prevoz (Select + default iz mesta)",
+    "status": "pending"
+  },
+  {
+    "id": "5",
+    "content": "[UI-5] Prevoz zaglavlje: brojanje iz svih rezervacija za datum + limit",
+    "status": "pending"
+  },
+  {
+    "id": "6",
+    "content": "[VER-6] tsc build + test API/UI",
+    "status": "pending"
+  }
+]

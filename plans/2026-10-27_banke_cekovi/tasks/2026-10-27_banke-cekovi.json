@@ -1,0 +1,27 @@
+[
+  {
+    "id": "1",
+    "content": "[BE-1] banke_api.py: tabela banke + GET/POST/PUT/DELETE /api/banke, registracija u routes.py",
+    "status": "in_progress"
+  },
+  {
+    "id": "2",
+    "content": "[BE-2] cekovi tabela + validacija zbira + POST /uplate cekovi + GET/PUT /uplate/{kljuc}/cekovi",
+    "status": "pending"
+  },
+  {
+    "id": "3",
+    "content": "[FE-1] (subagent) BankePage.tsx + ruta /knjigovodstvo/banke + stavka u Sidebar (desktop i mobilni)",
+    "status": "pending"
+  },
+  {
+    "id": "4",
+    "content": "[FE-2] CekPopup.tsx (iznos, datum, broj čekova, banka search min 3, generisanje rata) + integracija u tab Uplate (Ček opcija, dugme po redu, Potvrdi šalje cekovi)",
+    "status": "pending"
+  },
+  {
+    "id": "5",
+    "content": "[TEST] offline unittest za banke + cekovi validaciju/zbir; bunx tsc -b; Playwright provera popupa",
+    "status": "pending"
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "content": "[build-1] self: Pregledati sva mesta koja koriste kurs i postojeće testove.",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[build-2] delegate: Napraviti servis kursa sa čitanjem baze, API fallback-om i testovima.",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[build-3] self: Dodati tabelu kurs i povezati sve postojeće obračune.",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[verify-1] self: Proveriti migraciju, ponovljene pozive i regresione testove.",
+    "id": "4",
+    "status": "completed"
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[izm-1] KnjizenjePage: state + učitavanje detalja ugovora (veza) + pretraga ugovora",
+    "id": "izmena-1",
+    "status": "completed"
+  },
+  {
+    "content": "[izmena-2] Popup: transakcija blok + ugovor celina + pretraga sa izborom",
+    "id": "izmena-2",
+    "status": "completed"
+  },
+  {
+    "content": "[izmena-3] Test build + provera endpointa",
+    "id": "izmena-3",
+    "status": "completed"
+  }
+]

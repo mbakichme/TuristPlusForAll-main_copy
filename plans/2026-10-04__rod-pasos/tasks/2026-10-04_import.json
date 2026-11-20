@@ -1,0 +1,22 @@
+[
+  {
+    "content": "[import-1] self: Proveriti povezivanje ključeva i redosled saputnika",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[import-2] self: Dodati šemu i bezbedan transakcioni import rod.sql",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[import-3] delegate: Offline testovi parsera i mapiranja",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[import-4] self: Preneti podatke i proveriti podudaranje u bazi",
+    "id": "4",
+    "status": "completed"
+  }
+]

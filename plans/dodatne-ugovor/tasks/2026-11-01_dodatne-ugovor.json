@@ -1,0 +1,27 @@
+[
+  {
+    "id": "1",
+    "content": "[schema-1] init_db + init_dodatne_usluge: ugovor kolona + dodatna_usluga_id FK (self)",
+    "status": "pending"
+  },
+  {
+    "id": "2",
+    "content": "[schema-2] Jednokratna migracija: DROP COLUMN id na praznoj tabeli dodatne (self)",
+    "status": "pending"
+  },
+  {
+    "id": "3",
+    "content": "[api-1] routes.py: dodatne_contract/rez_transferi_upisi/CRUD/ugovor_detail → ugovor (self)",
+    "status": "pending"
+  },
+  {
+    "id": "4",
+    "content": "[ui-1] DodatnaStavkaForma: opcioni izbor iz kataloga, slobodan unos ostaje (delegate)",
+    "status": "pending"
+  },
+  {
+    "id": "5",
+    "content": "[test-1] Ažurirati testove koji koriste stari id + API test + tsc (self)",
+    "status": "pending"
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "content": "[knj-1] routes: GET /izvodi/banke + GET /izvodi/stavke (Veza ugovor preko poziv_na_broj, Predračun preko ugovora)",
+    "id": "knj-1",
+    "status": "completed"
+  },
+  {
+    "content": "[knj-2] frontend: KnjizenjePage.tsx (forma banka/broj/datum + tabela sort/pretraga/checkbox + placeholder dugmad)",
+    "id": "knj-2",
+    "status": "completed"
+  },
+  {
+    "content": "[knj-3] nav: Sidebar ispod Izvodi + App.tsx route",
+    "id": "knj-3",
+    "status": "completed"
+  },
+  {
+    "content": "[knj-4] test: upload XML-a, stavke + Veza/Predračun provera, vite build, cleanup",
+    "id": "knj-4",
+    "status": "completed"
+  }
+]

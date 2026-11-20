@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[unos-1] delegate — Backend unos uplate i offline testovi mapiranja",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[unos-2] self — Povezivanje Potvrdi, validacija, obaveštenje i osvežavanje liste",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[unos-3] self — 23 offline testa, TypeScript, frontend build i provera aktivnog API-ja",
+    "id": "3",
+    "status": "completed"
+  }
+]

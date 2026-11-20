@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[upis-1] self — Proveriti i dovršiti mapiranje apartman/opis/gde i ponovno učitavanje strukture.",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[test-2] self — Dodati i izvršiti testove stvarne funkcije za obične, virtuelne i stare sobe bez upisa u bazu.",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[provera-3] delegate — Nezavisno proveriti izmene i rubne slučajeve; self — ažurirati kontekst.",
+    "id": "3",
+    "status": "completed"
+  }
+]

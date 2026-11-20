@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[forma-1] self: Vratiti rodjen i pasos kroz detalje ugovora",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[forma-2] self: Povezati tipove i učitavanje forme za sve putnike",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[forma-3] delegate: Proveriti API mapiranje; self: TypeScript i build",
+    "id": "3",
+    "status": "completed"
+  }
+]

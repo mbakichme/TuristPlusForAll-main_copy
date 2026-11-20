@@ -1,0 +1,26 @@
+# ============================================================================
+# TuristPlus — systemd servis (production)
+# Lokacija na serveru: /etc/systemd/system/turistplus.service
+# ============================================================================
+[Unit]
+Description=TuristPlus admin (FastAPI + static frontend)
+After=network.target
+
+[Service]
+Type=simple
+User=turistplus
+Group=turistplus
+WorkingDirectory=/opt/TuristPlus
+
+# Secrets se čitaju iz /etc/turistplus.env (NIKAD u git repozitorijum)
+EnvironmentFile=/etc/turistplus.env
+
+# workers=1 jer init_db (migracije) ne sme da se izvršava paralelno iz više
+# procesa; sync endpointi rade u threadpool-u pa jedan worker pokriva opterećenje.
+# Ako ikad povećavaš: prvo proveri da su migracije u init_db bezbedne za paralelan start.
+ExecStart=/usr/local/bin/uv run uvicorn app:asgi --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

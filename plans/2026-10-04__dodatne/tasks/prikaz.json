@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[prikaz-1] self: Učitati dodatne stavke uz detalje ugovora",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[prikaz-2] self: Prikazati stavke i zbirove u kartici Cena aranžmana",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[prikaz-3] delegate: Pregled povezivanja; self: API i build provere",
+    "id": "3",
+    "status": "completed"
+  }
+]

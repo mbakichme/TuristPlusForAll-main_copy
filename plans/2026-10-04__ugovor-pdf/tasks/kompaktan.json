@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[fix-1] self: Proveriti račun i QR kod stvarnog ugovora.",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[fix-2] delegate: Zbiti PDF u dve kolone, zaglavlje samo prva strana i vidljiv QR.",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[verify-1] self: Testirati broj strana, sadržaj i dekodiranje QR-a.",
+    "id": "3",
+    "status": "completed"
+  }
+]

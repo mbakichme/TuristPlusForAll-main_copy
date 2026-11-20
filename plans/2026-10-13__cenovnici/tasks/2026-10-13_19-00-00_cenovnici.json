@@ -1,0 +1,22 @@
+[
+  {
+    "content": "[build-1] self: Definisati API ugovor i uklopiti navigaciju Cenovnici",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[build-2] self: Implementirati tabele, snapshot matricu i API cenovnika (delegacija bez rezultata)",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[build-3] delegate: Implementirati oba taba, uređivanje matrice i pretragu",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[verify-1] self+delegate: Proveriti API round-trip, frontend build i UI tok",
+    "id": "4",
+    "status": "completed"
+  }
+]

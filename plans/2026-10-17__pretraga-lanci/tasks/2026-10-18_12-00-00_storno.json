@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[storno-1] self: transakcioni STORNO endpoint i backend testovi (delegacija nije izvršila izmene)",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[storno-2] self: dugme, potvrda sa podacima i osvežavanje forme",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[storno-3] self: build i provera toka storniranja",
+    "id": "3",
+    "status": "completed"
+  }
+]

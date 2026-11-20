@@ -1,0 +1,32 @@
+[
+  {
+    "content": "[DB] aranzman + uplate tabele u spoljnoj bazi",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[API] /preuzimanje_podataka import endpoint (uplatejson.php) — UKLONJENO (uvoz ugovora nije dozvoljen)",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[API] /ugovori lista sa server-side pretragom i paginacijom",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[UI] UgovoriPage + placeholderi (PreuzimanjePage UKLONJEN)",
+    "id": "4",
+    "status": "completed"
+  },
+  {
+    "content": "[UI] Sidebar KNJIGOVODSTVO sekcija + rute",
+    "id": "5",
+    "status": "completed"
+  },
+  {
+    "content": "[TEST] import 33333/26 + provera tabele",
+    "id": "6",
+    "status": "completed"
+  }
+]

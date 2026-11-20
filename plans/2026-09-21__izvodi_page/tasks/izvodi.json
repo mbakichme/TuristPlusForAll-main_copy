@@ -1,0 +1,27 @@
+[
+  {
+    "content": "[izvodi-1] init_db: tabele izvodi (header+JSONB transakcije) i izvodi_pregled",
+    "id": "izvodi-1",
+    "status": "completed"
+  },
+  {
+    "content": "[izvodi-2] routes: POST /izvodi/upload (XML parse u memoriji), GET /izvodi (pregled+search), DELETE /izvodi/{id}",
+    "id": "izvodi-2",
+    "status": "completed"
+  },
+  {
+    "content": "[izvodi-3] frontend: IzvodiPage.tsx (upload forma + tabela sa pretragom)",
+    "id": "izvodi-3",
+    "status": "completed"
+  },
+  {
+    "content": "[izvodi-4] nav: Sidebar (desktop+mobile) ispod Ugovori + App.tsx route",
+    "id": "izvodi-4",
+    "status": "completed"
+  },
+  {
+    "content": "[izvodi-5] test: curl upload prilog XML-a, provera liste, vite build",
+    "id": "izvodi-5",
+    "status": "completed"
+  }
+]

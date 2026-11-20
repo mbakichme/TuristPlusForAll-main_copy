@@ -1,0 +1,27 @@
+[
+  {
+    "content": "[termin-1] Backend: period_id kolona + migracija UNIQUE (cenovnik,soba,period); termin endpointi GET/PUT/DELETE za opcije i popust; scope-clearing u single/-sve PUT",
+    "id": "termin-1",
+    "status": "completed"
+  },
+  {
+    "content": "[termin-2] Frontend: O·P dugme u headeru svake kolone matrice (ispod broja noćenja) + treći mod dijaloga (terminId)",
+    "id": "termin-2",
+    "status": "completed"
+  },
+  {
+    "content": "[termin-3] bun run build (tsc) zeleno",
+    "id": "termin-3",
+    "status": "completed"
+  },
+  {
+    "content": "[termin-4] Test test_cenovnici_opcije_termin.py (API override/clearing + UI) + regresija opcije/masovno/ostali",
+    "id": "termin-4",
+    "status": "completed"
+  },
+  {
+    "content": "[termin-5] Commit + update .workshop/context.md",
+    "id": "termin-5",
+    "status": "completed"
+  }
+]

@@ -1,0 +1,30 @@
+name: turistplus-app1
+
+# App1 (organizator) u Docker-u. Baza je spoljni Neon (EXTERNAL_NEON_DATABASE_URL).
+# Konfiguracija se čita iz .env u ovom direktorijumu (nije u git-u); vrednosti se ne upisuju ovde.
+# Port na hostu: 3070 = App1 UI (nginx), /api ide na backend interno na 8000.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ORGANIZER_CODE: ${ORGANIZER_CODE:-}
+      ORGANIZER_NAME: ${ORGANIZER_NAME:-}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        BACKEND_HOST: backend
+    depends_on:
+      - backend
+    ports:
+      - "3070:80"
+    restart: unless-stopped

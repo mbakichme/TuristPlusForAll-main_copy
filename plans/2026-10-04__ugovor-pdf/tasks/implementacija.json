@@ -1,0 +1,27 @@
+[
+  {
+    "content": "[build-1] self: Proveriti šablon, obračun i vezivanje datuma/kursa.",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[build-2] delegate: Napraviti moderan PDF ugovora i offline testove.",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[build-3] delegate: Dodati potvrdu brisanja i preuzimanje ugovora u formi.",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "[build-4] self: Dodati bezbedno brisanje i PDF API sa istorijskim kursom.",
+    "id": "4",
+    "status": "completed"
+  },
+  {
+    "content": "[verify-1] self: Proveriti API, PDF, QR i produkcioni frontend build.",
+    "id": "5",
+    "status": "completed"
+  }
+]

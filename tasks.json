@@ -1,0 +1,27 @@
+[
+  {
+    "id": "1",
+    "content": "[impl-1] Grafik: uvek proslediti struktura (slotCena.tip)",
+    "status": "in_progress"
+  },
+  {
+    "id": "2",
+    "content": "[impl-2] Rezervacije: adl iz koeficijenta → saputnici (adl−1) + količina smeštaja (adl) + cena/adl",
+    "status": "pending"
+  },
+  {
+    "id": "3",
+    "content": "[impl-3] Rezervacije: max popust iz /slobodne-sobe varijanti → Popust smeštaja %",
+    "status": "pending"
+  },
+  {
+    "id": "4",
+    "content": "[impl-4] Saldo (RSD i EUR) umanjiti za provizije smeštaj+prevoz",
+    "status": "pending"
+  },
+  {
+    "id": "5",
+    "content": "[verify-1] tsc + vite build, pregled u pregledniku",
+    "status": "pending"
+  }
+]

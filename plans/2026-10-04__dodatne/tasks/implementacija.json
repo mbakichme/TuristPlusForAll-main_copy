@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[import-1] self: Proveriti SQL i napraviti tabelu dodatne sa bezbednim importom",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "[ui-1] delegate: Naglasiti putnike i modernizovati datume boravka",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "[test-1] self: Proveriti import, frontend build i regresione testove",
+    "id": "3",
+    "status": "completed"
+  }
+]

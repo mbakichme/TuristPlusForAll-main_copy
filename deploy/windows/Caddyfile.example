@@ -1,0 +1,25 @@
+# ============================================================================
+# Caddy 2 — obrnuti proksi sa automatskim HTTPS-om (OPCIONO, za domen)
+#
+# 1) skini Caddy (Windows amd64, jedan exe): https://caddyserver.com/download
+# 2) stavi caddy.exe u C:\Tools\caddy\, a ovaj fajl u C:\TuristPlus\Caddyfile
+#    (zameni tvoj-domen.rs svojim domenom)
+# 3) DNS A zapis domena → javna IP servera; otvori portove 80 i 443:
+#      New-NetFirewallRule -DisplayName "HTTP"  -Direction Inbound -Protocol TCP -LocalPort 80  -Action Allow
+#      New-NetFirewallRule -DisplayName "HTTPS" -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow
+# 4) Windows servis:
+#      sc create Caddy binPath= "C:\Tools\caddy\caddy.exe run --config C:\TuristPlus\Caddyfile" start= auto
+#      sc start Caddy
+#    (sertifikati se izdaju i obnavljaju automatski — Let's Encrypt)
+#
+# Ako ne koristiš Caddy, aplikacija je dostupna direktno na portu 8000.
+# ============================================================================
+
+tvoj-domen.rs {
+    reverse_proxy 127.0.0.1:8000
+
+    # Upload XML izvoda i drugih fajlova
+    request_body {
+        max_size 50MB
+    }
+}

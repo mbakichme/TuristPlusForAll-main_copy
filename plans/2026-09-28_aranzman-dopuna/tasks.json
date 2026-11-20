@@ -1,0 +1,17 @@
+[
+  {
+    "content": "[rez-1] Stranica RezervacijePage sa 3 taba (Aranzman/Prevoz/Uplate) i svim poljima",
+    "id": "rez-1",
+    "status": "completed"
+  },
+  {
+    "content": "[rez-2] Ruta /prodaja/rezervacije + nav u Prodaja (desktop+mobilni, max-h-48) + GET /kurs endpoint",
+    "id": "rez-2",
+    "status": "completed"
+  },
+  {
+    "content": "[rez-3] Verifikacija: tsc, vite build, endpoint-i, dev server",
+    "id": "rez-3",
+    "status": "completed"
+  }
+]
